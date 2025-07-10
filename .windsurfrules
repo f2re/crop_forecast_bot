@@ -1,0 +1,157 @@
+## Core Operating Principles
+
+1. **Instruction Reception and Understanding**
+   - Carefully read and interpret user instructions to ensure alignment with project goals.
+   - Ask specific questions when clarification is needed regarding functionality or scope.
+   - Clearly identify technical constraints and requirements specific to the bot's integration with Telegram and external APIs.
+   - Do not perform any operations beyond what is instructed by the project scope.
+   - write comment in code on Russian. write only logic and needed comments, not simple comments. fully comment new functions with describe variables and functionally and logic
+   - write all messages and text on Russian.
+
+2. **In-depth Analysis and Planning**
+   ## Task Analysis
+   - Purpose: Develop a Telegram bot to assist farmers in selecting crops based on location-specific climatic data.
+   - Technical Requirements: Python-based stack with FastAPI for potential web integration, Telegram Bot API for user interaction, and JSON for data storage.
+   - Implementation Steps: Initialize bot structure, implement user interaction for coordinate collection, integrate climatic data APIs, and develop recommendation logic.
+   - Risks: API rate limits, data accuracy from external sources, user input errors, and scalability issues with growing user base.
+   - Quality Standards: Responsive bot interaction, accurate data handling, user-friendly interface for all age groups, and secure storage of user data.
+
+3. **Implementation Planning**
+   ## Implementation Plan
+   1. Bot Initialization and Structure
+      - Set up project structure with clear separation of bot logic, API integration, and data storage.
+      - Expected challenges: Ensuring modular design for future scalability; Countermeasures: Follow strict directory structure and documentation.
+   2. Telegram Interface Development
+      - Implement intuitive menu and communication flow for coordinate collection.
+      - Expected challenges: Accessibility for older users; Countermeasures: Use simple language, emojis, and minimalistic menu design.
+   3. Data Storage and API Integration
+      - Develop secure storage for user coordinates and integrate with climatic data APIs.
+      - Expected challenges: API downtime or rate limits; Countermeasures: Implement fallback APIs and caching mechanisms.
+
+4. **Comprehensive Implementation and Verification**
+   - Execute development in optimized sequences, ensuring each module (bot, storage, API) is tested before integration.
+   - Continuously verify against quality standards like response time and data accuracy throughout implementation.
+   - Address issues promptly with integrated solutions, such as error handling for API failures.
+   - Execute processes only within the scope of instructions, avoiding unnecessary features or operations.
+
+5. **Continuous Feedback**
+   - Regularly report implementation progress through project updates or logs.
+   - Confirm decisions at critical points, such as API selection or major feature additions.
+   - Promptly report issues with proposed solutions to maintain project momentum.
+
+## Technology Stack and Constraints
+
+### Core Technologies
+- Python: ^3.9.0
+- FastAPI: ^0.92.0
+- Telegram Bot API (via pyTelegramBotAPI): ^4.10.0
+
+### Backend
+- JSON: For local data storage of user coordinates.
+- Uvicorn: ^0.20.0 (for potential FastAPI web server deployment)
+
+### Development Tools
+- pip: ^22.0.0 (for dependency management)
+- Virtualenv: For environment isolation
+
+## Quality Management Protocol
+
+### 1. Code Quality
+- Adherence to PEP 8 style guidelines for Python code.
+- Modular and well-documented code structure.
+- Consistency in naming conventions and file organization.
+
+### 2. Performance
+- Ensure bot response time is under 3 seconds for user interactions.
+- Optimize API calls to minimize latency and respect rate limits.
+- Efficient data storage to handle growing user data without performance degradation.
+
+### 3. Security
+- Secure handling of user data, ensuring coordinates are stored without personal identifiers.
+- Implement basic input validation to prevent malformed data from users.
+- Appropriate error handling to avoid crashes from unexpected inputs or API failures.
+
+### 4. UI/UX
+- User-friendly Telegram interface with minimalistic design.
+- Accessibility considerations for older users through clear language and visual aids like emojis.
+- Consistent interaction flow to guide users through coordinate submission.
+
+## Project Structure Convention
+
+```
+crop_bot/
+├── src/                        # Core source code
+│   ├── bot/                   # Telegram bot logic and handlers
+│   │   ├── __init__.py
+│   │   ├── handlers.py       # All conversation handlers
+│   │   └── keyboards.py      # Keyboard and menu definitions
+│   ├── api/                   # FastAPI server for potential web extensions
+│   └── storage/              # Data storage logic for coordinates
+├── config/                    # Configuration files for settings and tokens
+├── data/                      # Storage for user data like coordinates.json
+├── requirements.txt           # Dependencies
+└── main.py                   # Entry point for bot execution, minimal logic
+
+```
+
+## Important Constraints
+
+1. **Restricted Files**
+   - `config/settings.py` (for sensitive token information)
+   - `data/coordinates.json` (for user data privacy)
+2. **Version Management**
+   - Technology stack version changes require approval to ensure compatibility.
+   - External API integrations must be documented with version specifics.
+3. **Code Placement**
+   - Bot interaction logic in `src/bot/`
+   - Data handling in `src/storage/`
+   - API server logic in `src/api/`
+
+## Implementation Process
+
+### 1. Initial Analysis Phas
+### Requirements Analysis
+- Identify functional requirements such as coordinate collection and user interaction.
+- Confirm technical constraints like Telegram API limits and Python version compatibility.
+- Check consistency with existing project structure and goals.
+### Risk Assessment
+- Potential technical challenges with API integrations and user data handling.
+- Performance impacts from high user load or slow API responses.
+- Security risks related to user data storage and transmission.
+
+### 2. Implementation Phase
+- Follow an integrated implementation approach, building modules sequentially.
+- Conduct continuous verification through local testing of bot responses.
+- Maintain code quality with regular reviews and adherence to standards.
+
+### 3. Verification Phase
+- Unit testing for individual functions like coordinate saving.
+- Integration testing for bot-API-data flow.
+- Performance testing to ensure quick response times under load.
+
+### 4. Final Confirmation
+- Verify consistency with project requirements for user interaction and data storage.
+- Ensure code quality through manual reviews or linting tools.
+- Confirm documentation completeness for setup, usage, and troubleshooting.
+
+## Error Handling Protocol
+
+1. **Problem Identification**
+   - Analyze error messages from bot crashes or API failures.
+   - Identify the scope of impact on users or data integrity.
+   - Isolate root causes through logs or debugging.
+
+2. **Solution Development**
+   - Evaluate multiple approaches to resolve errors, such as fallback APIs or retry mechanisms.
+   - Assess risks of each solution on performance or security.
+   - Select the optimal solution based on effectiveness and simplicity.
+
+3. **Implementation and Verification**
+   - Implement the chosen solution with minimal disruption.
+   - Verify through targeted testing to ensure the error is resolved.
+   - Confirm no side effects on other functionalities.
+
+4. **Documentation**
+   - Record the problem and implemented solution for future reference.
+   - Propose preventive measures to avoid recurrence.
+   - Share learning points with the team or in project documentation.
