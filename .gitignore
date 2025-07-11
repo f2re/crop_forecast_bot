@@ -1,3 +1,14 @@
-.env
+# Файлы виртуального окружения
 venv/
+__pycache__/
 *.pyc
+
+# Файл с переменными окружения
+.env
+.cdsapirc
+
+# Файлы данных
+data/coordinates.json
+
+# Временные файлы NetCDF
+*.nc
