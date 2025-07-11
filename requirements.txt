@@ -2,3 +2,11 @@ fastapi==0.92.0
 uvicorn==0.20.0
 pyTelegramBotAPI==4.10.0
 python-dotenv==1.0.0
+geopy
+matplotlib
+cdsapi
+xarray
+netCDF4
+pandas
+watchdog
+scipy
