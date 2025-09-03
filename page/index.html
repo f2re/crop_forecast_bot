@@ -1,0 +1,1183 @@
+<!DOCTYPE html><html lang="ru"><head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>AgroAlert: Бизнес-концепция системы гиперлокальных предупреждений для малых фермеров Краснодарского края</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Canela:wght@300;400;700&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+    <style>
+        :root {
+            --primary: #1a5f3f;
+            --primary-light: #2d7a5a;
+            --secondary: #d97706;
+            --accent: #059669;
+            --neutral: #374151;
+            --neutral-light: #6b7280;
+            --background: #f9fafb;
+            --surface: #ffffff;
+        }
+        
+        .font-canela { font-family: 'Canela', serif; }
+        .font-inter { font-family: 'Inter', sans-serif; }
+        
+        body {
+            background-color: var(--background);
+            color: var(--neutral);
+            font-family: 'Inter', sans-serif;
+            line-height: 1.7;
+        }
+        
+        .hero-gradient {
+            background: linear-gradient(135deg, rgba(26, 95, 63, 0.95) 0%, rgba(45, 122, 90, 0.85) 50%, rgba(5, 150, 105, 0.75) 100%);
+        }
+        
+        .text-shadow {
+            text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .glass-effect {
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.9);
+        }
+        
+        .toc-fixed {
+            position: fixed;
+            top: 120px;
+            left: 20px;
+            width: 280px;
+            max-height: calc(100vh - 140px);
+            overflow-y: auto;
+            z-index: 50;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        
+        .content-offset {
+            margin-left: 320px;
+        }
+        
+        .citation {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 500;
+            border-bottom: 1px dotted var(--accent);
+        }
+        
+        .citation:hover {
+            color: var(--primary);
+            border-bottom-style: solid;
+        }
+        
+        .bento-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            grid-template-rows: auto auto;
+            gap: 1.5rem;
+            height: 70vh;
+        }
+        
+        .bento-main {
+            grid-row: 1 / 3;
+            position: relative;
+            overflow: hidden;
+            border-radius: 16px;
+        }
+        
+        .bento-side {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+        
+        .bento-card {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            border: 1px solid rgba(0,0,0,0.08);
+        }
+        
+        .chart-container {
+            background: var(--surface);
+            border-radius: 12px;
+            padding: 2rem;
+            margin: 2rem 0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        
+        @media (max-width: 1280px) {
+            .toc-fixed {
+                display: none;
+            }
+            .content-offset {
+                margin-left: 0;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .bento-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto auto;
+                height: auto;
+            }
+            .bento-main {
+                grid-row: 1;
+            }
+            .hero-gradient h1 {
+                font-size: 2.5rem;
+            }
+            .hero-gradient p {
+                font-size: 1.1rem;
+            }
+            .bento-card {
+                overflow-wrap: break-word;
+            }
+        }
+    </style>
+  </head>
+
+  <body class="font-inter">
+    <!-- Fixed Table of Contents -->
+    <nav class="toc-fixed glass-effect">
+      <div class="p-6">
+        <h3 class="font-canela text-lg font-bold text-gray-900 mb-4">Содержание</h3>
+        <ul class="space-y-2 text-sm">
+          <li>
+            <a href="#executive-summary" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Резюме проекта</a>
+          </li>
+          <li>
+            <a href="#market-analysis" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Анализ рынка</a>
+          </li>
+          <li>
+            <a href="#product-description" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Описание продукта</a>
+          </li>
+          <li>
+            <a href="#technical-architecture" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Техническая архитектура</a>
+          </li>
+          <li>
+            <a href="#monetization" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Монетизация и маркетинг</a>
+          </li>
+          <li>
+            <a href="#implementation" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">План реализации</a>
+          </li>
+          <li>
+            <a href="#financial-plan" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Финансовый план</a>
+          </li>
+          <li>
+            <a href="#risk-assessment" class="block py-1 px-2 rounded hover:bg-gray-100 text-gray-700 hover:text-gray-900">Оценка рисков</a>
+          </li>
+        </ul>
+      </div>
+    </nav>
+
+    <div class="content-offset">
+      <!-- Hero Section with Bento Layout -->
+      <section class="min-h-screen flex items-center px-4 md:px-8 py-12">
+        <div class="max-w-7xl mx-auto w-full">
+          <div class="bento-grid">
+            <!-- Main Hero Content -->
+            <div class="bento-main relative">
+              <div class="absolute inset-0">
+                <img src="https://kimi-web-img.moonshot.cn/img/www.yuga.ru/b283f7a6d8b7c5941e1179bc746a495aa5ce9e0a.jpg" alt="Фермерское поле в Краснодарском крае на закате" class="w-full h-full object-cover" size="wallpaper" aspect="wide" color="orange" style="photo" query="фермерское поле краснодарский край закат" referrerpolicy="no-referrer" data-modified="1" data-score="0.00"/>
+                <div class="hero-gradient absolute inset-0"></div>
+              </div>
+              <div class="relative z-10 h-full flex flex-col justify-center p-4 md:p-12 text-white">
+                <h1 class="font-canela text-4xl sm:text-5xl md:text-6xl font-bold mb-6 text-shadow leading-tight">
+                  <em class="block text-2xl sm:text-3xl md:text-4xl font-light mb-2 opacity-90">Бизнес-концепция</em>
+                  AgroAlert
+                </h1>
+                <p class="text-lg sm:text-xl md:text-2xl mb-8 text-shadow opacity-95 max-w-2xl">
+                  Система гиперлокальных предупреждений для малых фермеров Краснодарского края
+                </p>
+                <div class="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6 text-sm opacity-90">
+                  <div class="flex items-center">
+                    <i class="fas fa-satellite mr-2"></i>
+                    <span>Спутниковые данные</span>
+                  </div>
+                  <div class="flex items-center">
+                    <i class="fas fa-robot mr-2"></i>
+                    <span>AI-прогнозы</span>
+                  </div>
+                  <div class="flex items-center">
+                    <i class="fab fa-telegram mr-2"></i>
+                    <span>Telegram-бот</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Side Cards -->
+            <div class="bento-side">
+              <div class="bento-card flex-1">
+                <div class="flex items-center mb-4">
+                  <div class="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mr-4">
+                    <i class="fas fa-exclamation-triangle text-red-600 text-xl"></i>
+                  </div>
+                  <div>
+                    <h3 class="font-canela text-lg font-bold text-gray-900">Проблема</h3>
+                    <p class="text-sm text-gray-600">Климатические риски для малых фермеров</p>
+                  </div>
+                </div>
+                <p class="text-sm text-gray-700">Ежегодные потери от заморозков, засух и наводнений исчисляются миллионами рублей</p>
+              </div>
+
+              <div class="bento-card flex-1">
+                <div class="flex items-center mb-4">
+                  <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mr-4">
+                    <i class="fas fa-lightbulb text-green-600 text-xl"></i>
+                  </div>
+                  <div>
+                    <h3 class="font-canela text-lg font-bold text-gray-900">Решение</h3>
+                    <p class="text-sm text-gray-600">Простой и доступный сервис предупреждений</p>
+                  </div>
+                </div>
+                <p class="text-sm text-gray-700">Telegram-бот с гиперлокальными прогнозами на основе модели WRF и спутниковых данных</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Executive Summary -->
+      <section id="executive-summary" class="px-4 md:px-8 py-16 bg-white">
+        <div class="max-w-4xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-8">Резюме проекта</h2>
+
+          <div class="prose prose-lg max-w-none">
+            <div class="bg-gray-50 rounded-lg p-8 mb-8">
+              <h3 class="font-canela text-2xl font-bold text-gray-900 mb-4">Проблема и решение</h3>
+              <p class="text-gray-700 mb-4">
+                Малые фермерские хозяйства Краснодарского края, несмотря на работу в одном из самых плодородных регионов России, сталкиваются с значительными рисками, связанными с изменчивостью климата. Эти риски включают внезапные заморозки, засухи, наводнения и нашествия вредителей, которые могут привести к частичной или полной потере урожая.
+              </p>
+              <p class="text-gray-700">
+                Проект AgroAlert предлагает инновационное решение - создание максимально простого и доступного сервиса раннего предупреждения, доставляемого через Telegram. Система интегрирует передовые технологии, включая гиперлокальные метеорологические модели и анализ спутниковых данных, для генерации персонализированных, своевременных и точных предупреждений о потенциальных угрозах.
+              </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-6 mb-8">
+              <div class="bg-blue-50 rounded-lg p-6">
+                <h4 class="font-canela text-lg font-bold text-blue-900 mb-3">Простота использования</h4>
+                <p class="text-blue-800 text-sm">Интерфейс Telegram-бота, понятный пользователям с любым уровнем цифровой грамотности</p>
+              </div>
+              <div class="bg-green-50 rounded-lg p-6">
+                <h4 class="font-canela text-lg font-bold text-green-900 mb-3">Гиперлокальность</h4>
+                <p class="text-green-800 text-sm">Прогнозы с пространственным разрешением до 3 км на основе модели WRF</p>
+              </div>
+              <div class="bg-purple-50 rounded-lg p-6">
+                <h4 class="font-canela text-lg font-bold text-purple-900 mb-3">Спутниковые данные</h4>
+                <p class="text-purple-800 text-sm">Анализ данных Sentinel и Landsat для мониторинга состояния посевов</p>
+              </div>
+            </div>
+
+            <div class="bg-amber-50 rounded-lg p-8">
+              <h3 class="font-canela text-2xl font-bold text-amber-900 mb-4">Ключевые показатели</h3>
+              <div class="grid md:grid-cols-4 gap-4 text-center">
+                <div>
+                  <div class="text-3xl font-bold text-amber-900">18,000</div>
+                  <div class="text-sm text-amber-800">Целевая аудитория</div>
+                </div>
+                <div>
+                  <div class="text-3xl font-bold text-amber-900">20-30%</div>
+                  <div class="text-sm text-amber-800">Снижение рисков</div>
+                </div>
+                <div>
+                  <div class="text-3xl font-bold text-amber-900">3 года</div>
+                  <div class="text-sm text-amber-800">Срок окупаемости</div>
+                </div>
+                <div>
+                  <div class="text-3xl font-bold text-amber-900">25 млн</div>
+                  <div class="text-sm text-amber-800">Инвестиции (руб)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Market Analysis -->
+      <section id="market-analysis" class="px-4 md:px-8 py-16 bg-gray-50">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">Анализ рынка и целевой аудитории</h2>
+
+          <!-- Regional Importance -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Значение Краснодарского края в аграрном секторе</h3>
+            <div class="grid md:grid-cols-2 gap-8">
+              <div>
+                <p class="text-gray-700 mb-4">
+                  Краснодарский край является одним из ведущих аграрных регионов России, производя более <strong>7% валового сельскохозяйственного продукта</strong> страны <a href="https://www.utu.fi/sites/default/files/media/Food_Industry_72006.pdf" class="citation" target="_blank">[486]</a>.
+                </p>
+                <p class="text-gray-700 mb-4">
+                  Регион специализируется на производстве ключевых культур: <strong>75% всего риса</strong>, <strong>40% кукурузы</strong>, <strong>27% сахарной свеклы</strong> и более <strong>50% винограда</strong> в России <a href="https://www.utu.fi/sites/default/files/media/Food_Industry_72006.pdf" class="citation" target="_blank">[486]</a>.
+                </p>
+              </div>
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Структура производства</h4>
+                <div class="space-y-3">
+                  <div class="flex justify-between items-center">
+                    <span class="text-gray-700">Зерновые культуры</span>
+                    <span class="font-bold text-blue-600">Более 50%</span>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-gray-700">Рис</span>
+                    <span class="font-bold text-green-600">75% российского</span>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-gray-700">Кукуруза</span>
+                    <span class="font-bold text-yellow-600">40% российского</span>
+                  </div>
+                  <div class="flex justify-between items-center">
+                    <span class="text-gray-700">Сахарная свекла</span>
+                    <span class="font-bold text-red-600">27% российского</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Climate Risks -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Климатические риски и их последствия</h3>
+            <div class="bg-white rounded-lg p-6">
+              <p class="text-gray-700 mb-4">
+                Краснодарский край подвержен серьезным климатическим рискам. Исследования показывают, что при снижении гидротермического коэффициента на единицу урожайность сои может снизиться на <strong>237.7 г/м²</strong>
+                <a href="https://www.mdpi.com/2073-4395/10/9/1278" class="citation" target="_blank">[463]</a>.
+              </p>
+              <p class="text-gray-700">
+                В последние годы регион столкнулся с рядом экстремальных событий, включая наводнение в Крымске (2012) и рекордное наводнение на реке Пшиш (2018), когда уровень воды поднялся более чем на <strong>9.3 метра</strong>
+                <a href="https://d-nb.info/1258866277/34" class="citation" target="_blank">[528]</a>.
+              </p>
+            </div>
+          </div>
+
+          <!-- Target Audience -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Целевая аудитория: малые фермеры</h3>
+            <div class="grid md:grid-cols-2 gap-8">
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Структура рынка</h4>
+                <div class="space-y-4">
+                  <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                    <div>
+                      <div class="font-semibold">Крупные производители</div>
+                      <div class="text-sm text-gray-600">~700 хозяйств</div>
+                    </div>
+                    <div class="text-right">
+                      <div class="font-bold text-blue-600">70%</div>
+                      <div class="text-sm text-gray-600">производства</div>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                    <div>
+                      <div class="font-semibold">Малые фермеры</div>
+                      <div class="text-sm text-gray-600">~18,000 хозяйств</div>
+                    </div>
+                    <div class="text-right">
+                      <div class="font-bold text-green-600">30%</div>
+                      <div class="text-sm text-gray-600">производства</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Профиль малых фермеров</h4>
+                <ul class="space-y-2 text-gray-700">
+                  <li class="flex items-center">
+                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                    Семейные хозяйства с ограниченными ресурсами
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                    Низкий уровень цифровой грамотности
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                    Нет доступа к дорогим ГИС-системам
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check-circle text-green-500 mr-2"></i>
+                    Высокая уязвимость к климатическим рискам
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Competitive Analysis -->
+          <div>
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Анализ конкурентной среды</h3>
+            <div class="bg-white rounded-lg p-6">
+              <div class="grid md:grid-cols-3 gap-6">
+                <div class="border-l-4 border-red-400 pl-4">
+                  <h4 class="font-semibold text-gray-900 mb-2">Крупные ГИС-системы</h4>
+                  <p class="text-sm text-gray-700">Сложные и дорогие платформы, ориентированные на крупные агрохолдинги</p>
+                </div>
+                <div class="border-l-4 border-yellow-400 pl-4">
+                  <h4 class="font-semibold text-gray-900 mb-2">Агротех-стартапы</h4>
+                  <p class="text-sm text-gray-700">Решения типа <a href="https://farmonaut.com/europe/russian-farmland-agriculture-russia-2025-trends" class="citation" target="_blank">Farmonaut</a> [323], требующие установки сложных приложений</p>
+                </div>
+                <div class="border-l-4 border-blue-400 pl-4">
+                  <h4 class="font-semibold text-gray-900 mb-2">Государственные службы</h4>
+                  <p class="text-sm text-gray-700">Общие прогнозы без учета микроклиматических особенностей</p>
+                </div>
+              </div>
+              <div class="mt-6 p-4 bg-green-50 rounded-lg">
+                <h4 class="font-semibold text-green-900 mb-2">Конкурентное преимущество AgroAlert</h4>
+                <p class="text-green-800 text-sm">Простота использования, гиперлокальность прогнозов и интеграция спутниковых данных делают наш продукт уникальным на рынке</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Product Description -->
+      <section id="product-description" class="px-4 md:px-8 py-16 bg-white">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">Описание продукта и уникальное торговое предложение</h2>
+
+          <!-- Telegram Bot Description -->
+          <div class="mb-12">
+            <div class="grid md:grid-cols-2 gap-8 items-center">
+              <div>
+                <h3 class="font-canela text-2xl font-bold text-gray-900 mb-4">Telegram-бот AgroAlert</h3>
+                <p class="text-gray-700 mb-4">
+                  Продукт проекта - это максимально простой в использовании Telegram-бот, который доставляет гиперлокальные предупреждения и аграрную информацию непосредственно к фермеру.
+                </p>
+                <p class="text-gray-700 mb-4">
+                  Принцип взаимодействия основан на привычном мессенджере, что снижает барьер входа. После регистрации, фермер указывает геолокацию и параметры хозяйства, и система формирует персонализированные уведомления.
+                </p>
+                <div class="bg-blue-50 rounded-lg p-4">
+                  <h4 class="font-semibold text-blue-900 mb-2">Пример сообщения:</h4>
+                  <p class="text-blue-800 text-sm italic">
+                    &#34;Ожидается заморозок до -2°C на вашем поле №3 завтра в 4:00 утра. Рекомендуется включить орошение или дымовые шашки&#34;
+                  </p>
+                </div>
+              </div>
+              <div>
+                <img src="https://kimi-web-img.moonshot.cn/img/elfsight.com/b8281b37cc527cc4694f980ce000d09680356fe3.png" alt="Telegram messenger interface showing weather alert for farmers" class="w-full rounded-lg shadow-lg" size="medium" aspect="wide" style="photo" query="Telegram app interface weather alert" referrerpolicy="no-referrer" data-modified="1" data-score="0.00"/>
+              </div>
+            </div>
+          </div>
+
+          <!-- Types of Warnings -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Типы предупреждений и информации</h3>
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div class="bg-red-50 rounded-lg p-6 text-center">
+                <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-snowflake text-red-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-red-900 mb-2">Заморозки</h4>
+                <p class="text-red-800 text-sm">Предупреждения с указанием температуры, времени и рекомендациями по защите</p>
+              </div>
+              <div class="bg-yellow-50 rounded-lg p-6 text-center">
+                <div class="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-sun text-yellow-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-yellow-900 mb-2">Засуха</h4>
+                <p class="text-yellow-800 text-sm">Информация о дефиците влаги и рекомендации по поливу</p>
+              </div>
+              <div class="bg-blue-50 rounded-lg p-6 text-center">
+                <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-water text-blue-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-blue-900 mb-2">Наводнения</h4>
+                <p class="text-blue-800 text-sm">Оповещения о повышении уровня воды в реках</p>
+              </div>
+              <div class="bg-purple-50 rounded-lg p-6 text-center">
+                <div class="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-seedling text-purple-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-purple-900 mb-2">Состояние посевов</h4>
+                <p class="text-purple-800 text-sm">Данные о вегетации (NDVI) и влажности почвы</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Unique Selling Points -->
+          <div>
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Уникальное торговое предложение</h3>
+            <div class="space-y-8">
+              <div class="bg-gray-50 rounded-lg p-8">
+                <h4 class="font-canela text-xl font-bold text-gray-900 mb-4">
+                  <i class="fas fa-mobile-alt text-green-600 mr-3"></i>
+                  Простота использования и доступность
+                </h4>
+                <p class="text-gray-700">
+                  Использование Telegram устраняет необходимость установки новых приложений. Интерфейс в формате чата обеспечивает простоту восприятия информации без сложных графиков и настроек.
+                </p>
+              </div>
+
+              <div class="bg-gray-50 rounded-lg p-8">
+                <h4 class="font-canela text-xl font-bold text-gray-900 mb-4">
+                  <i class="fas fa-map-marker-alt text-blue-600 mr-3"></i>
+                  Гиперлокальность прогнозов
+                </h4>
+                <p class="text-gray-700">
+                  Модель Weather Research and Forecasting (WRF) позволяет получать прогнозы с высоким пространственным разрешением (до 3 км), что критически важно для микроклиматических условий Краснодарского края.
+                </p>
+              </div>
+
+              <div class="bg-gray-50 rounded-lg p-8">
+                <h4 class="font-canela text-xl font-bold text-gray-900 mb-4">
+                  <i class="fas fa-satellite text-purple-600 mr-3"></i>
+                  Интеграция спутниковых данных и моделей
+                </h4>
+                <p class="text-gray-700">
+                  Данные со спутников Sentinel и Landsat используются для мониторинга состояния посевов (NDVI), оценки влажности почвы и выявления признаков стресса, что делает предупреждения более точными.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Technical Architecture -->
+      <section id="technical-architecture" class="px-4 md:px-8 py-16 bg-gray-50">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">Техническая архитектура и источники данных</h2>
+
+          <!-- System Architecture Diagram -->
+          <div class="mb-12 bg-white rounded-lg p-8">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Архитектура системы</h3>
+            <div class="grid md:grid-cols-3 gap-8">
+              <div class="text-center">
+                <div class="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-database text-blue-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-gray-900 mb-2">Модуль сбора данных</h4>
+                <p class="text-sm text-gray-700">Сбор и интеграция данных из Росгидромета, спутников, IoT-датчиков и новостных источников</p>
+              </div>
+              <div class="text-center">
+                <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-brain text-green-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-gray-900 mb-2">Модуль анализа</h4>
+                <p class="text-sm text-gray-700">Обработка данных моделью WRF, алгоритмами машинного обучения и генерация прогнозов</p>
+              </div>
+              <div class="text-center">
+                <div class="w-20 h-20 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fab fa-telegram text-purple-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-gray-900 mb-2">Модуль доставки</h4>
+                <p class="text-sm text-gray-700">Telegram-бот для персонализированной доставки предупреждений и сбора обратной связи</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Data Sources -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Источники данных</h3>
+
+            <div class="grid md:grid-cols-2 gap-8">
+              <!-- Meteorological Data -->
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4 flex items-center">
+                  <i class="fas fa-cloud-sun text-blue-600 mr-2"></i>
+                  Метеорологические данные
+                </h4>
+                <div class="space-y-3">
+                  <div class="border-l-4 border-blue-400 pl-4">
+                    <div class="font-medium text-gray-900">Сеть AMS Краснодарского края</div>
+                    <div class="text-sm text-gray-600">Более 90 автоматических метеостанций <a href="https://www.e3s-conferences.org/articles/e3sconf/pdf/2019/23/e3sconf_form2018_04069.pdf" class="citation" target="_blank">[517]</a>
+                    </div>
+                  </div>
+                  <div class="border-l-4 border-green-400 pl-4">
+                    <div class="font-medium text-gray-900">Данные Росгидромета</div>
+                    <div class="text-sm text-gray-600">31 метеостанция с 1945 года <a href="https://www.e3s-conferences.org/articles/e3sconf/pdf/2019/23/e3sconf_form2018_04069.pdf" class="citation" target="_blank">[517]</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Satellite Data -->
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4 flex items-center">
+                  <i class="fas fa-satellite text-purple-600 mr-2"></i>
+                  Спутниковые данные
+                </h4>
+                <div class="space-y-3">
+                  <div class="border-l-4 border-purple-400 pl-4">
+                    <div class="font-medium text-gray-900">Sentinel-2</div>
+                    <div class="text-sm text-gray-600">10-метровое разрешение, NDVI анализ <a href="https://uwecworkgroup.info/satellite-data-aids-the-study-of-the-wars-environmental-and-economic-consequences-for-ukraines-agriculture-sector/" class="citation" target="_blank">[105]</a>
+                    </div>
+                  </div>
+                  <div class="border-l-4 border-indigo-400 pl-4">
+                    <div class="font-medium text-gray-900">Sentinel-1 (SAR)</div>
+                    <div class="text-sm text-gray-600">Радарные данные для мониторинга влажности <a href="https://www.mdpi.com/2072-4292/14/3/690" class="citation" target="_blank">[112]</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Models and Algorithms -->
+          <div>
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Модели и алгоритмы</h3>
+            <div class="space-y-6">
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Гиперлокальная модель WRF</h4>
+                <p class="text-gray-700 mb-4">
+                  Модель Weather Research and Forecasting (WRF) обеспечивает прогнозы с высоким пространственным разрешением, специфичными для микроклиматических условий Краснодарского края.
+                </p>
+                <div class="bg-blue-50 rounded-lg p-4">
+                  <div class="text-sm text-blue-800">
+                    <strong>Ключевые параметры:</strong>
+                    <ul class="mt-2 space-y-1">
+                      <li>• Пространственное разрешение: до 3 км</li>
+                      <li>• Временной охват: 5-7 дней</li>
+                      <li>• Обновление: каждые 6 часов</li>
+                      <li>• Источники данных: спутники, метеостанции, IoT-датчики</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-white rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Алгоритмы машинного обучения</h4>
+                <p class="text-gray-700 mb-4">
+                  ML-алгоритмы анализируют большие объемы данных для выявления паттернов и прогнозирования рисков. В исследованиях для реки Пшиш модель XGBoost обеспечивала точный прогноз на 20 часов вперед <a href="https://www.e3s-conferences.org/articles/e3sconf/pdf/2019/23/e3sconf_form2018_04069.pdf" class="citation" target="_blank">[522]</a>.
+                </p>
+                <div class="grid md:grid-cols-3 gap-4">
+                  <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <div class="font-medium text-gray-900">XGBoost</div>
+                    <div class="text-sm text-gray-600">Прогнозирование рисков</div>
+                  </div>
+                  <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <div class="font-medium text-gray-900">LSTM</div>
+                    <div class="text-sm text-gray-600">Анализ временных рядов</div>
+                  </div>
+                  <div class="text-center p-4 bg-gray-50 rounded-lg">
+                    <div class="font-medium text-gray-900">NLP</div>
+                    <div class="text-sm text-gray-600">Анализ новостей</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Monetization &amp; Marketing -->
+      <section id="monetization" class="px-4 md:px-8 py-16 bg-white">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">Модель монетизации и маркетинг</h2>
+
+          <!-- Pricing Model -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Модель монетизации</h3>
+            <div class="grid md:grid-cols-3 gap-8">
+              <div class="bg-gray-50 rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Freemium-модель</h4>
+                <ul class="space-y-2 text-sm text-gray-700">
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Ежедневный прогноз на 3 дня
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Критические предупреждения
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Общая информация по региону
+                  </li>
+                </ul>
+              </div>
+
+              <div class="bg-blue-50 rounded-lg p-6">
+                <h4 class="font-semibold text-blue-900 mb-4">Платные подписки</h4>
+                <div class="space-y-3">
+                  <div class="border-l-4 border-blue-400 pl-3">
+                    <div class="font-medium text-blue-900">Базовый</div>
+                    <div class="text-sm text-blue-800">1,000 руб/мес</div>
+                    <div class="text-xs text-blue-700">Персонализированные предупреждения, прогноз на 7 дней</div>
+                  </div>
+                  <div class="border-l-4 border-green-400 pl-3">
+                    <div class="font-medium text-green-900">Профессионал</div>
+                    <div class="text-sm text-green-800">3,000 руб/мес</div>
+                    <div class="text-xs text-green-700">Анализ NDVI, прогноз заболеваний, исторические данные</div>
+                  </div>
+                  <div class="border-l-4 border-purple-400 pl-3">
+                    <div class="font-medium text-purple-900">Корпоративный</div>
+                    <div class="text-sm text-purple-800">5,000 руб/мес</div>
+                    <div class="text-xs text-purple-700">API доступ, интеграция с 1С, выделенная поддержка</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-amber-50 rounded-lg p-6">
+                <h4 class="font-semibold text-amber-900 mb-4">Дополнительные услуги</h4>
+                <ul class="space-y-2 text-sm text-amber-800">
+                  <li>• Платные консультации агрономов</li>
+                  <li>• Персональный анализ полей</li>
+                  <li>• Экспортные отчеты</li>
+                  <li>• SMS-уведомления</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Marketing Strategy -->
+          <div>
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Стратегия маркетинга и продвижения</h3>
+            <div class="grid md:grid-cols-3 gap-8">
+              <div class="bg-white border-2 border-blue-200 rounded-lg p-6">
+                <div class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-handshake text-blue-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-gray-900 text-center mb-4">Партнерства</h4>
+                <p class="text-sm text-gray-700 text-center">
+                  Сотрудничество с сельскохозяйственными кооперативами, ассоциациями фермеров и кредитными союзами для доверительного продвижения продукта.
+                </p>
+              </div>
+
+              <div class="bg-white border-2 border-green-200 rounded-lg p-6">
+                <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-chalkboard-teacher text-green-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-gray-900 text-center mb-4">Обучение</h4>
+                <p class="text-sm text-gray-700 text-center">
+                  Проведение бесплатных семинаров и полевых демонстраций для преодоления барьера цифровой грамотности.
+                </p>
+              </div>
+
+              <div class="bg-white border-2 border-purple-200 rounded-lg p-6">
+                <div class="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <i class="fas fa-bullhorn text-purple-600 text-2xl"></i>
+                </div>
+                <h4 class="font-semibold text-gray-900 text-center mb-4">Цифровой маркетинг</h4>
+                <p class="text-sm text-gray-700 text-center">
+                  Таргетированная реклама в социальных сетях, контекстная реклама и создание полезного контента.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Implementation Plan -->
+      <section id="implementation" class="px-4 md:px-8 py-16 bg-gray-50">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">План реализации и этапы разработки</h2>
+
+          <div class="space-y-8">
+            <!-- Phase 1 -->
+            <div class="bg-white rounded-lg p-8 shadow-sm">
+              <div class="flex items-center mb-6">
+                <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mr-4">
+                  <span class="text-blue-600 font-bold">1</span>
+                </div>
+                <div>
+                  <h3 class="font-canela text-xl font-bold text-gray-900">Исследование и проектирование</h3>
+                  <p class="text-gray-600">3-6 месяцев</p>
+                </div>
+              </div>
+              <div class="grid md:grid-cols-3 gap-6">
+                <div class="border-l-4 border-blue-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Опросы и фокус-группы</h4>
+                  <p class="text-sm text-gray-700">Глубокое понимание потребностей фермеров, их &#34;точек боли&#34; и уровня цифровой грамотности</p>
+                </div>
+                <div class="border-l-4 border-green-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Анализ данных</h4>
+                  <p class="text-sm text-gray-700">Оценка доступности и качества данных от Росгидромета, спутниковых миссий и частных поставщиков</p>
+                </div>
+                <div class="border-l-4 border-purple-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Прототипирование</h4>
+                  <p class="text-sm text-gray-700">Создание интерактивного прототипа Telegram-бота для тестирования сценариев взаимодействия</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Phase 2 -->
+            <div class="bg-white rounded-lg p-8 shadow-sm">
+              <div class="flex items-center mb-6">
+                <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mr-4">
+                  <span class="text-green-600 font-bold">2</span>
+                </div>
+                <div>
+                  <h3 class="font-canela text-xl font-bold text-gray-900">Разработка MVP</h3>
+                  <p class="text-gray-600">6-9 месяцев</p>
+                </div>
+              </div>
+              <div class="grid md:grid-cols-3 gap-6">
+                <div class="border-l-4 border-blue-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Базовый функционал</h4>
+                  <p class="text-sm text-gray-700">Создание MVP с основными функциями: предупреждения о заморозках и засухе</p>
+                </div>
+                <div class="border-l-4 border-green-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Тестовая группа</h4>
+                  <p class="text-sm text-gray-700">Тестирование на 20-50 фермерских хозяйствах в течение вегетационного периода</p>
+                </div>
+                <div class="border-l-4 border-purple-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Корректировка</h4>
+                  <p class="text-sm text-gray-700">Внесение изменений на основе обратной связи пользователей</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Phase 3 -->
+            <div class="bg-white rounded-lg p-8 shadow-sm">
+              <div class="flex items-center mb-6">
+                <div class="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mr-4">
+                  <span class="text-yellow-600 font-bold">3</span>
+                </div>
+                <div>
+                  <h3 class="font-canela text-xl font-bold text-gray-900">Пилотный запуск</h3>
+                  <p class="text-gray-600">6 месяцев</p>
+                </div>
+              </div>
+              <div class="grid md:grid-cols-3 gap-6">
+                <div class="border-l-4 border-blue-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Расширение внедрения</h4>
+                  <p class="text-sm text-gray-700">Тестирование на 200-300 хозяйствах в нескольких районах Краснодарского края</p>
+                </div>
+                <div class="border-l-4 border-green-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Дополнительные данные</h4>
+                  <p class="text-sm text-gray-700">Интеграция новостных агрегаторов и детальных спутниковых снимков</p>
+                </div>
+                <div class="border-l-4 border-purple-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Оценка эффективности</h4>
+                  <p class="text-sm text-gray-700">Мониторинг точности прогнозов (цель: &gt;90%) и экономической эффективности</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Phase 4 -->
+            <div class="bg-white rounded-lg p-8 shadow-sm">
+              <div class="flex items-center mb-6">
+                <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mr-4">
+                  <span class="text-purple-600 font-bold">4</span>
+                </div>
+                <div>
+                  <h3 class="font-canela text-xl font-bold text-gray-900">Полноценный запуск и масштабирование</h3>
+                  <p class="text-gray-600">12 месяцев</p>
+                </div>
+              </div>
+              <div class="grid md:grid-cols-3 gap-6">
+                <div class="border-l-4 border-blue-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Коммерческий запуск</h4>
+                  <p class="text-sm text-gray-700">Запуск для всех фермеров Краснодарского края с полноценной маркетинговой кампанией</p>
+                </div>
+                <div class="border-l-4 border-green-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Модель монетизации</h4>
+                  <p class="text-sm text-gray-700">Внедрение платных тарифов и системы подписок</p>
+                </div>
+                <div class="border-l-4 border-purple-400 pl-4">
+                  <h4 class="font-medium text-gray-900 mb-2">Масштабирование</h4>
+                  <p class="text-sm text-gray-700">Планирование расширения на другие аграрные регионы России</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Financial Plan -->
+      <section id="financial-plan" class="px-4 md:px-8 py-16 bg-white">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">Финансовый план и ожидаемые результаты</h2>
+
+          <!-- Key Financial Indicators -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Ключевые финансовые показатели</h3>
+
+            <div class="grid md:grid-cols-3 gap-8 mb-8">
+              <div class="bg-blue-50 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-blue-900 mb-2">25 млн</div>
+                <div class="text-blue-800">Инвестиции (руб)</div>
+                <div class="text-sm text-blue-700 mt-2">На разработку MVP, пилотный запуск и маркетинг</div>
+              </div>
+              <div class="bg-green-50 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-green-900 mb-2">3 года</div>
+                <div class="text-green-800">Срок окупаемости</div>
+                <div class="text-sm text-green-700 mt-2">Достижение самоокупаемости и прибыльности</div>
+              </div>
+              <div class="bg-purple-50 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-purple-900 mb-2">40-80 млн</div>
+                <div class="text-purple-800">Годовая выручка (руб)</div>
+                <div class="text-sm text-purple-700 mt-2">После достижения целевой базы пользователей</div>
+              </div>
+            </div>
+
+            <!-- Revenue Model -->
+            <div class="bg-gray-50 rounded-lg p-6">
+              <h4 class="font-semibold text-gray-900 mb-4">Модель выручки</h4>
+              <div class="space-y-3">
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-700">Базовый тариф (1,000 руб/мес)</span>
+                  <span class="font-medium">60% пользователей</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-700">Профессиональный тариф (3,000 руб/мес)</span>
+                  <span class="font-medium">30% пользователей</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-gray-700">Корпоративный тариф (5,000 руб/мес)</span>
+                  <span class="font-medium">10% пользователей</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- User Benefits -->
+          <div class="mb-12">
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Ожидаемые результаты для пользователей</h3>
+            <div class="grid md:grid-cols-2 gap-8">
+              <div class="bg-red-50 rounded-lg p-6">
+                <h4 class="font-semibold text-red-900 mb-4">Снижение риска убытков</h4>
+                <div class="text-center mb-4">
+                  <div class="text-4xl font-bold text-red-600">20-30%</div>
+                  <div class="text-red-800">Снижение финансовых потерь</div>
+                </div>
+                <p class="text-red-700 text-sm">
+                  За счет своевременных предупреждений фермеры смогут принимать превентивные меры, минимизируя ущерб от климатических катастроф.
+                </p>
+              </div>
+
+              <div class="bg-green-50 rounded-lg p-6">
+                <h4 class="font-semibold text-green-900 mb-4">Повышение эффективности</h4>
+                <ul class="space-y-2 text-green-800 text-sm">
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Оптимизация использования ресурсов
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Снижение потерь урожая
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Точное планирование работ
+                  </li>
+                  <li class="flex items-center">
+                    <i class="fas fa-check text-green-600 mr-2"></i>
+                    Повышение прибыльности
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- Target Metrics -->
+          <div>
+            <h3 class="font-canela text-2xl font-bold text-gray-900 mb-6">Целевые показатели проекта</h3>
+            <div class="grid md:grid-cols-2 gap-8">
+              <div class="bg-white border-2 border-blue-200 rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Пользовательская база</h4>
+                <div class="text-center mb-4">
+                  <div class="text-3xl font-bold text-blue-600">800-1600</div>
+                  <div class="text-blue-800">Фермерских хозяйств</div>
+                  <div class="text-sm text-blue-700">За первые 2 года</div>
+                </div>
+                <div class="bg-blue-50 rounded-lg p-4">
+                  <div class="text-center">
+                    <div class="text-lg font-bold text-blue-900">5-10%</div>
+                    <div class="text-sm text-blue-800">Доля рынка малых фермеров Краснодарского края</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-white border-2 border-green-200 rounded-lg p-6">
+                <h4 class="font-semibold text-gray-900 mb-4">Финансовые результаты</h4>
+                <div class="space-y-4">
+                  <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+                    <span class="text-green-900">Точка безубыточности</span>
+                    <span class="font-bold text-green-600">1,000 платных подписчиков</span>
+                  </div>
+                  <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+                    <span class="text-green-900">Срок окупаемости</span>
+                    <span class="font-bold text-green-600">3 года</span>
+                  </div>
+                  <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+                    <span class="text-green-900">Годовая выручка</span>
+                    <span class="font-bold text-green-600">40-80 млн руб</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Risk Assessment -->
+      <section id="risk-assessment" class="px-4 md:px-8 py-16 bg-gray-50">
+        <div class="max-w-6xl mx-auto">
+          <h2 class="font-canela text-4xl font-bold text-gray-900 mb-12">Оценка рисков и стратегии их минимизации</h2>
+
+          <div class="space-y-8">
+            <!-- Technical Risks -->
+            <div class="bg-white rounded-lg p-8">
+              <h3 class="font-canela text-xl font-bold text-gray-900 mb-6">
+                <i class="fas fa-cogs text-red-600 mr-3"></i>
+                Технические риски
+              </h3>
+              <div class="space-y-6">
+                <div class="border-l-4 border-red-400 pl-6">
+                  <h4 class="font-semibold text-gray-900 mb-2">Недостаточная точность прогнозов</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-red-800 font-medium mb-2">Риск</div>
+                      <p class="text-sm text-gray-700">Гиперлокальные прогнозы могут не достичь заявленной точности, что подорвет доверие пользователей.</p>
+                    </div>
+                    <div>
+                      <div class="text-green-800 font-medium mb-2">Минимизация</div>
+                      <p class="text-sm text-gray-700">Постоянное обучение и калибровка моделей, привлечение экспертов-агрономов, использование ансамблевых методов прогнозирования.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="border-l-4 border-red-400 pl-6">
+                  <h4 class="font-semibold text-gray-900 mb-2">Проблемы с интеграцией данных</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-red-800 font-medium mb-2">Риск</div>
+                      <p class="text-sm text-gray-700">Сбои в получении данных от внешних источников (API недоступны, изменение формата данных).</p>
+                    </div>
+                    <div>
+                      <div class="text-green-800 font-medium mb-2">Минимизация</div>
+                      <p class="text-sm text-gray-700">Разработка устойчивой системы с механизмами повторных попыток, использование резервных источников данных.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Market Risks -->
+            <div class="bg-white rounded-lg p-8">
+              <h3 class="font-canela text-xl font-bold text-gray-900 mb-6">
+                <i class="fas fa-chart-line text-blue-600 mr-3"></i>
+                Риски, связанные с рынком
+              </h3>
+              <div class="space-y-6">
+                <div class="border-l-4 border-blue-400 pl-6">
+                  <h4 class="font-semibold text-gray-900 mb-2">Низкая скорость внедрения среди фермеров</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-red-800 font-medium mb-2">Риск</div>
+                      <p class="text-sm text-gray-700">Фермеры могут быть консервативны и неохотно внедрять новые технологии.</p>
+                    </div>
+                    <div>
+                      <div class="text-green-800 font-medium mb-2">Минимизация</div>
+                      <p class="text-sm text-gray-700">Фокус на простоте продукта, проведение обучающих семинаров, демонстрация экономической выгоды, партнерства с доверенными организациями.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="border-l-4 border-blue-400 pl-6">
+                  <h4 class="font-semibold text-gray-900 mb-2">Конкуренция со стороны крупных игроков</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-red-800 font-medium mb-2">Риск</div>
+                      <p class="text-sm text-gray-700">Крупные агротех-компании могут запустить аналогичные решения, используя свои ресурсы.</p>
+                    </div>
+                    <div>
+                      <div class="text-green-800 font-medium mb-2">Минимизация</div>
+                      <p class="text-sm text-gray-700">Фокусировка на узкой нише малых фермеров, создание сильного бренда, постоянное развитие продукта.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Financial and Organizational Risks -->
+            <div class="bg-white rounded-lg p-8">
+              <h3 class="font-canela text-xl font-bold text-gray-900 mb-6">
+                <i class="fas fa-dollar-sign text-green-600 mr-3"></i>
+                Финансовые и организационные риски
+              </h3>
+              <div class="space-y-6">
+                <div class="border-l-4 border-green-400 pl-6">
+                  <h4 class="font-semibold text-gray-900 mb-2">Высокие затраты на разработку и поддержку</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-red-800 font-medium mb-2">Риск</div>
+                      <p class="text-sm text-gray-700">Разработка и поддержка сложной технической инфраструктуры могут превысить бюджет.</p>
+                    </div>
+                    <div>
+                      <div class="text-green-800 font-medium mb-2">Минимизация</div>
+                      <p class="text-sm text-gray-700">Эффективное управление проектом, привлечение грантов и субсидий, поэтапное финансирование.</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="border-l-4 border-green-400 pl-6">
+                  <h4 class="font-semibold text-gray-900 mb-2">Зависимость от внешних поставщиков данных</h4>
+                  <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <div class="text-red-800 font-medium mb-2">Риск</div>
+                      <p class="text-sm text-gray-700">Изменение условий или прекращение работы внешних поставщиков данных может нарушить работу системы.</p>
+                    </div>
+                    <div>
+                      <div class="text-green-800 font-medium mb-2">Минимизация</div>
+                      <p class="text-sm text-gray-700">Диверсификация источников данных, заключение долгосрочных соглашений, разработка собственных инструментов сбора данных.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Footer -->
+      <footer class="px-4 md:px-8 py-12 bg-gray-900 text-white">
+        <div class="max-w-6xl mx-auto text-center">
+          <h3 class="font-canela text-2xl font-bold mb-4">AgroAlert</h3>
+          <p class="text-gray-400 mb-6">Система гиперлокальных предупреждений для малых фермеров Краснодарского края</p>
+          <div class="flex justify-center space-x-6 text-gray-400">
+            <a href="#" class="hover:text-white transition-colors">
+              <i class="fab fa-telegram text-xl"></i>
+            </a>
+            <a href="#" class="hover:text-white transition-colors">
+              <i class="fas fa-envelope text-xl"></i>
+            </a>
+            <a href="#" class="hover:text-white transition-colors">
+              <i class="fas fa-phone text-xl"></i>
+            </a>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <script>
+        // Smooth scrolling for anchor links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Highlight active section in TOC
+        window.addEventListener('scroll', () => {
+            const sections = document.querySelectorAll('section[id]');
+            const tocLinks = document.querySelectorAll('.toc-fixed a');
+            
+            let current = '';
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.clientHeight;
+                if (pageYOffset >= sectionTop - 200) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            tocLinks.forEach(link => {
+                link.classList.remove('bg-blue-100', 'text-blue-900');
+                if (link.getAttribute('href') === `#${current}`) {
+                    link.classList.add('bg-blue-100', 'text-blue-900');
+                }
+            });
+        });
+    </script>
+  
+
+</body></html>
