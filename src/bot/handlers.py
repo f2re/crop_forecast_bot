@@ -4,7 +4,9 @@ from geopy.geocoders import Nominatim
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from src.api.era5_ag import get_climate_data
 from src.bot.plotting import plot_climate_data
+from src.bot.crop_recommender_handler import handle_crop_recommendation_request
 from datetime import datetime, timedelta
+import asyncio
 
 # Инициализация геокодера для получения адреса
 geolocator = Nominatim(user_agent="crop_recommendation_bot")
@@ -157,3 +159,86 @@ def register_handlers(bot):
         except Exception as e:
             print(f"Ошибка в handle_climate_callback: {e}")
             bot.edit_message_text("Произошла ошибка при обработке вашего запроса.", call.message.chat.id, call.message.message_id)
+
+    @bot.message_handler(func=lambda message: message.text == "Рекомендации по культурам 🌾")
+    def handle_crop_recommendations(message):
+        """Обработчик кнопки 'Рекомендации по культурам 🌾'. Запрашивает геолокацию для анализа."""
+        user_id = message.from_user.id
+        coords = load_coordinates(user_id)
+
+        if coords:
+            # Если координаты уже сохранены, предлагаем использовать их или отправить новые
+            keyboard = InlineKeyboardMarkup(row_width=1)
+            keyboard.add(
+                InlineKeyboardButton("Использовать сохраненные координаты", callback_data="use_saved_coords"),
+                InlineKeyboardButton("Отправить новую геолокацию", callback_data="send_new_location")
+            )
+            bot.send_message(
+                message.chat.id,
+                f"У меня есть ваши координаты: {coords['latitude']:.4f}, {coords['longitude']:.4f}\n"
+                "Выберите действие:",
+                reply_markup=keyboard
+            )
+        else:
+            # Просим отправить геолокацию
+            location_keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            location_button = KeyboardButton("Отправить геолокацию 🌍", request_location=True)
+            location_keyboard.add(location_button)
+
+            bot.send_message(
+                message.chat.id,
+                "Для получения рекомендаций по культурам, пожалуйста, отправьте вашу геолокацию:",
+                reply_markup=location_keyboard
+            )
+
+    @bot.callback_query_handler(func=lambda call: call.data == 'use_saved_coords')
+    def use_saved_coordinates(call):
+        """Использует сохраненные координаты для анализа."""
+        user_id = call.from_user.id
+        coords = load_coordinates(user_id)
+
+        if coords:
+            bot.answer_callback_query(call.id, "Начинаю анализ...")
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+
+            # Создаем фейковый объект message с геолокацией
+            class FakeLocation:
+                def __init__(self, lat, lon):
+                    self.latitude = lat
+                    self.longitude = lon
+
+            class FakeMessage:
+                def __init__(self, chat_id, user_id, lat, lon):
+                    self.chat = type('obj', (object,), {'id': chat_id})
+                    self.from_user = type('obj', (object,), {'id': user_id})
+                    self.location = FakeLocation(lat, lon)
+
+            fake_msg = FakeMessage(call.message.chat.id, user_id, coords['latitude'], coords['longitude'])
+
+            # Запускаем async handler в sync контексте
+            try:
+                asyncio.run(handle_crop_recommendation_request(bot, fake_msg))
+            except Exception as e:
+                print(f"Ошибка в use_saved_coordinates: {e}")
+                import traceback
+                traceback.print_exc()
+                bot.send_message(call.message.chat.id, f"Произошла ошибка: {str(e)}")
+        else:
+            bot.answer_callback_query(call.id, "Координаты не найдены")
+            bot.send_message(call.message.chat.id, "Координаты не найдены. Пожалуйста, отправьте геолокацию.")
+
+    @bot.callback_query_handler(func=lambda call: call.data == 'send_new_location')
+    def request_new_location(call):
+        """Запрашивает новую геолокацию."""
+        bot.answer_callback_query(call.id, "Отправьте новую геолокацию")
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+
+        location_keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        location_button = KeyboardButton("Отправить геолокацию 🌍", request_location=True)
+        location_keyboard.add(location_button)
+
+        bot.send_message(
+            call.message.chat.id,
+            "Пожалуйста, отправьте вашу геолокацию:",
+            reply_markup=location_keyboard
+        )

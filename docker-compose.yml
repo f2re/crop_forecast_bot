@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  crop_forecast_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: crop_forecast_bot:latest
+    container_name: crop_forecast_bot
+    restart: unless-stopped
+
+    environment:
+      # Telegram Bot
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+
+      # Copernicus CDS API
+      CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api/v2}
+      CDS_API_KEY: ${CDS_API_KEY}
+
+      # OpenRouter API (optional)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+
+      # PostgreSQL (optional, for future use)
+      DATABASE_URL: ${DATABASE_URL:-}
+
+      # Python settings
+      PYTHONUNBUFFERED: 1
+
+    volumes:
+      # Data persistence
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+
+      # Earth Engine credentials (if using service account)
+      - ${HOME}/.config/earthengine:/root/.config/earthengine:ro
+
+    networks:
+      - bot_network
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  bot_network:
+    driver: bridge
+    name: crop_forecast_bot_network
+
+volumes:
+  bot_data:
+    driver: local
+  bot_models:
+    driver: local
+  bot_logs:
+    driver: local
