@@ -1,0 +1,73 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Documentation
+docs/_build/
+*.md
+!README.md
+
+# Data files (will be mounted as volumes)
+data/era5/*.nc
+data/satellite/*
+data/soil/*
+data/training/*.csv
+
+# Models (will be mounted as volumes)
+models/*.pkl
+models/*.h5
+models/*.png
+
+# Logs
+logs/*.log
+*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
