@@ -1,12 +1,36 @@
+# Core dependencies
 fastapi==0.92.0
 uvicorn==0.20.0
 pyTelegramBotAPI==4.10.0
 python-dotenv==1.0.0
-geopy
-matplotlib
-cdsapi
-xarray
-netCDF4
-pandas
 watchdog
-scipy
+
+# Geospatial and climate data
+geopy
+cdsapi==0.6.1
+xarray==2024.1.0
+netCDF4==1.6.5
+
+# Data processing
+pandas==2.1.4
+numpy==1.26.3
+scipy==1.11.4
+
+# Machine Learning
+scikit-learn==1.3.2
+joblib==1.3.2
+
+# Visualization
+matplotlib==3.8.2
+seaborn==0.13.1
+
+# HTTP client
+aiohttp==3.9.1
+requests==2.31.0
+
+# Google Earth Engine (satellite data)
+earthengine-api==0.1.390
+
+# Database (for future use)
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
