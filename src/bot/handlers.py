@@ -6,7 +6,6 @@ from src.api.era5_ag import get_climate_data
 from src.bot.plotting import plot_climate_data
 from src.bot.crop_recommender_handler import handle_crop_recommendation_request
 from datetime import datetime, timedelta
-import asyncio
 import re
 import logging
 
@@ -107,7 +106,7 @@ def register_handlers(bot):
             # Запускаем анализ рекомендаций
             try:
                 bot.send_message(message.chat.id, "🔄 Начинаю анализ данных для рекомендаций...", reply_markup=create_main_keyboard(user_id))
-                asyncio.run(handle_crop_recommendation_request(bot, message))
+                handle_crop_recommendation_request(bot, message)
             except Exception as e:
                 logger.error(f"❌ Ошибка при запуске анализа: {e}", exc_info=True)
                 bot.send_message(message.chat.id, f"Произошла ошибка: {str(e)}", reply_markup=create_main_keyboard(user_id))
@@ -251,13 +250,11 @@ def register_handlers(bot):
 
             fake_msg = FakeMessage(call.message.chat.id, user_id, coords['latitude'], coords['longitude'])
 
-            # Запускаем async handler в sync контексте
+            # Запускаем handler
             try:
-                asyncio.run(handle_crop_recommendation_request(bot, fake_msg))
+                handle_crop_recommendation_request(bot, fake_msg)
             except Exception as e:
-                print(f"Ошибка в use_saved_coordinates: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Ошибка в use_saved_coordinates: {e}", exc_info=True)
                 bot.send_message(call.message.chat.id, f"Произошла ошибка: {str(e)}")
         else:
             bot.answer_callback_query(call.id, "Координаты не найдены")
@@ -393,7 +390,7 @@ def register_handlers(bot):
 
                 # Запускаем анализ
                 try:
-                    asyncio.run(handle_crop_recommendation_request(bot, fake_msg))
+                    handle_crop_recommendation_request(bot, fake_msg)
                 except Exception as e:
                     logger.error(f"❌ Ошибка при анализе: {e}", exc_info=True)
                     bot.send_message(

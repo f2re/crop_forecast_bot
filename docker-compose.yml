@@ -66,11 +66,3 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
-
-volumes:
-  bot_data:
-    driver: local
-  bot_models:
-    driver: local
-  bot_logs:
-    driver: local
