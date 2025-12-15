@@ -12,3 +12,4 @@ data/coordinates.json
 
 # Временные файлы NetCDF
 *.nc
+.env
