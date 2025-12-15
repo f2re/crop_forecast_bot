@@ -2,7 +2,7 @@
 # Multi-stage build for optimization
 
 # Stage 1: Builder
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Set working directory
 WORKDIR /build
@@ -37,7 +37,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
-    libgdal30 \
+    gdal-bin \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
