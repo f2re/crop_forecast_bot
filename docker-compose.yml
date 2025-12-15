@@ -35,8 +35,12 @@ services:
       # Earth Engine credentials (if using service account)
       - ${HOME}/.config/earthengine:/root/.config/earthengine:ro
 
-    networks:
-      - bot_network
+    # Network settings - use default bridge for internet access
+    # For telegram-bots-platform, this will be overridden by platform's network
+    network_mode: bridge
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
 
     # Resource limits
     deploy:
@@ -55,18 +59,13 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # Health check
+    # Health check - verify network and bot process
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
-      interval: 30s
+      test: ["CMD", "python", "-c", "import socket; socket.gethostbyname('api.telegram.org')"]
+      interval: 60s
       timeout: 10s
-      retries: 3
-      start_period: 40s
-
-networks:
-  bot_network:
-    driver: bridge
-    name: crop_forecast_bot_network
+      retries: 5
+      start_period: 60s
 
 volumes:
   bot_data:
