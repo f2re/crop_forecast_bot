@@ -7,7 +7,7 @@ watchdog
 
 # Geospatial and climate data
 geopy
-cdsapi==0.6.1
+cdsapi==0.7.2
 xarray==2024.1.0
 netCDF4==1.6.5
 
