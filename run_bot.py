@@ -2,8 +2,19 @@ import telebot
 import time
 import socket
 import requests
-from config.settings import TELEGRAM_BOT_TOKEN
+import asyncio
+import logging
+from config.settings import TELEGRAM_BOT_TOKEN, get_database_url
 from src.bot.handlers import register_handlers
+from src.database import init_db
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
 
 
 def check_network_connectivity():
@@ -31,10 +42,37 @@ def check_network_connectivity():
                 return False
 
 
+def init_database():
+    """Инициализирует базу данных."""
+    try:
+        database_url = get_database_url()
+        logger.info(f"🔧 Инициализация базы данных...")
+        db = init_db(database_url)
+
+        # Create tables if they don't exist
+        async def create_tables():
+            await db.create_tables()
+            logger.info("✓ Таблицы базы данных проверены/созданы")
+
+        asyncio.run(create_tables())
+        logger.info("✓ База данных инициализирована успешно")
+        return True
+    except Exception as e:
+        logger.error(f"✗ Ошибка при инициализации базы данных: {e}", exc_info=True)
+        return False
+
+
 def start_bot():
     """Инициализирует и запускает бота."""
     if not TELEGRAM_BOT_TOKEN:
         print("Ошибка: Токен для Telegram не найден. Проверьте ваш .env файл.", flush=True)
+        return
+
+    # Initialize database
+    logger.info("Инициализация базы данных...")
+    if not init_database():
+        logger.error("Не удалось инициализировать базу данных. Проверьте настройки DATABASE_URL.")
+        time.sleep(10)
         return
 
     # Проверка сети перед запуском

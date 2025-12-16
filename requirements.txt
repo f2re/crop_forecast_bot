@@ -31,6 +31,7 @@ requests==2.31.0
 # Google Earth Engine (satellite data)
 earthengine-api==0.1.390
 
-# Database (for future use)
+# Database
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
+asyncpg==0.29.0
