@@ -35,8 +35,8 @@ services:
       # Telegram Bot
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
 
-      # Copernicus CDS API
-      CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api/v2}
+      # Copernicus CDS API (New format - no UID prefix in key)
+      CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
       CDS_API_KEY: ${CDS_API_KEY}
 
       # OpenRouter API (optional)

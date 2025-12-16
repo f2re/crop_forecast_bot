@@ -6,7 +6,8 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
 # Учетные данные для Copernicus CDS API
-CDS_API_URL = os.getenv("CDS_API_URL")
+# New API format (no UID prefix required)
+CDS_API_URL = os.getenv("CDS_API_URL", "https://cds.climate.copernicus.eu/api")
 CDS_API_KEY = os.getenv("CDS_API_KEY")
 
 # OpenRouter API для LLM рекомендаций
