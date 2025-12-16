@@ -1,6 +1,25 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: crop_forecast_bot_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-crop_forecast_bot}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-crop_forecast_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot_network
+
   crop_forecast_bot:
     build:
       context: .
@@ -8,6 +27,9 @@ services:
     image: crop_forecast_bot:latest
     container_name: crop_forecast_bot
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
 
     environment:
       # Telegram Bot
@@ -20,14 +42,19 @@ services:
       # OpenRouter API (optional)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
 
-      # PostgreSQL (optional, for future use)
-      DATABASE_URL: ${DATABASE_URL:-}
+      # PostgreSQL Database
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/crop_forecast_bot}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-crop_forecast_bot}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
 
       # Python settings
       PYTHONUNBUFFERED: 1
 
     volumes:
-      # Data persistence
+      # Data persistence (for climate data cache, etc.)
       - ./data:/app/data
       - ./models:/app/models
       - ./logs:/app/logs
@@ -35,9 +62,8 @@ services:
       # Earth Engine credentials (if using service account)
       - ${HOME}/.config/earthengine:/root/.config/earthengine:ro
 
-    # Network settings - use default bridge for internet access
-    # For telegram-bots-platform, this will be overridden by platform's network
-    network_mode: bridge
+    networks:
+      - bot_network
     dns:
       - 8.8.8.8
       - 8.8.4.4
@@ -66,3 +92,11 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+networks:
+  bot_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local

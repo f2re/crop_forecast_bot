@@ -79,11 +79,13 @@ def register_handlers(bot):
         user_id = message.from_user.id
         latitude = message.location.latitude
         longitude = message.location.longitude
+        username = message.from_user.username
+        first_name = message.from_user.first_name
 
         logger.info(f"📍 Получена геолокация от пользователя {user_id}: {latitude}, {longitude}")
 
         # Сохранение координат
-        save_coordinates(user_id, latitude, longitude)
+        save_coordinates(user_id, latitude, longitude, username=username, first_name=first_name)
 
         response_text = (
             f"Спасибо! Я сохранил ваши координаты: широта {latitude}, долгота {longitude}. 🌍\n"
@@ -353,7 +355,9 @@ def register_handlers(bot):
                 logger.info(f"✅ Координаты распознаны: {lat}, {lon}")
 
                 # Сохраняем координаты
-                save_coordinates(user_id, lat, lon)
+                username = message.from_user.username
+                first_name = message.from_user.first_name
+                save_coordinates(user_id, lat, lon, username=username, first_name=first_name)
 
                 # Сбрасываем состояние
                 user_states[user_id] = None
