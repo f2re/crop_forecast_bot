@@ -42,13 +42,13 @@ def save_coordinates(user_id: int, latitude: float, longitude: float, username: 
                 )
 
         # Run async operation in sync context
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If event loop is already running, create a new task
-            asyncio.create_task(_save())
-        else:
-            # Otherwise run synchronously
-            asyncio.run(_save())
+        # Create a new event loop for this thread (works in worker threads)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_save())
+        finally:
+            loop.close()
 
         logger.info(f"Координаты пользователя {user_id} сохранены: {latitude}, {longitude}")
     except Exception as e:
@@ -83,17 +83,14 @@ def load_coordinates(user_id: int) -> Optional[Dict[str, float]]:
                 return None
 
         # Run async operation in sync context
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # Create a new event loop for this sync call
-            new_loop = asyncio.new_event_loop()
-            try:
-                result = new_loop.run_until_complete(_load())
-                return result
-            finally:
-                new_loop.close()
-        else:
-            return asyncio.run(_load())
+        # Create a new event loop for this thread (works in worker threads)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(_load())
+            return result
+        finally:
+            loop.close()
     except Exception as e:
         logger.error(f"Ошибка при загрузке координат: {e}", exc_info=True)
         return None
