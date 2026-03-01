@@ -5,6 +5,11 @@ pyTelegramBotAPI==4.10.0
 python-dotenv==1.0.0
 watchdog
 
+# Open-Meteo (основной источник метеоданных — без API-ключа)
+openmeteo-requests>=0.3.0
+requests-cache>=1.2.0
+retry-requests>=2.0.0
+
 # Geospatial and climate data
 geopy
 cdsapi==0.7.2
