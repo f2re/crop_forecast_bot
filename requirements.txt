@@ -35,3 +35,8 @@ earthengine-api==0.1.390
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 asyncpg==0.29.0
+
+# RAG — Knowledge Base (agrometeorology literature)
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+pypdf>=4.0.0
