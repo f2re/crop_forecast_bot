@@ -9,13 +9,11 @@ from geopy.geocoders import Nominatim
 
 from src.api.open_meteo import fetch_agro_data
 from src.agro.indices import compute_all_indices
+from src.agro.crop_catalog import get_crop_name
 from src.bot.simple_recommender import format_simple_recommendation
 
 logger = logging.getLogger(__name__)
 geolocator = Nominatim(user_agent="crop_recommendation_bot")
-
-# Культура по умолчанию для ГДД (в будущем — из профиля пользователя)
-DEFAULT_CROP = "wheat"
 
 
 def _get_address(lat: float, lon: float) -> str:
@@ -28,12 +26,12 @@ def _get_address(lat: float, lon: float) -> str:
         return f"{lat:.4f}°N {lon:.4f}°E"
 
 
-def _format_agro_report(address: str, data: dict, indices: dict) -> str:
+def _format_agro_report(address: str, data: dict, indices: dict, crop: str) -> str:
     """
     Формирует текст агроотчёта для Telegram.
 
     Структура (UX Layer — ≤ 3 действия на блок):
-      1. Заголовок + адрес
+      1. Заголовок + адрес + культура
       2. Алерты заморозков (если есть)
       3. ГТК (увлажнённость)
       4. ГДД (фенофаза)
@@ -46,11 +44,14 @@ def _format_agro_report(address: str, data: dict, indices: dict) -> str:
     et0   = indices["et0_bal"]
     meta  = data["meta"]
 
+    crop_name = get_crop_name(crop)
+
     lines = [
         "🌾 АГРОМЕТЕОРОЛОГИЧЕСКИЙ АНАЛИЗ",
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
         f"📍 {address}",
         f"🏔 Высота: {meta['elevation']:.0f} м н.у.м.",
+        f"🌱 Культура: {crop_name}",
         "",
     ]
 
@@ -107,7 +108,7 @@ def _format_agro_report(address: str, data: dict, indices: dict) -> str:
     return "\n".join(lines)
 
 
-def handle_crop_recommendation_request(bot, message):
+def handle_crop_recommendation_request(bot, message, crop: str = "wheat"):
     """
     Главный обработчик запроса на агрорекомендации.
 
@@ -116,30 +117,33 @@ def handle_crop_recommendation_request(bot, message):
     Args:
         bot:     экземпляр TeleBot
         message: сообщение с location или text-координатами
+        crop:    ключ культуры из crop_catalog.CROPS (default: 'wheat')
     """
     lat     = message.location.latitude
     lon     = message.location.longitude
     user_id = message.from_user.id
 
-    logger.info(f"🚀 Анализ для {user_id}: {lat:.4f}, {lon:.4f}")
+    logger.info(f"🚀 Анализ для {user_id}: {lat:.4f}, {lon:.4f}, культура={crop}")
 
     address = _get_address(lat, lon)
+    crop_name = get_crop_name(crop)
 
     bot.send_message(
         message.chat.id,
         f"🌍 Запрашиваю метеоданные...\n"
         f"📍 {address}\n"
+        f"🌱 Культура: {crop_name}\n"
         f"⏳ Обычно 3–5 секунд."
     )
 
     try:
         # ── Первичный путь: Open-Meteo + агроиндексы ─────────────────────────
         weather_data = fetch_agro_data(lat, lon)
-        indices      = compute_all_indices(weather_data["daily"], crop=DEFAULT_CROP)
-        report       = _format_agro_report(address, weather_data, indices)
+        indices      = compute_all_indices(weather_data["daily"], crop=crop)
+        report       = _format_agro_report(address, weather_data, indices, crop=crop)
 
         bot.send_message(message.chat.id, report)
-        logger.info(f"✅ Агроотчёт отправлен: {user_id}")
+        logger.info(f"✅ Агроотчёт отправлен: {user_id}, культура={crop}")
 
     except Exception as e:
         # ── Fallback: только география ────────────────────────────────────────

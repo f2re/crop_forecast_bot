@@ -39,7 +39,6 @@ async def get_or_create_user(
         await session.commit()
         await session.refresh(user)
     else:
-        # Update username and first_name if changed
         needs_update = False
 
         if username and user.username != username:
@@ -79,10 +78,8 @@ async def save_coordinates(
     Returns:
         Updated User object
     """
-    # Get or create user
     user = await get_or_create_user(session, telegram_id, username, first_name)
 
-    # Update coordinates
     user.latitude = latitude
     user.longitude = longitude
     user.updated_at = datetime.utcnow()
@@ -136,3 +133,44 @@ async def get_user(
         select(User).where(User.telegram_id == telegram_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_user_crop(
+    session: AsyncSession,
+    telegram_id: int
+) -> str:
+    """
+    Get user's selected crop key.
+
+    Returns crop key (str) or 'wheat' as default.
+    """
+    result = await session.execute(
+        select(User).where(User.telegram_id == telegram_id)
+    )
+    user = result.scalar_one_or_none()
+    if user and user.selected_crop:
+        return user.selected_crop
+    return "wheat"
+
+
+async def update_user_crop(
+    session: AsyncSession,
+    telegram_id: int,
+    crop_key: str
+) -> None:
+    """
+    Save user's selected crop.
+
+    Args:
+        session: Database session
+        telegram_id: Telegram user ID
+        crop_key: Crop key from crop_catalog.CROPS
+    """
+    result = await session.execute(
+        select(User).where(User.telegram_id == telegram_id)
+    )
+    user = result.scalar_one_or_none()
+    if user:
+        user.selected_crop = crop_key
+        user.updated_at = datetime.utcnow()
+        await session.commit()

@@ -1,5 +1,6 @@
-from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from src.storage.coordinates import load_coordinates
+from src.agro.crop_catalog import CATEGORIES, CROPS
 
 
 def create_main_keyboard(user_id=None):
@@ -39,3 +40,41 @@ def create_main_keyboard(user_id=None):
     keyboard.add(help_button)
 
     return keyboard
+
+
+def make_crop_category_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора категории культуры (6 кнопок)."""
+    kb = InlineKeyboardMarkup(row_width=2)
+    buttons = []
+    for cat_id, cat in CATEGORIES.items():
+        buttons.append(
+            InlineKeyboardButton(
+                f"{cat['emoji']} {cat['label']}",
+                callback_data=f"crop_cat:{cat_id}"
+            )
+        )
+    kb.add(*buttons)
+    return kb
+
+
+def make_crop_list_keyboard(cat_id: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора конкретной культуры из категории."""
+    kb = InlineKeyboardMarkup(row_width=2)
+    category = CATEGORIES.get(cat_id)
+    if not category:
+        return kb
+    buttons = []
+    for crop_key in category["crops"]:
+        crop = CROPS.get(crop_key)
+        if crop:
+            buttons.append(
+                InlineKeyboardButton(
+                    f"{crop['emoji']} {crop['name_ru']}",
+                    callback_data=f"crop_pick:{crop_key}"
+                )
+            )
+    buttons.append(
+        InlineKeyboardButton("◀️ Назад к категориям", callback_data="crop_back_to_categories")
+    )
+    kb.add(*buttons)
+    return kb
