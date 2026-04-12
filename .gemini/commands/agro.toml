@@ -1,0 +1,2 @@
+description = "Perform an agronomic review of the specified file."
+prompt = "@agronomist Review the agronomic logic, formulas, and thresholds in this file. Verify compliance with Selyaninov (ГТК) and McMaster (GDD) standards."

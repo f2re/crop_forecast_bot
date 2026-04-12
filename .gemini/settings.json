@@ -1,0 +1,34 @@
+{
+  "experimental": {
+    "agents": true
+  },
+  "agents": {
+    "overrides": {
+      "architect": {
+        "modelConfig": {
+          "model": "gemini-2.0-pro-exp-02-05"
+        }
+      },
+      "agronomist": {
+        "modelConfig": {
+          "model": "gemini-2.0-flash"
+        }
+      },
+      "farmer_ux": {
+        "modelConfig": {
+          "model": "gemini-2.0-flash"
+        }
+      },
+      "developer": {
+        "modelConfig": {
+          "model": "gemini-2.0-flash"
+        }
+      },
+      "tester": {
+        "modelConfig": {
+          "model": "gemini-2.0-flash"
+        }
+      }
+    }
+  }
+}

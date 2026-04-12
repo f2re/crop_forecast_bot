@@ -1,0 +1,2 @@
+description = "Perform a high-level architectural review of the project."
+prompt = "@architect Review the project structure and layer separation. Evaluate Docker configuration and caching strategy."

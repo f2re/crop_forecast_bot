@@ -1,0 +1,2 @@
+description = "Perform a UX review of the specified file for farmers."
+prompt = "@farmer_ux Check the user messages and prompts in this file. Remove all tech jargon and ensure it's simple enough for a 55-year-old farmer."

@@ -1,0 +1,2 @@
+description = "Perform a code review of the specified file."
+prompt = "@developer Conduct a senior Python code review. Focus on async safety, aiogram 3.x patterns, and SQLAlchemy 2.0 optimization."

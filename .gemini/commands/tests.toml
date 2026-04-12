@@ -1,0 +1,2 @@
+description = "Generate pytest tests for the specified file."
+prompt = "@tester Generate async pytest tests for the logic in this file. Include edge cases for coordinates and missing data."
