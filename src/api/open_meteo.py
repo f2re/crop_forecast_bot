@@ -18,6 +18,8 @@
   et0_fao_evapotranspiration, wind_speed_10m_max
 """
 import logging
+import asyncio
+from typing import Tuple, Optional
 
 import openmeteo_requests
 import pandas as pd
@@ -36,24 +38,24 @@ _retry_session = retry(_cache_session, retries=5, backoff_factor=0.2)
 _client        = openmeteo_requests.Client(session=_retry_session)
 
 
-def fetch_agro_data(lat: float, lon: float) -> dict:
+async def fetch_agro_data(lat: float, lon: float) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """
-    Запрашивает почасовые и суточные агрометеорологические данные.
-
-    Args:
-        lat: широта (decimal degrees)
-        lon: долгота (decimal degrees)
+    Запрашивает агрометеорологические данные (асинхронная обертка).
 
     Returns:
-        {
-          'meta':   {'lat', 'lon', 'elevation', 'utc_offset'},
-          'hourly': pd.DataFrame — колонки date/temperature_2m/precipitation/et0/soil_moisture_0_1,
-          'daily':  pd.DataFrame — колонки date/t_max/t_min/t_mean/precip_sum/et0_sum/wind_max,
-        }
-
-    Raises:
-        Exception: при недоступности API (сеть, таймаут).
+        (df_daily, df_hourly)
     """
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, _fetch_sync, lat, lon)
+        return result["daily"], result["hourly"]
+    except Exception as e:
+        logger.error(f"Ошибка при получении данных Open-Meteo: {e}")
+        return None, None
+
+
+def _fetch_sync(lat: float, lon: float) -> dict:
+    """Оригинальная синхронная логика запроса."""
     params = {
         "latitude":     lat,
         "longitude":    lon,

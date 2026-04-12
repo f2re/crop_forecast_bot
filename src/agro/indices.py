@@ -238,3 +238,51 @@ def compute_all_indices(df_daily: pd.DataFrame, crop: str = "wheat") -> dict:
         "frost":   calc_frost_risk(df_daily),
         "et0_bal": calc_et0_balance(df_daily),
     }
+
+
+def format_indices_for_rag(indices: dict, crop: str, crop_phase: str = None) -> str:
+    """
+    Форматирует агроиндексы в читаемый текст для передачи в LLM.
+    
+    Args:
+        indices: результат compute_all_indices()
+        crop: название культуры
+        crop_phase: текущая фенологическая фаза (опционально)
+    
+    Returns:
+        Текстовый блок для включения в LLM-промпт
+    """
+    lines = [
+        "=== ТЕКУЩЕЕ СОСТОЯНИЕ ПОЛЯ ===",
+        f"Культура: {crop}",
+    ]
+    
+    # Фаза из GDD если не передана явно
+    phase = crop_phase or indices.get("gdd", {}).get("current_phase")
+    if phase:
+        lines.append(f"Фенологическая фаза: {phase}")
+    
+    htc_data = indices.get("htc", {})
+    htc = htc_data.get("htc")
+    if htc is not None:
+        lines.append(f"ГТК (30 сут): {htc:.2f} — {htc_data.get('interpretation', '')}")
+    
+    gdd_data = indices.get("gdd", {})
+    gdd = gdd_data.get("gdd_past")
+    if gdd is not None:
+        lines.append(f"Накопленные ГДД: {gdd:.0f}°C")
+    
+    frost_data = indices.get("frost", {})
+    alerts = frost_data.get("alerts", [])
+    if alerts:
+        # Берем ближайший
+        next_frost = alerts[0]
+        lines.append(f"⚠️ Вероятность заморозка: {next_frost['t_min']}°C на дату {next_frost['date']}")
+    
+    et0_data = indices.get("et0_bal", {})
+    balance = et0_data.get("balance_mm")
+    if balance is not None:
+        lines.append(f"Водный баланс (осадки - ЕТ0): {balance:.1f} мм")
+    
+    lines.append("=== КОНЕЦ ДАННЫХ ===")
+    return "\n".join(lines)

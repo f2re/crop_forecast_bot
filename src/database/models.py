@@ -26,6 +26,9 @@ class User(Base):
         String(50), nullable=True, default="wheat"
     )
 
+    # Preferences
+    daily_digest: Mapped[bool] = mapped_column(Integer, default=0) # 0=Off, 1=On
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -174,3 +174,25 @@ async def update_user_crop(
         user.selected_crop = crop_key
         user.updated_at = datetime.utcnow()
         await session.commit()
+
+
+async def get_all_active_users(session: AsyncSession):
+    """
+    Generator for users with set coordinates.
+    """
+    result = await session.stream(
+        select(User).where(User.latitude.isnot(None), User.longitude.isnot(None))
+    )
+    async for row in result:
+        yield row[0]
+
+
+async def get_users_with_daily_digest(session: AsyncSession):
+    """
+    Generator for users who opted-in for daily reports.
+    """
+    result = await session.stream(
+        select(User).where(User.daily_digest == 1)
+    )
+    async for row in result:
+        yield row[0]
