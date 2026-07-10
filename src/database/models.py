@@ -24,11 +24,7 @@ class Base(DeclarativeBase):
 
 
 class User(Base):
-    """Telegram identity and user-level notification preferences.
-
-    Coordinate and crop columns are retained for one compatibility window. New
-    application code reads the active ``Field`` and ``CropSeason`` records.
-    """
+    """Telegram identity and transitional compatibility fields."""
 
     __tablename__ = "users"
 
@@ -42,7 +38,7 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Transitional compatibility columns; populated by migration and dual writes.
+    # Transitional columns retained for one compatibility window.
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     selected_crop: Mapped[str | None] = mapped_column(
@@ -51,7 +47,6 @@ class User(Base):
         default="wheat",
         server_default="wheat",
     )
-
     daily_digest: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -120,7 +115,21 @@ class Field(Base):
         default="UTC",
         server_default="UTC",
     )
+    timezone_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
     elevation_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    elevation_source: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    daily_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    frost_alerts_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
