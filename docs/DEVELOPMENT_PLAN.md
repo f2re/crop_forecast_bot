@@ -207,3 +207,12 @@ Telegram
 - native deploy/update/rollback;
 - зелёные Python, shell и unit/integration checks;
 - отсутствие telebot, Docker runtime, global user state и unsupported accuracy claims.
+
+## Сквозной scientific/data-quality срез 2026-07-10
+
+- [x] source-label partition для reanalysis/operational past/forecast;
+- [x] запрет фиктивного нуля ET₀-баланса при пропусках;
+- [x] прогноз исключён из ГТК;
+- [x] frost screening использует только forecast rows;
+- [x] capability matrix и запрет synthetic ML runtime;
+- [ ] реальные PostgreSQL/Redis/API integration tests на clean host.

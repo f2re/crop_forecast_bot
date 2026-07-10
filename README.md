@@ -312,6 +312,10 @@ sudo -u cropbot .venv/bin/python -m src.ops.doctor --runtime
 
 Ожидаемый ответ Redis: `PONG`. Doctor должен подтвердить runtime dependencies и актуальную Alembic-схему.
 
+## 🔎 Проверенные возможности и ограничения
+
+[Матрица production-возможностей](docs/PRODUCTION_CAPABILITIES.md) явно разделяет работающие, условные и отключённые функции. Отсутствующая функция не заменяется синтетическими данными.
+
 ## 📚 Документация
 
 - [Быстрый старт и эксплуатация](QUICK_START_GUIDE.md)

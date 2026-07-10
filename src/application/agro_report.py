@@ -145,10 +145,17 @@ def format_agro_report(
             f"• ГТК = {htc['htc']:.2f}; {htc['interpretation']} "
             f"(валидных тёплых суток: {htc['available_days']})"
         )
-    lines.append(
-        f"• Баланс осадки − ET₀ за {water['window_days']} сут.: "
-        f"{water['balance_mm']:+.1f} мм. {water['status']}"
-    )
+    if water.get("available") and water.get("balance_mm") is not None:
+        lines.append(
+            f"• Баланс осадки − ET₀ за {water['window_days']} сут.: "
+            f"{water['balance_mm']:+.1f} мм. {water['status']}"
+        )
+    else:
+        lines.append(
+            f"• Баланс осадки − ET₀ не рассчитан: {water['status']}. "
+            f"Валидных суток: {water.get('valid_days', 0)}/"
+            f"{water.get('expected_days', water['window_days'])}."
+        )
 
     lines.extend(["", "🌱 <b>Теплообеспеченность</b>"])
     if gdd["period_is_season"]:
@@ -162,8 +169,19 @@ def format_agro_report(
             f"при Tbase={gdd['t_base']:.1f}°C"
         )
         if season_start_date is not None:
-            lines.append("• Ряд не покрывает дату начала сезона; сезонная сумма не заявляется.")
+            lines.append(
+                "• Ряд не покрывает дату начала сезона; сезонная сумма не заявляется."
+            )
     lines.append(f"• Прогноз прироста за 7 суток: {gdd['gdd_forecast_7d']:.1f}°C·сут")
+    source_parts = []
+    if gdd.get("gdd_reanalysis"):
+        source_parts.append(f"реанализ {gdd['gdd_reanalysis']:.1f}")
+    if gdd.get("gdd_operational_past"):
+        source_parts.append(f"оперативное прошлое {gdd['gdd_operational_past']:.1f}")
+    if source_parts:
+        lines.append(
+            "• Состав прошлой суммы ГДД: " + "; ".join(source_parts) + " °C·сут"
+        )
     if gdd["missing_fraction"]:
         lines.append(
             f"• Пропуски в расчётном периоде: {gdd['missing_fraction'] * 100:.1f}%"
