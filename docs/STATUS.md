@@ -62,7 +62,7 @@ systemd + Bash release scripts
 - [x] согласовать frost DTO и Telegram formatter;
 - [x] добавить read-only live provider smoke;
 - [x] добавить единый `verify-production.sh`;
-- [ ] получить зелёный CI полного среза;
+- [x] получить зелёный CI полного среза;
 - [ ] выполнить clean-host smoke на отдельной Debian 12 VM;
 - [ ] выполнить реальный Telegram smoke после deployment.
 
