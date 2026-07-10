@@ -1,96 +1,159 @@
-# Crop Forecast Bot - Система рекомендаций по выращиванию культур
+# Crop Forecast Bot
 
-**Интеллектуальный Telegram-бот** для помощи фермерам и агрономам в выборе оптимальных сельскохозяйственных культур на основе комплексного анализа климатических, почвенных и спутниковых данных.
+Telegram-бот для оперативной агрометеорологической оценки поля. Production runtime использует **aiogram 3.x**, PostgreSQL и Redis.
 
-## 🌟 Основные возможности
+## Что работает в основном сценарии
 
-### 📊 Комплексный анализ данных
-- **Климатические данные ERA5-Land & Open-Meteo**: температура, осадки, радиация, влажность почвы.
-- **Спутниковые данные**: NDVI и LAI из MODIS/Sentinel-2 через Google Earth Engine.
-- **Почвенные характеристики**: текстура, pH, содержание органики через SoilGrids API.
+1. пользователь задаёт поле геолокацией или координатами;
+2. выбирает культуру;
+3. получает оперативный отчёт по данным Open-Meteo:
+   - температурный риск;
+   - ГДД за доступный период;
+   - ГТК только при достаточном валидном окне;
+   - баланс осадки − ET₀;
+   - источник, период и ограничения оценки;
+4. может включить ежедневный отчёт;
+5. может открыть RAG-советник, если администратор проиндексировал литературу.
 
-### 🤖 RAG Агросоветник (New)
-- **Консультации по агрономии**: Поиск по загруженной научной литературе (FAO, ГОСТы, учебники).
-- **Интеллектуальный AI-чат**: Ответы на вопросы фермеров с учетом текущего состояния их полей (ГТК, ГДД, влажность).
-- **Поддержка LLM**: Интеграция с Groq (Llama 3), OpenAI (GPT-4), Anthropic (Claude) или локальным Ollama.
+Проект **не выдаёт** краткий архив за климатическую норму, эвристику за прогноз урожайности или синтетическую ML-модель за валидированную production-модель.
 
-### 🔔 Автоматические уведомления (New)
-- **Алерты о заморозках**: Предупреждение за 48+ часов при риске падения температуры.
-- **Ежедневные отчеты**: Сводка агроиндексов (ГТК, ГДД) каждое утро в Telegram.
+## Архитектура
 
-### 🔬 Агрономические индексы
-- **GDD** (Growing Degree Days) - сумма эффективных температур.
-- **SPI** (Standardized Precipitation Index) - индекс засухи.
-- **ГТК** (Гидротермический коэффициент Селянинова) - оценка увлажнения.
-- **ЕТ0 Баланс** - дефицит/профицит влаги по FAO-56.
-
----
-
-## 🛠 Технологический стек
-
-- **Python 3.11+**
-- **aiogram 3.x** (Асинхронный Telegram Framework)
-- **ChromaDB** (Векторная база данных для RAG)
-- **Sentence-Transformers** (Эмбеддинги для поиска)
-- **APScheduler** (Планировщик задач и алертов)
-- **SQLAlchemy + PostgreSQL** (Хранение профилей пользователей)
-- **Pandas & Scikit-learn** (Обработка данных и ML)
-
----
-
-## 🚀 Быстрый старт
-
-### 1. Клонирование репозитория
-
-```bash
-git clone https://github.com/f2re/crop_forecast_bot.git
-cd crop_forecast_bot
+```text
+handlers -> application services -> domain/agro -> infrastructure
+                                           -> Open-Meteo
+                                           -> PostgreSQL
+                                           -> Redis
+                                           -> RAG adapters
 ```
 
-### 2. Установка зависимостей
-
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Настройка переменных окружения
-
-```bash
-cp .env.example .env
-# Заполните BOT_TOKEN, DATABASE_URL и GROQ_API_KEY (или другой LLM)
-```
-
-### 4. Подготовка базы знаний (RAG)
-
-1. Поместите PDF/TXT файлы в `data/literature/`.
-2. Запустите индексацию:
-   ```bash
-   python -m src.knowledge.indexer
-   ```
-
-### 5. Запуск бота
+Production entrypoint:
 
 ```bash
 python -m src.bot.main
 ```
 
----
+Legacy `pyTelegramBotAPI` runtime удалён.
 
-## 📚 Подробная документация
+## Быстрый запуск через Docker Compose
 
-- [Руководство по RAG и литературе](RAG_GUIDE.md) — как наполнить базу знаний.
-- [Инструкция по развертыванию](QUICK_START_GUIDE.md) — пошаговая настройка всех API.
-- [Интеграция в платформу](PLATFORM_INTEGRATION.md) — Docker и логи.
+Требуются Docker Engine и Docker Compose v2.
 
----
+```bash
+git clone https://github.com/f2re/crop_forecast_bot.git
+cd crop_forecast_bot
+cp .env.example .env
+```
 
-## 👥 Авторы
+Заполните минимум:
 
-- **Разработка системы:** [f2re](https://github.com/f2re)
-- **AI интеграция:** Claude 3.5 Sonnet & Llama 3.3
+```dotenv
+TELEGRAM_BOT_TOKEN=...
+DB_PASSWORD=сложный-уникальный-пароль
+```
 
----
+Развёртывание:
 
-## 📜 Лицензия
+```bash
+bash scripts/deploy.sh
+```
 
-MIT License
+Проверка:
+
+```bash
+docker compose ps
+docker compose logs --tail=200 bot
+```
+
+Обновление из `main`:
+
+```bash
+bash scripts/update.sh main
+```
+
+Скрипт допускает только fast-forward update, сохраняет копию `.env`, пересобирает образ и показывает состояние контейнеров.
+
+## Native systemd
+
+Для Debian-подобной системы предусмотрен шаблон hardened unit и установщик:
+
+```bash
+sudo bash scripts/install-systemd.sh
+```
+
+При первом запуске установщик создаёт `/etc/crop-forecast-bot.env` и завершает работу. Заполните:
+
+- `TELEGRAM_BOT_TOKEN`;
+- async `DATABASE_URL`;
+- `REDIS_URL`;
+
+После настройки повторите установку. Диагностика runtime:
+
+```bash
+sudo -u cropbot /opt/crop_forecast_bot/.venv/bin/python -m src.ops.doctor --runtime
+journalctl -u crop-forecast-bot -f
+```
+
+## Конфигурация
+
+Основные переменные:
+
+| Переменная | Назначение |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | обязательный токен Telegram |
+| `DATABASE_URL` | SQLAlchemy async URL, обычно `postgresql+asyncpg://...` |
+| `REDIS_URL` | persistent FSM/cache, обязательно для production |
+| `SCHEDULER_TIMEZONE` | timezone фоновых задач |
+| `HEARTBEAT_FILE` | файл heartbeat event loop |
+| `CDS_API_URL`, `CDS_API_KEY` | optional ERA5/CDS integration |
+| `OPENROUTER_API_KEY` | optional LLM adapter |
+
+Полный шаблон: `.env.example`.
+
+## Healthcheck
+
+Контейнер не считается здоровым по DNS или успешному импорту. Фоновая coroutine обновляет heartbeat-файл; healthcheck отклоняет отсутствующий или устаревший heartbeat.
+
+PostgreSQL и Redis имеют отдельные healthcheck. Бот стартует после их готовности.
+
+## Тесты и CI
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+GitHub Actions выполняет:
+
+- ruff для мигрированного runtime;
+- `compileall`;
+- unit tests;
+- production Docker build.
+
+## Научные ограничения текущего среза
+
+- Open-Meteo предоставляет 14 суток прошлого периода и 7 суток прогноза для оперативного отчёта.
+- ГДД без даты посева показываются только за доступный период; фенофаза не выводится.
+- ГТК не рассчитывается при недостаточном числе тёплых суток.
+- ET₀ обозначается как provider variable Open-Meteo.
+- температурный риск — screening по Tmin воздуха на высоте 2 м; он не учитывает температуру поверхности, микрорельеф и фактическую фазу культуры.
+- SPI по короткому прогнозу не рассчитывается.
+
+## Документация
+
+- [Аудит 2026-07-10](docs/AUDIT_2026-07-10.md)
+- [План модернизации](docs/DEVELOPMENT_PLAN.md)
+- [RAG guide](RAG_GUIDE.md)
+
+## Ближайшие обязательные работы
+
+1. Alembic baseline и отказ от `create_all()` в production.
+2. Redis deduplication/lock для scheduler.
+3. Дата посева, сезон и фенофаза в профиле поля.
+4. Интеграционные тесты PostgreSQL/Redis/API и FSM restart.
+5. Provider interfaces для ERA5, SoilGrids and satellite data.
+6. Сгенерированный lock-файл после проверки на Debian 12/Astra Linux 1.7.
+
+Подробные критерии готовности зафиксированы в `docs/DEVELOPMENT_PLAN.md`.
