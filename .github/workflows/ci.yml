@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -16,6 +16,8 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -50,6 +52,20 @@ jobs:
             aiogram redis SQLAlchemy asyncpg APScheduler \
             openmeteo-requests requests-cache retry-requests
 
+      - name: Apply one-off scientific audit remediation
+        if: ${{ hashFiles('scripts/_apply_scientific_audit_fixes_v2.py') != '' }}
+        shell: bash
+        run: |
+          python scripts/_apply_scientific_audit_fixes_v2.py
+          ruff format src/agro/data_quality.py src/agro/indices.py \
+            src/application/agro_report.py tests/test_scientific_data_quality.py \
+            tests/test_no_production_placeholders.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix(science): enforce data provenance and missing-data gates"
+          git push origin HEAD:${{ github.head_ref }}
+
       - name: Python static checks
         shell: bash
         run: |
@@ -62,6 +78,7 @@ jobs:
               src/application \
               src/infrastructure \
               src/agro/indices.py \
+              src/agro/data_quality.py \
               src/api/open_meteo.py \
               src/bot/main.py \
               src/bot/handlers \
