@@ -8,12 +8,18 @@ import pandas as pd
 
 @dataclass(frozen=True, slots=True)
 class WeatherMeta:
+    """Provider grid metadata and its relation to the requested field."""
+
     latitude: float
     longitude: float
-    elevation_m: float
+    elevation_m: float | None
     utc_offset_seconds: int
     timezone: str
     source: str
+    requested_latitude: float | None = None
+    requested_longitude: float | None = None
+    grid_distance_km: float | None = None
+    model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +32,8 @@ class WeatherCoverage:
     season_coverage_complete: bool = False
     history_source: str | None = None
     notes: tuple[str, ...] = field(default_factory=tuple)
+    completed_days: int = 0
+    forecast_days: int = 0
 
 
 @dataclass(slots=True)
