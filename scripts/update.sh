@@ -14,7 +14,7 @@ require_command python3
 require_command systemctl
 require_command pg_dump
 
-branch="${1:-${BRANCH}}"
+BRANCH="${1:-${BRANCH}}"
 old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 old_sha=""
 
@@ -24,7 +24,7 @@ old_sha="$(git -C "${old_release}" rev-parse HEAD)"
 
 validate_runtime_env
 prepare_runtime_directories
-create_release "${branch}"
+create_release "${BRANCH}"
 
 if [[ "${NEW_RELEASE_SHA}" == "${old_sha}" ]]; then
   rm -rf "${NEW_RELEASE}"
