@@ -69,12 +69,26 @@ jobs:
 
       - name: Repository scientific-claims policy
         run: |
-          if grep -R --line-number --include='*.py' \
+          set +e
+          matches="$(grep -R --line-number --include='*.py' \
             -E 'RandomForestClassifier|synthetic_crop_data|yield_estimate' \
-            src scripts; then
-            echo "Forbidden synthetic-model marker found" >&2
-            exit 1
-          fi
+            src scripts 2>&1)"
+          status=$?
+          set -e
+          case "${status}" in
+            0)
+              printf '%s\n' "${matches}"
+              echo "Forbidden synthetic-model marker found" >&2
+              exit 1
+              ;;
+            1)
+              ;;
+            *)
+              printf '%s\n' "${matches}" >&2
+              echo "Repository policy scan failed" >&2
+              exit "${status}"
+              ;;
+          esac
 
       - name: Unit and contract tests
         run: python -m pytest -q
