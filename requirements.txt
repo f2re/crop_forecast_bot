@@ -1,58 +1,41 @@
-# Core dependencies
-fastapi==0.92.0
-uvicorn==0.20.0
-pyTelegramBotAPI==4.10.0
-python-dotenv==1.0.0
-watchdog
+# Telegram runtime
+aiogram>=3.15,<4
+python-dotenv>=1.0,<2
+redis>=5,<6
 
-# Open-Meteo (основной источник метеоданных — без API-ключа)
-openmeteo-requests>=0.3.0
-requests-cache>=1.2.0
-retry-requests>=2.0.0
+# Async HTTP and operational weather provider
+aiohttp>=3.10,<4
+openmeteo-requests>=1.3,<2
+requests>=2.32,<3
+requests-cache>=1.2,<2
+retry-requests>=2.0,<3
+
+# Database and scheduler
+SQLAlchemy>=2.0.36,<3
+asyncpg>=0.30,<1
+alembic>=1.14,<2
+APScheduler>=3.10,<4
 
 # Geospatial and climate data
-geopy
-cdsapi==0.7.2
-xarray==2024.1.0
-netCDF4==1.6.5
+geopy>=2.4,<3
+cdsapi>=0.7.5,<1
+xarray>=2024.10
+netCDF4>=1.7,<2
 
-# Data processing
-pandas==2.1.4
-numpy==1.26.3
-scipy==1.11.4
+# Data processing and scientific stack
+numpy>=1.26,<3
+pandas>=2.2,<3
+scipy>=1.13,<2
+scikit-learn>=1.5,<2
+joblib>=1.4,<2
+matplotlib>=3.9,<4
 
-# Machine Learning
-scikit-learn==1.3.2
-joblib==1.3.2
+# Optional satellite provider
+earthengine-api>=1.1,<2
 
-# Visualization
-matplotlib==3.8.2
-seaborn==0.13.1
-
-# HTTP client
-aiohttp==3.9.1
-requests==2.31.0
-
-# Google Earth Engine (satellite data)
-earthengine-api==0.1.390
-
-# Database
-sqlalchemy==2.0.25
-psycopg2-binary==2.9.9
-asyncpg==0.29.0
-
-# RAG-модуль
-chromadb>=0.5.0
-sentence-transformers>=3.0.0
-pypdf>=4.0.0
-
-# LLM-надстройка
-openai>=1.30.0          # если использовать OpenAI/Together/Groq-совместимый API
-anthropic>=0.25.0       # если использовать Claude
-
-# Scheduler (для push-алертов)
-apscheduler>=3.10.0
-
-# Async (переход на aiogram)
-aiogram>=3.10.0
-aiohttp>=3.9.0
+# RAG and LLM adapters
+chromadb>=0.5,<2
+sentence-transformers>=3,<6
+pypdf>=5,<7
+openai>=1.60,<3
+anthropic>=0.40,<1
