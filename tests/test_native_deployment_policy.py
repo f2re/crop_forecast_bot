@@ -23,6 +23,7 @@ def test_native_operations_commands_are_versioned() -> None:
         "scripts/help.sh",
         "alembic.ini",
         "alembic/versions/20260710_0001_initial_schema.py",
+        "alembic/versions/20260710_0002_field_season_profile.py",
         "deploy/systemd/crop-forecast-bot.service",
         "deploy/systemd/crop-forecast-bot-update.service",
         "deploy/systemd/crop-forecast-bot-update.timer",
@@ -52,3 +53,15 @@ def test_production_startup_requires_alembic_schema() -> None:
     assert "run_migrations()" in common
     assert 'run_migrations "${NEW_RELEASE}"' in deploy
     assert 'run_migrations "${NEW_RELEASE}"' in update
+
+
+def test_field_season_profile_is_reachable_from_runtime() -> None:
+    models = (ROOT / "src/database/models.py").read_text(encoding="utf-8")
+    handlers = (ROOT / "src/bot/handlers/core.py").read_text(encoding="utf-8")
+    report = (ROOT / "src/application/agro_report.py").read_text(encoding="utf-8")
+
+    assert "class Field(" in models
+    assert "class CropSeason(" in models
+    assert 'F.data == "season"' in handlers
+    assert "season_start_date=context.season_start_date" in handlers
+    assert "season_start_date: date | None" in report

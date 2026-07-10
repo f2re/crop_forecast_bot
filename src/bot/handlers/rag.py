@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
+import pandas as pd
 from aiogram import F, Router
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
@@ -11,7 +14,7 @@ from aiogram.types import CallbackQuery, Message
 from src.agro.indices import compute_all_indices, format_indices_for_rag
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
 from src.bot.keyboards import get_rag_keyboard
-from src.database.crud import get_user
+from src.database.crud import get_field_context
 from src.knowledge.llm_advisor import get_advisor
 from src.knowledge.rag_engine import get_rag_engine
 
@@ -61,18 +64,35 @@ async def handle_rag_question(message: Message, state: FSMContext, session) -> N
         rag = get_rag_engine()
         rag_context = rag.get_context_for_llm(question, n_results=4)
         agro_context = None
-        user = await get_user(session, message.from_user.id)
-        if user and user.latitude is not None and user.longitude is not None:
+        context = await get_field_context(session, message.from_user.id)
+        await session.rollback()
+        if context is not None:
             try:
-                weather = await fetch_agro_data(user.latitude, user.longitude)
+                weather = await fetch_agro_data(
+                    context.latitude,
+                    context.longitude,
+                    season_start=context.season_start_date,
+                )
+                season_start = None
+                if context.season_start_date is not None:
+                    local_start = datetime.combine(
+                        context.season_start_date,
+                        time.min,
+                        tzinfo=ZoneInfo(weather.meta.timezone),
+                    )
+                    season_start = pd.Timestamp(local_start).tz_convert("UTC")
                 indices = compute_all_indices(
                     weather.daily,
-                    user.selected_crop or "wheat",
+                    context.crop_key,
                     utc_offset_seconds=weather.meta.utc_offset_seconds,
+                    season_start=season_start,
+                    phase=context.phenological_phase,
+                    elevation_m=weather.meta.elevation_m,
                 )
                 agro_context = format_indices_for_rag(
                     indices,
-                    user.selected_crop or "wheat",
+                    context.crop_key,
+                    context.phenological_phase,
                 )
             except OpenMeteoError as exc:
                 logger.warning("Weather context unavailable for RAG: %s", exc)

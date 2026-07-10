@@ -8,7 +8,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.agro.crop_catalog import CATEGORIES, CROPS
+from src.agro.crop_catalog import CATEGORIES, CROPS, get_crop
 
 
 def get_main_keyboard() -> InlineKeyboardMarkup:
@@ -17,6 +17,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🌦 Агроотчёт", callback_data="agro_report")],
             [InlineKeyboardButton(text="📍 Моё поле", callback_data="my_field")],
             [InlineKeyboardButton(text="🌱 Выбрать культуру", callback_data="crop_choose")],
+            [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
             [InlineKeyboardButton(text="🤖 Агросоветник", callback_data="agro_advisor")],
             [InlineKeyboardButton(text="⚙️ Уведомления", callback_data="settings")],
         ]
@@ -70,6 +71,31 @@ def get_crop_list_keyboard(category_id: str) -> InlineKeyboardMarkup:
                 )
     builder.button(text="◀️ К категориям", callback_data="crop_choose")
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_season_keyboard(*, has_start: bool, has_phase: bool) -> InlineKeyboardMarkup:
+    date_action = "Изменить дату" if has_start else "Указать дату посева"
+    rows = [
+        [InlineKeyboardButton(text=f"📅 {date_action}", callback_data="season_start_set")],
+        [InlineKeyboardButton(text="🌿 Указать фактическую фазу", callback_data="season_phase")],
+        [InlineKeyboardButton(text="🌱 Изменить культуру", callback_data="crop_choose")],
+    ]
+    if has_phase:
+        rows.append(
+            [InlineKeyboardButton(text="🧹 Удалить указанную фазу", callback_data="phase_clear")]
+        )
+    rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_phase_keyboard(crop_key: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    phases = list(get_crop(crop_key).get("gdd_stages", {}).keys())
+    for index, phase in enumerate(phases):
+        builder.button(text=phase, callback_data=f"phase_pick:{index}")
+    builder.button(text="◀️ К сезону", callback_data="season")
+    builder.adjust(1)
     return builder.as_markup()
 
 

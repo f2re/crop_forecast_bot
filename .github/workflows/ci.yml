@@ -33,23 +33,36 @@ jobs:
             openmeteo-requests requests-cache retry-requests
 
       - name: Python static checks
+        shell: bash
         run: |
-          ruff check \
-            alembic \
-            config/settings.py \
-            src/domain \
-            src/application \
-            src/infrastructure \
-            src/agro/indices.py \
-            src/api/open_meteo.py \
-            src/bot/main.py \
-            src/bot/handlers \
-            src/bot/keyboards.py \
-            src/bot/scheduler.py \
-            src/database \
-            src/ops \
-            tests
-          python -m compileall -q alembic config src tests
+          set -o pipefail
+          {
+            ruff check \
+              alembic \
+              config/settings.py \
+              src/domain \
+              src/application \
+              src/infrastructure \
+              src/agro/indices.py \
+              src/api/open_meteo.py \
+              src/bot/main.py \
+              src/bot/handlers \
+              src/bot/keyboards.py \
+              src/bot/scheduler.py \
+              src/database \
+              src/ops \
+              tests
+            python -m compileall -q alembic config src tests
+          } 2>&1 | tee static-checks.log
+
+      - name: Upload static analysis log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: static-checks-log
+          path: static-checks.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Native deployment checks
         run: |

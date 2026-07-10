@@ -1,21 +1,45 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import AsyncIterator
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import User
+from .models import CropSeason, Field, User
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSeasonContext:
+    telegram_id: int
+    field_id: int
+    field_name: str
+    latitude: float
+    longitude: float
+    timezone: str
+    elevation_m: float | None
+    crop_key: str
+    sowing_date: date | None
+    season_start_date: date | None
+    phenological_phase: str | None
+    phase_source: str | None
+    phase_confidence: float | None
+    daily_digest: bool
 
 
 @dataclass(frozen=True, slots=True)
 class NotificationTarget:
     telegram_id: int
+    field_id: int
+    field_name: str
     latitude: float
     longitude: float
+    timezone: str
+    elevation_m: float | None
     selected_crop: str
+    season_start_date: date | None
+    phenological_phase: str | None
 
 
 async def get_or_create_user(
@@ -44,6 +68,47 @@ async def get_or_create_user(
     return user
 
 
+async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
+    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+    return result.scalar_one_or_none()
+
+
+async def get_active_field(session: AsyncSession, user_id: int) -> Field | None:
+    result = await session.execute(
+        select(Field)
+        .where(Field.user_id == user_id, Field.is_active.is_(True))
+        .order_by(Field.updated_at.desc(), Field.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_active_season(session: AsyncSession, field_id: int) -> CropSeason | None:
+    result = await session.execute(
+        select(CropSeason)
+        .where(
+            CropSeason.field_id == field_id,
+            CropSeason.is_active.is_(True),
+        )
+        .order_by(CropSeason.updated_at.desc(), CropSeason.id.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _ensure_active_season(
+    session: AsyncSession,
+    field: Field,
+    crop_key: str,
+) -> CropSeason:
+    season = await get_active_season(session, field.id)
+    if season is None:
+        season = CropSeason(field_id=field.id, crop_key=crop_key, is_active=True)
+        session.add(season)
+        await session.flush()
+    return season
+
+
 async def save_coordinates(
     session: AsyncSession,
     telegram_id: int,
@@ -52,7 +117,26 @@ async def save_coordinates(
     username: str | None = None,
     first_name: str | None = None,
 ) -> User:
+    """Create or update the active field and dual-write legacy columns."""
     user = await get_or_create_user(session, telegram_id, username, first_name)
+    field = await get_active_field(session, user.id)
+    if field is None:
+        field = Field(
+            user_id=user.id,
+            name="Основное поле",
+            latitude=latitude,
+            longitude=longitude,
+            timezone="UTC",
+            is_active=True,
+        )
+        session.add(field)
+        await session.flush()
+    else:
+        field.latitude = latitude
+        field.longitude = longitude
+        field.updated_at = datetime.utcnow()
+
+    await _ensure_active_season(session, field, user.selected_crop or "wheat")
     user.latitude = latitude
     user.longitude = longitude
     user.updated_at = datetime.utcnow()
@@ -66,17 +150,49 @@ async def load_coordinates(
     telegram_id: int,
 ) -> tuple[float, float] | None:
     user = await get_user(session, telegram_id)
-    if user is None or user.latitude is None or user.longitude is None:
+    if user is None:
+        return None
+    field = await get_active_field(session, user.id)
+    if field is not None:
+        return field.latitude, field.longitude
+    if user.latitude is None or user.longitude is None:
         return None
     return user.latitude, user.longitude
 
 
-async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
-    result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-    return result.scalar_one_or_none()
+async def get_field_context(
+    session: AsyncSession,
+    telegram_id: int,
+) -> FieldSeasonContext | None:
+    user = await get_user(session, telegram_id)
+    if user is None:
+        return None
+    field = await get_active_field(session, user.id)
+    if field is None:
+        return None
+    season = await get_active_season(session, field.id)
+    return FieldSeasonContext(
+        telegram_id=user.telegram_id,
+        field_id=field.id,
+        field_name=field.name,
+        latitude=field.latitude,
+        longitude=field.longitude,
+        timezone=field.timezone,
+        elevation_m=field.elevation_m,
+        crop_key=(season.crop_key if season else user.selected_crop) or "wheat",
+        sowing_date=season.sowing_date if season else None,
+        season_start_date=season.season_start_date if season else None,
+        phenological_phase=season.phenological_phase if season else None,
+        phase_source=season.phase_source if season else None,
+        phase_confidence=season.phase_confidence if season else None,
+        daily_digest=bool(user.daily_digest),
+    )
 
 
 async def get_user_crop(session: AsyncSession, telegram_id: int) -> str:
+    context = await get_field_context(session, telegram_id)
+    if context is not None:
+        return context.crop_key
     user = await get_user(session, telegram_id)
     return user.selected_crop if user and user.selected_crop else "wheat"
 
@@ -86,12 +202,97 @@ async def update_user_crop(
     telegram_id: int,
     crop_key: str,
 ) -> User:
+    """Update the active crop season and the transitional user column."""
     user = await get_or_create_user(session, telegram_id)
     user.selected_crop = crop_key
     user.updated_at = datetime.utcnow()
+
+    field = await get_active_field(session, user.id)
+    if field is not None:
+        season = await _ensure_active_season(session, field, crop_key)
+        if season.crop_key != crop_key:
+            season.crop_key = crop_key
+            season.phenological_phase = None
+            season.phase_source = None
+            season.phase_confidence = None
+        season.updated_at = datetime.utcnow()
+
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def set_season_start(
+    session: AsyncSession,
+    telegram_id: int,
+    season_start: date,
+) -> CropSeason:
+    user = await get_or_create_user(session, telegram_id)
+    field = await get_active_field(session, user.id)
+    if field is None:
+        raise ValueError("Сначала задайте координаты поля.")
+    season = await _ensure_active_season(session, field, user.selected_crop or "wheat")
+    season.sowing_date = season_start
+    season.season_start_date = season_start
+    season.phenological_phase = None
+    season.phase_source = None
+    season.phase_confidence = None
+    season.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(season)
+    return season
+
+
+async def set_manual_phase(
+    session: AsyncSession,
+    telegram_id: int,
+    phase: str,
+) -> CropSeason:
+    user = await get_or_create_user(session, telegram_id)
+    field = await get_active_field(session, user.id)
+    if field is None:
+        raise ValueError("Сначала задайте координаты поля.")
+    season = await _ensure_active_season(session, field, user.selected_crop or "wheat")
+    season.phenological_phase = phase
+    season.phase_source = "user"
+    season.phase_confidence = None
+    season.updated_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(season)
+    return season
+
+
+async def clear_manual_phase(session: AsyncSession, telegram_id: int) -> None:
+    user = await get_user(session, telegram_id)
+    if user is None:
+        return
+    field = await get_active_field(session, user.id)
+    if field is None:
+        return
+    season = await get_active_season(session, field.id)
+    if season is None:
+        return
+    season.phenological_phase = None
+    season.phase_source = None
+    season.phase_confidence = None
+    season.updated_at = datetime.utcnow()
+    await session.commit()
+
+
+async def update_field_metadata(
+    session: AsyncSession,
+    field_id: int,
+    *,
+    timezone: str,
+    elevation_m: float | None,
+) -> None:
+    field = await session.get(Field, field_id)
+    if field is None:
+        return
+    field.timezone = timezone
+    field.elevation_m = elevation_m
+    field.updated_at = datetime.utcnow()
+    await session.commit()
 
 
 async def set_daily_digest(
@@ -112,46 +313,78 @@ async def list_notification_targets(
     *,
     daily_digest_only: bool = False,
 ) -> list[NotificationTarget]:
-    statement = select(
-        User.telegram_id,
-        User.latitude,
-        User.longitude,
-        User.selected_crop,
-    ).where(
-        User.latitude.is_not(None),
-        User.longitude.is_not(None),
+    statement = (
+        select(
+            User.telegram_id,
+            User.selected_crop.label("legacy_crop"),
+            Field.id.label("field_id"),
+            Field.name.label("field_name"),
+            Field.latitude,
+            Field.longitude,
+            Field.timezone,
+            Field.elevation_m,
+            CropSeason.crop_key,
+            CropSeason.season_start_date,
+            CropSeason.phenological_phase,
+        )
+        .join(
+            Field,
+            and_(Field.user_id == User.id, Field.is_active.is_(True)),
+        )
+        .outerjoin(
+            CropSeason,
+            and_(
+                CropSeason.field_id == Field.id,
+                CropSeason.is_active.is_(True),
+            ),
+        )
     )
     if daily_digest_only:
         statement = statement.where(User.daily_digest == 1)
 
     result = await session.execute(statement)
-    return [
-        NotificationTarget(
-            telegram_id=row.telegram_id,
-            latitude=float(row.latitude),
-            longitude=float(row.longitude),
-            selected_crop=row.selected_crop or "wheat",
+    targets: dict[int, NotificationTarget] = {}
+    for row in result.all():
+        targets.setdefault(
+            row.telegram_id,
+            NotificationTarget(
+                telegram_id=row.telegram_id,
+                field_id=row.field_id,
+                field_name=row.field_name,
+                latitude=float(row.latitude),
+                longitude=float(row.longitude),
+                timezone=row.timezone or "UTC",
+                elevation_m=(
+                    float(row.elevation_m) if row.elevation_m is not None else None
+                ),
+                selected_crop=row.crop_key or row.legacy_crop or "wheat",
+                season_start_date=row.season_start_date,
+                phenological_phase=row.phenological_phase,
+            ),
         )
-        for row in result.all()
-    ]
+    return list(targets.values())
 
 
-# Compatibility iterators for callers not yet migrated to snapshot loading.
+# Compatibility iterators for modules not yet migrated to snapshot loading.
 async def get_all_active_users(session: AsyncSession) -> AsyncIterator[User]:
     result = await session.stream(
-        select(User).where(User.latitude.is_not(None), User.longitude.is_not(None))
+        select(User).join(
+            Field,
+            and_(Field.user_id == User.id, Field.is_active.is_(True)),
+        )
     )
-    async for user in result.scalars():
+    async for user in result.scalars().unique():
         yield user
 
 
 async def get_users_with_daily_digest(session: AsyncSession) -> AsyncIterator[User]:
     result = await session.stream(
-        select(User).where(
-            User.daily_digest == 1,
-            User.latitude.is_not(None),
-            User.longitude.is_not(None),
+        select(User)
+        .join(
+            Field,
+            and_(Field.user_id == User.id, Field.is_active.is_(True)),
         )
+        .where(User.daily_digest == 1)
     )
-    async for user in result.scalars():
+    async for user in result.scalars().unique():
         yield user

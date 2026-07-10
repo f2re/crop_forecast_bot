@@ -25,13 +25,18 @@ def _inspect(database_path: Path) -> sa.Inspector:
     return sa.inspect(engine)
 
 
-def test_initial_migration_creates_users_and_revision(tmp_path: Path) -> None:
+def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> None:
     database_path = tmp_path / "fresh.sqlite"
     _upgrade(database_path)
 
     inspector = _inspect(database_path)
-    assert {"users", "alembic_version"}.issubset(inspector.get_table_names())
-    columns = {column["name"] for column in inspector.get_columns("users")}
+    assert {
+        "users",
+        "fields",
+        "crop_seasons",
+        "alembic_version",
+    }.issubset(inspector.get_table_names())
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
     assert {
         "id",
         "telegram_id",
@@ -43,15 +48,44 @@ def test_initial_migration_creates_users_and_revision(tmp_path: Path) -> None:
         "daily_digest",
         "created_at",
         "updated_at",
-    } == columns
+    } == user_columns
+    field_columns = {column["name"] for column in inspector.get_columns("fields")}
+    assert {
+        "id",
+        "user_id",
+        "name",
+        "latitude",
+        "longitude",
+        "timezone",
+        "elevation_m",
+        "is_active",
+        "created_at",
+        "updated_at",
+    } == field_columns
+    season_columns = {
+        column["name"] for column in inspector.get_columns("crop_seasons")
+    }
+    assert {
+        "id",
+        "field_id",
+        "crop_key",
+        "sowing_date",
+        "season_start_date",
+        "phenological_phase",
+        "phase_source",
+        "phase_confidence",
+        "is_active",
+        "created_at",
+        "updated_at",
+    } == season_columns
 
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260710_0001"
+    assert revision == expected_schema_revision() == "20260710_0002"
 
 
-def test_initial_migration_adopts_existing_create_all_schema(tmp_path: Path) -> None:
+def test_migrations_adopt_legacy_user_and_backfill_field_season(tmp_path: Path) -> None:
     database_path = tmp_path / "legacy.sqlite"
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.begin() as connection:
@@ -73,22 +107,39 @@ def test_initial_migration_adopts_existing_create_all_schema(tmp_path: Path) -> 
         )
         connection.execute(
             sa.text(
-                "INSERT INTO users (telegram_id, username) VALUES (1001, 'farmer')"
+                "INSERT INTO users "
+                "(telegram_id, username, latitude, longitude) "
+                "VALUES (1001, 'farmer', 55.75, 37.62)"
             )
         )
 
     _upgrade(database_path)
 
-    inspector = _inspect(database_path)
-    columns = {column["name"] for column in inspector.get_columns("users")}
-    assert "selected_crop" in columns
-    assert "daily_digest" in columns
-
     with engine.connect() as connection:
-        row = connection.execute(
+        user_row = connection.execute(
             sa.text(
-                "SELECT telegram_id, selected_crop, daily_digest "
+                "SELECT id, telegram_id, selected_crop, daily_digest "
                 "FROM users WHERE telegram_id = 1001"
             )
         ).one()
-    assert row == (1001, "wheat", 0)
+        field_row = connection.execute(
+            sa.text(
+                "SELECT user_id, name, latitude, longitude, timezone, is_active "
+                "FROM fields"
+            )
+        ).one()
+        season_row = connection.execute(
+            sa.text(
+                "SELECT field_id, crop_key, season_start_date, is_active "
+                "FROM crop_seasons"
+            )
+        ).one()
+
+    assert user_row[1:] == (1001, "wheat", 0)
+    assert field_row[0] == user_row[0]
+    assert field_row[1:5] == ("Основное поле", 55.75, 37.62, "UTC")
+    assert bool(field_row[5]) is True
+    assert season_row[0] is not None
+    assert season_row[1] == "wheat"
+    assert season_row[2] is None
+    assert bool(season_row[3]) is True
