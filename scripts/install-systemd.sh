@@ -50,9 +50,15 @@ chown -R "${APP_USER}:${APP_USER}" "${APP_DIR}/data" "${APP_DIR}/logs"
 systemctl daemon-reload
 systemctl enable redis-server postgresql crop-forecast-bot
 
-if ! runuser -u "${APP_USER}" -- \
-  env "$(grep -E '^PATH=' "${ENV_FILE}" || true)" \
-  "${APP_DIR}/.venv/bin/python" -m src.ops.doctor --runtime; then
+preflight_command=$(cat <<EOF
+set -a
+source '${ENV_FILE}'
+set +a
+cd '${APP_DIR}'
+exec '${APP_DIR}/.venv/bin/python' -m src.ops.doctor --runtime
+EOF
+)
+if ! runuser -u "${APP_USER}" -- bash -c "${preflight_command}"; then
   echo "Preflight failed. Configure PostgreSQL/Redis and ${ENV_FILE}; service was not started." >&2
   exit 1
 fi
