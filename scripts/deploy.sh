@@ -10,7 +10,6 @@ source "$(cd "$(dirname "$0")" && pwd)/common.sh"
 
 require_root
 require_debian_family
-acquire_deploy_lock
 
 install_system_packages() {
   export DEBIAN_FRONTEND=noninteractive
@@ -45,6 +44,8 @@ create_local_database() {
 
   [[ "${db_name}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail "Unsafe DB_NAME: ${db_name}"
   [[ "${db_user}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail "Unsafe DB_USER: ${db_user}"
+  [[ "${db_password}" =~ ^[a-zA-Z0-9._~-]+$ ]] || \
+    fail "DB_PASSWORD contains characters unsafe for an unescaped URL"
 
   log "Creating or updating local PostgreSQL role"
   runuser -u postgres -- psql \
@@ -122,6 +123,7 @@ rollback_after_failed_start() {
 }
 
 install_system_packages
+acquire_deploy_lock
 ensure_service_account
 prepare_runtime_directories
 systemctl enable --now postgresql redis-server
