@@ -38,9 +38,11 @@ jobs:
           ruff check src config alembic tests
           python -m compileall -q alembic config src tests
 
-      - name: Native deployment and repository policy
+      - name: Bash syntax
+        run: bash -n scripts/*.sh
+
+      - name: Shellcheck native operations
         run: |
-          bash -n scripts/*.sh
           shellcheck -x \
             scripts/common.sh \
             scripts/deploy.sh \
@@ -50,6 +52,9 @@ jobs:
             scripts/help.sh \
             scripts/install-systemd.sh \
             scripts/verify-production.sh
+
+      - name: Repository legacy policy
+        run: |
           for path in \
             Dockerfile \
             docker-compose.yml \
@@ -61,9 +66,15 @@ jobs:
             src/bot/simple_recommender.py; do
             test ! -e "${path}"
           done
-          ! grep -R --line-number --include='*.py' \
+
+      - name: Repository scientific-claims policy
+        run: |
+          if grep -R --line-number --include='*.py' \
             -E 'RandomForestClassifier|synthetic_crop_data|yield_estimate' \
-            src scripts
+            src scripts; then
+            echo "Forbidden synthetic-model marker found" >&2
+            exit 1
+          fi
 
       - name: Unit and contract tests
         run: python -m pytest -q
