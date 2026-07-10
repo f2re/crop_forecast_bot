@@ -159,7 +159,7 @@ build_release() {
 
   "${release}/.venv/bin/python" -m pip check
   "${release}/.venv/bin/python" -m compileall -q \
-    "${release}/config" "${release}/src"
+    "${release}/alembic" "${release}/config" "${release}/src"
 }
 
 preflight_release() {
@@ -171,16 +171,17 @@ preflight_release() {
     "${release}/.venv/bin/python" -m src.ops.doctor --runtime
 }
 
-run_migrations_if_available() {
+run_migrations() {
   local release="$1"
-  if [[ -f "${release}/alembic.ini" && -x "${release}/.venv/bin/alembic" ]]; then
-    log "Applying Alembic migrations"
-    run_as_app_in_release \
-      "${release}" \
-      "${release}/.venv/bin/alembic" upgrade head
-  else
-    warn "Alembic baseline is not present; startup bootstrap remains transitional"
-  fi
+  [[ -f "${release}/alembic.ini" ]] || \
+    fail "Release does not contain alembic.ini"
+  [[ -x "${release}/.venv/bin/alembic" ]] || \
+    fail "Release virtualenv does not contain Alembic"
+
+  log "Applying Alembic migrations"
+  run_as_app_in_release \
+    "${release}" \
+    "${release}/.venv/bin/alembic" upgrade head
 }
 
 replace_symlink() {
