@@ -24,6 +24,7 @@ def test_native_operations_commands_are_versioned() -> None:
         "alembic.ini",
         "alembic/versions/20260710_0001_initial_schema.py",
         "alembic/versions/20260710_0002_field_season_profile.py",
+        "alembic/versions/20260710_0003_field_metadata_notifications.py",
         "deploy/systemd/crop-forecast-bot.service",
         "deploy/systemd/crop-forecast-bot-update.service",
         "deploy/systemd/crop-forecast-bot-update.timer",
@@ -55,13 +56,20 @@ def test_production_startup_requires_alembic_schema() -> None:
     assert 'run_migrations "${NEW_RELEASE}"' in update
 
 
-def test_field_season_profile_is_reachable_from_runtime() -> None:
+def test_field_season_and_multi_field_flows_are_reachable() -> None:
     models = (ROOT / "src/database/models.py").read_text(encoding="utf-8")
     handlers = (ROOT / "src/bot/handlers/core.py").read_text(encoding="utf-8")
+    repository = (ROOT / "src/database/crud.py").read_text(encoding="utf-8")
     report = (ROOT / "src/application/agro_report.py").read_text(encoding="utf-8")
 
     assert "class Field(" in models
     assert "class CropSeason(" in models
+    assert "daily_digest_enabled" in models
+    assert "frost_alerts_enabled" in models
     assert 'F.data == "season"' in handlers
+    assert 'F.data == "fields"' in handlers
+    assert "field_activate:" in handlers
+    assert "async def create_field(" in repository
+    assert "async def activate_field(" in repository
     assert "season_start_date=context.season_start_date" in handlers
     assert "season_start_date: date | None" in report
