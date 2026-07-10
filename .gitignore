@@ -1,15 +1,38 @@
-# Файлы виртуального окружения
-venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Файл с переменными окружения
+# Virtual environments
+.venv/
+venv/
+
+# Runtime configuration and secrets
 .env
-.cdsapirc
+*.env.local
 
-# Файлы данных
-data/coordinates.json
+# Runtime state
+.runtime/
+.cache/
+logs/
+data/chroma_db/
+data/cache/
 
-# Временные файлы NetCDF
+# Local databases and scientific artifacts
+*.sqlite
+*.sqlite3
+*.db
 *.nc
-.env
+*.grib
+*.grib2
+*.pkl
+*.joblib
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
