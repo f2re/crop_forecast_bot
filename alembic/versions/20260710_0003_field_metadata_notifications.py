@@ -14,6 +14,9 @@ down_revision: str | None = "20260710_0002"
 branch_labels: str | None = None
 depends_on: str | None = None
 
+_LEGACY_DEFAULT_TIMEZONE = "legacy/default UTC"
+_LEGACY_PROVIDER_METADATA = "legacy/provider metadata; exact source not recorded"
+
 
 def upgrade() -> None:
     op.add_column(
@@ -51,7 +54,10 @@ def upgrade() -> None:
     fields = sa.table(
         "fields",
         sa.column("user_id", sa.Integer()),
+        sa.column("timezone", sa.String()),
         sa.column("timezone_source", sa.String()),
+        sa.column("elevation_m", sa.Float()),
+        sa.column("elevation_source", sa.String()),
         sa.column("daily_digest_enabled", sa.Boolean()),
     )
     bind = op.get_bind()
@@ -62,7 +68,14 @@ def upgrade() -> None:
     )
     bind.execute(
         sa.update(fields).values(
-            timezone_source="legacy/default UTC",
+            timezone_source=sa.case(
+                (fields.c.timezone == "UTC", _LEGACY_DEFAULT_TIMEZONE),
+                else_=_LEGACY_PROVIDER_METADATA,
+            ),
+            elevation_source=sa.case(
+                (fields.c.elevation_m.is_not(None), _LEGACY_PROVIDER_METADATA),
+                else_=None,
+            ),
             daily_digest_enabled=sa.case((user_digest == 1, True), else_=False),
         )
     )
