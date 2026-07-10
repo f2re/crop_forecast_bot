@@ -2,21 +2,21 @@
 
 Implemented quantities
 ----------------------
-* GDD: daily-average method described by McMaster & Wilhelm (1997),
-  ``max(0, min(Tmean, Tupper) - Tbase)`` in °C·day. ``Tupper`` is applied only
-  when explicitly configured for the crop.
-* Selyaninov hydrothermal coefficient (HTC/GTC):
-  ``10 * sum(P) / sum(Tmean)`` for completed days with ``Tmean > 10°C``.
-* Water-screening difference: completed-period precipitation minus provider
-  reference ET0. It is not a root-zone water balance or an irrigation dose.
-* Frost watch: configurable operational screening of forecast 2 m air Tmin.
-  It is not a crop-damage model and not plant/surface temperature.
+* Growing degree days (GDD), daily-average method: ``max(0, Tmean - Tbase)``.
+  An upper cutoff is applied only when a crop definition explicitly provides it.
+* Selyaninov hydrothermal coefficient (HTC/GTC): ``10 * sum(P) / sum(Tmean)``
+  over completed warm days with ``Tmean > 10°C``.
+* Completed-period precipitation minus provider reference ET0. This is a
+  screening difference, not a root-zone water balance or an irrigation dose.
+* Forecast daily minimum-temperature screening at 2 m. This is not a crop
+  damage model and not a plant/surface-temperature estimate.
 
-No function in this module predicts yield, profitability or phenology.
+The module never predicts yield, profitability or phenological stage.
 """
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import pandas as pd
 
@@ -25,7 +25,7 @@ from src.agro.crop_catalog import CROPS, get_crop, get_crop_phases, normalise_cr
 _COMPLETED_KINDS = frozenset({"observation", "reanalysis", "operational_past"})
 _FORECAST_KINDS = frozenset({"current_forecast", "forecast"})
 
-# Operational policy thresholds, not crop damage thresholds.
+# Operational policy thresholds. They are not crop-damage thresholds.
 FROST_WATCH_T_C = 2.0
 FROST_FREEZE_T_C = 0.0
 
@@ -52,12 +52,22 @@ def _prepare_daily(df_daily: pd.DataFrame, columns: set[str]) -> pd.DataFrame:
     missing = columns.difference(df_daily.columns)
     if missing:
         raise ValueError(f"Missing weather columns: {', '.join(sorted(missing))}")
-    optional = {"data_kind", "data_source"}.intersection(df_daily.columns)
+
+    optional = {"data_kind", "data_source", "local_date"}.intersection(
+        df_daily.columns
+    )
     frame = df_daily[list(columns | optional)].copy()
     frame["date"] = pd.to_datetime(frame["date"], utc=True, errors="coerce")
     frame = frame.dropna(subset=["date"])
-    frame = frame.sort_values("date")
-    frame["_day"] = frame["date"].dt.normalize()
+
+    if "local_date" in frame.columns:
+        local_day = pd.to_datetime(frame["local_date"], errors="coerce")
+        frame["_day"] = local_day.dt.normalize()
+        frame = frame.dropna(subset=["_day"])
+    else:
+        frame["_day"] = frame["date"].dt.tz_localize(None).dt.normalize()
+
+    frame = frame.sort_values(["_day", "date"])
     return frame.drop_duplicates("_day", keep="last")
 
 
@@ -86,6 +96,15 @@ def _window_stats(
     return valid_days, missing_days, missing_fraction
 
 
+def _source_counts(frame: pd.DataFrame) -> dict[str, int]:
+    if frame.empty or "data_kind" not in frame.columns:
+        return {}
+    return {
+        str(key): int(value)
+        for key, value in frame["data_kind"].value_counts().to_dict().items()
+    }
+
+
 def calc_htc(
     df_daily: pd.DataFrame,
     window_days: int = 30,
@@ -93,15 +112,17 @@ def calc_htc(
     max_missing_fraction: float = 0.10,
     *,
     as_of: pd.Timestamp | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Calculate Selyaninov HTC over completed days only.
 
-    The result is withheld when the requested window has too many missing days
-    or too few completed warm days. No universal crop recommendation is derived
-    from the coefficient.
+    The coefficient is withheld when the requested window has too many missing
+    days or too few completed warm days. No universal crop recommendation is
+    derived from the coefficient.
     """
     if window_days <= 0:
         raise ValueError("window_days must be positive")
+    if min_valid_warm_days <= 0:
+        raise ValueError("min_valid_warm_days must be positive")
     if not 0 <= max_missing_fraction <= 1:
         raise ValueError("max_missing_fraction must be between 0 and 1")
 
@@ -111,8 +132,8 @@ def calc_htc(
     if completed.empty:
         return {
             "htc": None,
-            "sum_precip_mm": 0.0,
-            "sum_t_above10": 0.0,
+            "sum_precip_mm": None,
+            "sum_t_above10": None,
             "window_days": window_days,
             "expected_days": window_days,
             "valid_days": 0,
@@ -122,15 +143,22 @@ def calc_htc(
             "min_valid_days": min_valid_warm_days,
             "period_start": None,
             "period_end": None,
+            "source_counts": {},
+            "units": "dimensionless",
             "interpretation": "нет завершённых суток для расчёта",
-            "method_note": "ГТК Селянинова по завершённым суткам с Tср > 10°C",
+            "method_reference": (
+                "ГТК Селянинова: 10·ΣP/ΣTср по завершённым суткам "
+                "с Tср > 10°C"
+            ),
         }
 
     period_end = completed["_day"].max()
     period_start = period_end - pd.Timedelta(days=window_days - 1)
-    window = completed[
-        (completed["_day"] >= period_start) & (completed["_day"] <= period_end)
-    ].dropna(subset=["t_mean", "precip_sum"])
+    raw_window = completed[
+        (completed["_day"] >= period_start)
+        & (completed["_day"] <= period_end)
+    ]
+    window = raw_window.dropna(subset=["t_mean", "precip_sum"])
     valid_days, missing_days, missing_fraction = _window_stats(
         window,
         expected_days=window_days,
@@ -156,8 +184,8 @@ def calc_htc(
     else:
         value = round(10.0 * sum_precip / sum_temperature, 3)
         interpretation = (
-            "коэффициент рассчитан; его агрономическая интерпретация зависит "
-            "от культуры, региона и выбранного периода"
+            "коэффициент рассчитан; интерпретация зависит от культуры, "
+            "региона и выбранного периода"
         )
 
     return {
@@ -173,8 +201,13 @@ def calc_htc(
         "min_valid_days": min_valid_warm_days,
         "period_start": period_start.date().isoformat(),
         "period_end": period_end.date().isoformat(),
+        "source_counts": _source_counts(window),
+        "units": "dimensionless",
         "interpretation": interpretation,
-        "method_note": "ГТК Селянинова по завершённым суткам с Tср > 10°C",
+        "method_reference": (
+            "ГТК Селянинова: 10·ΣP/ΣTср по завершённым суткам "
+            "с Tср > 10°C"
+        ),
     }
 
 
@@ -185,8 +218,11 @@ def calc_gdd(
     *,
     max_missing_fraction: float = 0.10,
     as_of: pd.Timestamp | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Calculate completed-period and forecast GDD without phase inference."""
+    if not 0 <= max_missing_fraction <= 1:
+        raise ValueError("max_missing_fraction must be between 0 and 1")
+
     crop_key = normalise_crop_key(crop)
     definition = get_crop(crop_key)
     t_base = float(definition["t_base"])
@@ -196,8 +232,12 @@ def calc_gdd(
         subset=["t_max", "t_min"]
     )
 
-    normalized_start = _as_utc(season_start) if season_start is not None else None
-    if normalized_start is not None:
+    normalized_start: pd.Timestamp | None = None
+    season_start_day: pd.Timestamp | None = None
+    if season_start is not None:
+        raw_start = pd.Timestamp(season_start)
+        season_start_day = pd.Timestamp(raw_start.date())
+        normalized_start = _as_utc(raw_start)
         frame = frame[frame["date"] >= normalized_start - pd.Timedelta(hours=36)]
 
     daily_mean = (frame["t_max"] + frame["t_min"]) / 2.0
@@ -206,18 +246,20 @@ def calc_gdd(
     frame["gdd_day"] = (daily_mean - t_base).clip(lower=0)
 
     past = _completed(frame, now)
-    future = _forecast(frame, now).sort_values("date").head(7)
-    past_gdd = round(float(past["gdd_day"].sum()), 1)
-    forecast_gdd = round(float(future["gdd_day"].sum()), 1)
+    future = _forecast(frame, now).sort_values("_day").head(7)
+    past_gdd = None if past.empty else round(float(past["gdd_day"].sum()), 1)
+    forecast_gdd = (
+        None if future.empty else round(float(future["gdd_day"].sum()), 1)
+    )
 
     period_start = None if past.empty else past["_day"].min()
     period_end = None if past.empty else past["_day"].max()
     start_reached = bool(
-        normalized_start is not None
+        season_start_day is not None
         and period_start is not None
-        and period_start <= normalized_start.normalize() + pd.Timedelta(days=1)
+        and period_start <= season_start_day + pd.Timedelta(days=1)
     )
-    expected_start = normalized_start.normalize() if start_reached else period_start
+    expected_start = season_start_day if start_reached else period_start
     if expected_start is None or period_end is None:
         expected_days = 0
     else:
@@ -228,19 +270,20 @@ def calc_gdd(
     )
     period_is_season = bool(
         start_reached
+        and valid_days > 0
         and missing_fraction is not None
         and missing_fraction <= max_missing_fraction
     )
 
-    source_counts: dict[str, int] = {}
-    if "data_kind" in past.columns:
-        source_counts = {
-            str(key): int(value)
-            for key, value in past["data_kind"].value_counts().to_dict().items()
+    contribution_by_kind: dict[str, float] = {}
+    if not past.empty and "data_kind" in past.columns:
+        contribution_by_kind = {
+            str(kind): round(float(group["gdd_day"].sum()), 1)
+            for kind, group in past.groupby("data_kind")
         }
 
-    if normalized_start is None:
-        period_note = "дата начала сезона не задана; показана сумма за доступный период"
+    if season_start_day is None:
+        period_note = "дата начала сезона не задана; сумма относится к доступному периоду"
     elif not start_reached:
         period_note = "ряд не достигает даты начала сезона; сезонная сумма не заявляется"
     elif not period_is_season:
@@ -264,22 +307,28 @@ def calc_gdd(
         "period_start": None if period_start is None else period_start.date().isoformat(),
         "period_end": None if period_end is None else period_end.date().isoformat(),
         "season_start": (
-            None if normalized_start is None else normalized_start.date().isoformat()
+            None if season_start_day is None else season_start_day.date().isoformat()
         ),
         "valid_days": valid_days,
         "expected_days": expected_days,
         "missing_days": missing_days,
         "missing_fraction": missing_fraction,
-        "source_counts": source_counts,
+        "source_counts": _source_counts(past),
+        "contribution_by_kind": contribution_by_kind,
+        "forecast_days": int(future["_day"].nunique()),
         "phase_labels": get_crop_phases(crop_key),
         "period_note": period_note,
         "phenology_note": (
             "фенофаза автоматически не определяется; отображается только "
             "наблюдение пользователя"
         ),
-        "method_note": (
-            "GDD = max(0, min(Tср, Tupper) − Tbase); Tupper применяется "
-            "только при явной настройке"
+        "units": "°C·сут",
+        "method_reference": (
+            "McMaster & Wilhelm (1997), daily-average GDD: "
+            "max(0, min(Tср, Tupper) − Tbase)"
+        ),
+        "t_base_note": (
+            "операционный параметр каталога; требуется валидация по сорту и региону"
         ),
     }
 
@@ -294,36 +343,40 @@ def calc_frost_risk(
     watch_threshold_c: float = FROST_WATCH_T_C,
     freeze_threshold_c: float = FROST_FREEZE_T_C,
     as_of: pd.Timestamp | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Screen forecast daily 2 m air Tmin; do not infer crop damage."""
     if freeze_threshold_c > watch_threshold_c:
         raise ValueError("freeze threshold cannot exceed watch threshold")
+
     now = _as_utc(as_of or _now_utc())
     frame = _prepare_daily(df_daily, {"date", "t_min"}).dropna(subset=["t_min"])
-    future = _forecast(frame, now).sort_values("date")
+    future = _forecast(frame, now).sort_values("_day")
     offset = timedelta(seconds=utc_offset_seconds)
-    alerts: list[dict] = []
+    local_today = pd.Timestamp((now + offset).date())
+    alerts: list[dict[str, Any]] = []
 
     for _, row in future.iterrows():
         t_min = float(row["t_min"])
         if t_min > watch_threshold_c:
             continue
-        local_day = row["date"] + offset
-        lead_days = max(0, int((row["_day"] - now.normalize()).days))
-        level = "freeze" if t_min <= freeze_threshold_c else "watch"
+        event_day = pd.Timestamp(row["_day"])
+        lead_days = max(0, int((event_day - local_today).days))
+        level = "critical" if t_min <= freeze_threshold_c else "warning"
         alerts.append(
             {
-                "date": row["date"].strftime("%Y-%m-%d"),
-                "date_local": local_day.strftime("%d.%m.%Y"),
-                "event_date": local_day.strftime("%Y-%m-%d"),
+                "date": event_day.date().isoformat(),
+                "date_local": event_day.strftime("%d.%m.%Y"),
+                "event_date": event_day.date().isoformat(),
                 "t_min": round(t_min, 1),
                 "min_temp": round(t_min, 1),
                 "lead_days": lead_days,
+                # Compatibility field; daily data do not provide event hour.
                 "lead_hours": lead_days * 24,
                 "level": level,
                 "crop_key": crop,
                 "phase": phase,
                 "elevation_m": elevation_m,
+                "data_source": row.get("data_source"),
                 "action": (
                     "сверить локальный прогноз, измерения на поле, фактическую "
                     "фазу и условия микрорельефа"
@@ -336,12 +389,15 @@ def calc_frost_risk(
         "alerts": alerts,
         "frost_free_days_7d": max(0, horizon_days - len(alerts)),
         "forecast_contains_48h": horizon_days >= 2,
+        "forecast_days": horizon_days,
         "watch_threshold_c": watch_threshold_c,
         "freeze_threshold_c": freeze_threshold_c,
-        "method_note": (
-            "оперативный скрининг прогнозной Tmin воздуха на высоте 2 м; "
-            "2°C — консервативный порог внимания, 0°C — порог замерзания воды; "
-            "это не температура растений и не порог повреждения культуры"
+        "source_counts": _source_counts(future),
+        "units": "°C (Tmin воздуха на высоте 2 м)",
+        "method_reference": (
+            "оперативный скрининг прогнозной суточной Tmin воздуха 2 м; "
+            "2°C — порог внимания, 0°C — порог замерзания воды; это не "
+            "температура растений и не порог повреждения культуры"
         ),
         "context": {
             "crop": crop,
@@ -357,43 +413,61 @@ def calc_et0_balance(
     *,
     max_missing_fraction: float = 0.20,
     as_of: pd.Timestamp | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Return completed-period ``P - provider ET0`` as a screening quantity."""
     if window_days <= 0:
         raise ValueError("window_days must be positive")
+    if not 0 <= max_missing_fraction <= 1:
+        raise ValueError("max_missing_fraction must be between 0 and 1")
+
     now = _as_utc(as_of or _now_utc())
     frame = _prepare_daily(df_daily, {"date", "precip_sum", "et0_sum"})
     completed = _completed(frame, now)
     if completed.empty:
         return {
+            "available": False,
             "precip_sum_mm": None,
             "et0_sum_mm": None,
             "balance_mm": None,
             "status": "нет завершённых суток",
             "window_days": window_days,
+            "expected_days": window_days,
             "valid_days": 0,
             "missing_days": window_days,
             "missing_fraction": 1.0,
             "period_start": None,
             "period_end": None,
+            "source_counts": {},
+            "units": "мм",
             "et0_source": "provider et0_fao_evapotranspiration",
-            "method_note": "P−ET0 не является водным балансом корнеобитаемого слоя",
+            "method_reference": (
+                "простая разность P−ET0 по завершённым суткам; не учитывает "
+                "Kc, запасы влаги, сток, инфильтрацию и глубину корней"
+            ),
         }
 
     period_end = completed["_day"].max()
     period_start = period_end - pd.Timedelta(days=window_days - 1)
-    window = completed[
-        (completed["_day"] >= period_start) & (completed["_day"] <= period_end)
-    ].dropna(subset=["precip_sum", "et0_sum"])
+    raw_window = completed[
+        (completed["_day"] >= period_start)
+        & (completed["_day"] <= period_end)
+    ]
+    window = raw_window.dropna(subset=["precip_sum", "et0_sum"])
     valid_days, missing_days, missing_fraction = _window_stats(
         window,
         expected_days=window_days,
     )
-    if missing_fraction is not None and missing_fraction > max_missing_fraction:
-        precip = et0 = balance = None
-        status = (
-            f"не рассчитано: пропущено {missing_days} из {window_days} суток"
-        )
+
+    available = bool(
+        valid_days > 0
+        and missing_fraction is not None
+        and missing_fraction <= max_missing_fraction
+    )
+    precip: float | None = None
+    et0: float | None = None
+    balance: float | None = None
+    if not available:
+        status = f"не рассчитано: валидных суток {valid_days} из {window_days}"
     else:
         precip = round(float(window["precip_sum"].clip(lower=0).sum()), 1)
         et0 = round(float(window["et0_sum"].clip(lower=0).sum()), 1)
@@ -406,18 +480,22 @@ def calc_et0_balance(
             status = "суммы осадков и ET₀ равны за выбранное окно"
 
     return {
+        "available": available,
         "precip_sum_mm": precip,
         "et0_sum_mm": et0,
         "balance_mm": balance,
         "status": status,
         "window_days": window_days,
+        "expected_days": window_days,
         "valid_days": valid_days,
         "missing_days": missing_days,
         "missing_fraction": missing_fraction,
         "period_start": period_start.date().isoformat(),
         "period_end": period_end.date().isoformat(),
+        "source_counts": _source_counts(window),
+        "units": "мм",
         "et0_source": "provider et0_fao_evapotranspiration",
-        "method_note": (
+        "method_reference": (
             "простая разность P−ET0 по завершённым суткам; не учитывает Kc, "
             "запасы влаги, сток, инфильтрацию и глубину корней"
         ),
@@ -433,7 +511,7 @@ def compute_all_indices(
     phase: str | None = None,
     elevation_m: float | None = None,
     as_of: pd.Timestamp | None = None,
-) -> dict:
+) -> dict[str, dict[str, Any]]:
     return {
         "htc": calc_htc(df_daily, as_of=as_of),
         "gdd": calc_gdd(df_daily, crop, season_start=season_start, as_of=as_of),
@@ -450,7 +528,7 @@ def compute_all_indices(
 
 
 def format_indices_for_rag(
-    indices: dict,
+    indices: dict[str, dict[str, Any]],
     crop: str,
     crop_phase: str | None = None,
 ) -> str:
@@ -464,24 +542,29 @@ def format_indices_for_rag(
     if htc.get("htc") is None:
         lines.append(f"ГТК: не рассчитан — {htc.get('interpretation', 'нет данных')}")
     else:
+        missing_fraction = htc.get("missing_fraction") or 0.0
         lines.append(
             f"ГТК за {htc['window_days']} завершённых суток: {htc['htc']:.3f}; "
-            f"пропуски {htc.get('missing_fraction', 0) * 100:.1f}%"
+            f"пропуски {missing_fraction * 100:.1f}%"
         )
 
     gdd = indices.get("gdd", {})
-    scope = "с начала сезона" if gdd.get("period_is_season") else "за доступный период"
-    lines.append(
-        f"ГДД {scope}: {gdd.get('gdd_past', 0):.1f} °C·сут; "
-        f"Tbase={gdd.get('t_base')}°C; {gdd.get('period_note', '')}"
-    )
+    gdd_past = gdd.get("gdd_past")
+    if gdd_past is None:
+        lines.append("ГДД: не рассчитаны — нет завершённых валидных суток")
+    else:
+        scope = "с начала сезона" if gdd.get("period_is_season") else "за доступный период"
+        lines.append(
+            f"ГДД {scope}: {gdd_past:.1f} °C·сут; "
+            f"Tbase={gdd.get('t_base')}°C; {gdd.get('period_note', '')}"
+        )
 
     alerts = indices.get("frost", {}).get("alerts", [])
     if alerts:
         first = alerts[0]
         lines.append(
             f"Температурный скрининг: Tmin 2 м {first['t_min']}°C, "
-            f"день {first['date_local']}"
+            f"дата {first['date_local']}"
         )
     else:
         lines.append("Температурный скрининг: событий по заданной политике нет")
