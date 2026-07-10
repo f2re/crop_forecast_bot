@@ -18,13 +18,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build source audit snapshot
-        run: tar --exclude=.git -czf source-audit.tar.gz .
+        run: tar --exclude=.git -czf /tmp/source-audit.tar.gz .
 
       - name: Upload source audit snapshot
         uses: actions/upload-artifact@v4
         with:
           name: source-audit
-          path: source-audit.tar.gz
+          path: /tmp/source-audit.tar.gz
           if-no-files-found: error
           retention-days: 1
 
