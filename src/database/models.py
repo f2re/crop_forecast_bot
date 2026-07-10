@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -71,7 +72,7 @@ class User(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    fields: Mapped[list[Field]] = relationship(
+    fields: Mapped[list["Field"]] = relationship(
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -90,6 +91,13 @@ class Field(Base):
     __tablename__ = "fields"
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="uq_fields_user_name"),
+        Index(
+            "uq_fields_one_active_per_user",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -133,8 +141,8 @@ class Field(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    user: Mapped[User] = relationship(back_populates="fields")
-    seasons: Mapped[list[CropSeason]] = relationship(
+    user: Mapped["User"] = relationship(back_populates="fields")
+    seasons: Mapped[list["CropSeason"]] = relationship(
         back_populates="field",
         cascade="all, delete-orphan",
     )
@@ -149,6 +157,13 @@ class CropSeason(Base):
             "phase_confidence IS NULL OR "
             "(phase_confidence >= 0 AND phase_confidence <= 1)",
             name="ck_crop_seasons_phase_confidence",
+        ),
+        Index(
+            "uq_crop_seasons_one_active_per_field",
+            "field_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
         ),
     )
 
@@ -189,4 +204,4 @@ class CropSeason(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
 
-    field: Mapped[Field] = relationship(back_populates="seasons")
+    field: Mapped["Field"] = relationship(back_populates="seasons")
