@@ -11,6 +11,23 @@ require_root
 acquire_deploy_lock
 validate_runtime_env
 
+render_units_from_release() {
+  local release="$1"
+  local unit
+  for unit in \
+    crop-forecast-bot.service \
+    crop-forecast-bot-update.service \
+    crop-forecast-bot-update.timer; do
+    [[ -f "${release}/deploy/systemd/${unit}" ]] || \
+      fail "Release is missing systemd template: ${unit}"
+    render_template \
+      "${release}/deploy/systemd/${unit}" \
+      "/etc/systemd/system/${unit}"
+    chmod 0644 "/etc/systemd/system/${unit}"
+  done
+  systemctl daemon-reload
+}
+
 current_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 target_release="${1:-$(readlink -f "${PREVIOUS_LINK}" 2>/dev/null || true)}"
 
@@ -30,27 +47,14 @@ esac
   fail "Rollback target has no Python environment"
 
 preflight_release "${target_release}"
-
-for unit in \
-  crop-forecast-bot.service \
-  crop-forecast-bot-update.service \
-  crop-forecast-bot-update.timer; do
-  [[ -f "${target_release}/deploy/systemd/${unit}" ]] || \
-    fail "Rollback target is missing systemd template: ${unit}"
-  render_template \
-    "${target_release}/deploy/systemd/${unit}" \
-    "/etc/systemd/system/${unit}"
-  chmod 0644 "/etc/systemd/system/${unit}"
-done
-systemctl daemon-reload
-
+render_units_from_release "${target_release}"
 replace_symlink "${PREVIOUS_LINK}" "${current_release}"
 replace_symlink "${CURRENT_LINK}" "${target_release}"
 
 if ! restart_and_verify; then
   warn "Rollback target failed; restoring the original release"
   replace_symlink "${CURRENT_LINK}" "${current_release}"
-  systemctl daemon-reload
+  render_units_from_release "${current_release}"
   restart_and_verify || \
     fail "Original release also failed; inspect journalctl -u ${SERVICE_NAME}"
   fail "Rollback target failed health verification"
