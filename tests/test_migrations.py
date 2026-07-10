@@ -36,6 +36,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "crop_seasons",
         "alembic_version",
     }.issubset(inspector.get_table_names())
+
     user_columns = {column["name"] for column in inspector.get_columns("users")}
     assert {
         "id",
@@ -49,6 +50,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "created_at",
         "updated_at",
     } == user_columns
+
     field_columns = {column["name"] for column in inspector.get_columns("fields")}
     assert {
         "id",
@@ -57,11 +59,16 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "latitude",
         "longitude",
         "timezone",
+        "timezone_source",
         "elevation_m",
+        "elevation_source",
+        "daily_digest_enabled",
+        "frost_alerts_enabled",
         "is_active",
         "created_at",
         "updated_at",
     } == field_columns
+
     season_columns = {
         column["name"] for column in inspector.get_columns("crop_seasons")
     }
@@ -79,13 +86,24 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "updated_at",
     } == season_columns
 
+    field_indexes = {
+        index["name"]: index for index in inspector.get_indexes("fields")
+    }
+    assert field_indexes["uq_fields_one_active_per_user"]["unique"] == 1
+    season_indexes = {
+        index["name"]: index for index in inspector.get_indexes("crop_seasons")
+    }
+    assert season_indexes["uq_crop_seasons_one_active_per_field"]["unique"] == 1
+
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260710_0002"
+    assert revision == expected_schema_revision() == "20260710_0003"
 
 
-def test_migrations_adopt_legacy_user_and_backfill_field_season(tmp_path: Path) -> None:
+def test_migrations_adopt_legacy_user_and_backfill_field_settings(
+    tmp_path: Path,
+) -> None:
     database_path = tmp_path / "legacy.sqlite"
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.begin() as connection:
@@ -99,6 +117,8 @@ def test_migrations_adopt_legacy_user_and_backfill_field_season(tmp_path: Path) 
                     first_name VARCHAR(255),
                     latitude FLOAT,
                     longitude FLOAT,
+                    selected_crop VARCHAR(50) DEFAULT 'wheat',
+                    daily_digest INTEGER NOT NULL DEFAULT 0,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
@@ -108,8 +128,9 @@ def test_migrations_adopt_legacy_user_and_backfill_field_season(tmp_path: Path) 
         connection.execute(
             sa.text(
                 "INSERT INTO users "
-                "(telegram_id, username, latitude, longitude) "
-                "VALUES (1001, 'farmer', 55.75, 37.62)"
+                "(telegram_id, username, latitude, longitude, "
+                "selected_crop, daily_digest) "
+                "VALUES (1001, 'farmer', 55.75, 37.62, 'sunflower', 1)"
             )
         )
 
@@ -124,8 +145,9 @@ def test_migrations_adopt_legacy_user_and_backfill_field_season(tmp_path: Path) 
         ).one()
         field_row = connection.execute(
             sa.text(
-                "SELECT user_id, name, latitude, longitude, timezone, is_active "
-                "FROM fields"
+                "SELECT user_id, name, latitude, longitude, timezone, "
+                "timezone_source, elevation_source, daily_digest_enabled, "
+                "frost_alerts_enabled, is_active FROM fields"
             )
         ).one()
         season_row = connection.execute(
@@ -134,12 +156,18 @@ def test_migrations_adopt_legacy_user_and_backfill_field_season(tmp_path: Path) 
                 "FROM crop_seasons"
             )
         ).one()
+        revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
 
-    assert user_row[1:] == (1001, "wheat", 0)
+    assert user_row[1:] == (1001, "sunflower", 1)
     assert field_row[0] == user_row[0]
     assert field_row[1:5] == ("Основное поле", 55.75, 37.62, "UTC")
-    assert bool(field_row[5]) is True
+    assert field_row[5] == "legacy/default UTC"
+    assert field_row[6] is None
+    assert bool(field_row[7]) is True
+    assert bool(field_row[8]) is True
+    assert bool(field_row[9]) is True
     assert season_row[0] is not None
-    assert season_row[1] == "wheat"
+    assert season_row[1] == "sunflower"
     assert season_row[2] is None
     assert bool(season_row[3]) is True
+    assert revision == "20260710_0003"
