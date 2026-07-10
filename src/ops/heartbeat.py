@@ -3,8 +3,38 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import socket
 import time
 from pathlib import Path
+
+
+def notify_systemd(message: str) -> bool:
+    """Send a notification to systemd without an external dependency.
+
+    Outside a ``Type=notify`` service ``NOTIFY_SOCKET`` is absent and this
+    function is a no-op, which keeps local development and tests portable.
+    """
+
+    notify_socket = os.getenv("NOTIFY_SOCKET")
+    if not notify_socket:
+        return False
+
+    address = "\0" + notify_socket[1:] if notify_socket.startswith("@") else notify_socket
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:
+            client.connect(address)
+            client.sendall(message.encode("utf-8"))
+    except OSError:
+        return False
+    return True
+
+
+def notify_ready() -> bool:
+    return notify_systemd("READY=1\nSTATUS=Polling Telegram and scheduler are active")
+
+
+def notify_stopping() -> bool:
+    return notify_systemd("STOPPING=1\nSTATUS=Shutting down cleanly")
 
 
 async def run_heartbeat(path: Path, interval_seconds: int = 15) -> None:
@@ -13,6 +43,7 @@ async def run_heartbeat(path: Path, interval_seconds: int = 15) -> None:
         temporary = path.with_suffix(".tmp")
         temporary.write_text(str(time.time()), encoding="utf-8")
         os.replace(temporary, path)
+        notify_systemd("WATCHDOG=1")
         await asyncio.sleep(interval_seconds)
 
 
