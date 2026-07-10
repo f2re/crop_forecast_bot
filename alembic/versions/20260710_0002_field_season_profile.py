@@ -151,6 +151,14 @@ def upgrade() -> None:
         ["user_id", "is_active"],
         unique=False,
     )
+    op.create_index(
+        "uq_fields_one_active_per_user",
+        "fields",
+        ["user_id"],
+        unique=True,
+        postgresql_where=sa.text("is_active"),
+        sqlite_where=sa.text("is_active = 1"),
+    )
 
     op.create_table(
         "crop_seasons",
@@ -208,6 +216,14 @@ def upgrade() -> None:
         ["field_id", "is_active"],
         unique=False,
     )
+    op.create_index(
+        "uq_crop_seasons_one_active_per_field",
+        "crop_seasons",
+        ["field_id"],
+        unique=True,
+        postgresql_where=sa.text("is_active"),
+        sqlite_where=sa.text("is_active = 1"),
+    )
 
     _backfill_from_users(op.get_bind())
 
@@ -247,9 +263,14 @@ def downgrade() -> None:
             )
         )
 
+    op.drop_index(
+        "uq_crop_seasons_one_active_per_field",
+        table_name="crop_seasons",
+    )
     op.drop_index("ix_crop_seasons_field_active", table_name="crop_seasons")
     op.drop_index("ix_crop_seasons_field_id", table_name="crop_seasons")
     op.drop_table("crop_seasons")
+    op.drop_index("uq_fields_one_active_per_user", table_name="fields")
     op.drop_index("ix_fields_user_active", table_name="fields")
     op.drop_index("ix_fields_user_id", table_name="fields")
     op.drop_table("fields")
