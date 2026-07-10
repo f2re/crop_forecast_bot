@@ -17,7 +17,11 @@ class AgroReport:
 
 async def generate_agro_report(latitude: float, longitude: float, crop: str) -> AgroReport:
     weather = await fetch_agro_data(latitude, longitude)
-    indices = compute_all_indices(weather.daily, crop=crop)
+    indices = compute_all_indices(
+        weather.daily,
+        crop=crop,
+        utc_offset_seconds=weather.meta.utc_offset_seconds,
+    )
     text = format_agro_report(weather, indices, crop)
     return AgroReport(
         text=text,
