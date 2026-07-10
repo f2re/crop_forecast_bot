@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,12 +13,19 @@ from config.settings import get_settings
 from src.agro.indices import calc_frost_risk
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
 from src.application.agro_report import generate_agro_report
-from src.bot.alerts import format_frost_alert, mark_alert_sent, should_send_alert
-from src.database.crud import get_all_active_users, get_users_with_daily_digest
+from src.bot.alerts import format_frost_alert
+from src.database.crud import NotificationTarget, list_notification_targets
+from src.infrastructure.coordination import CoordinationBackend, Lease
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], AsyncSession]
 _scheduler: AsyncIOScheduler | None = None
+
+_NOTIFICATION_RESERVATION_TTL = 5 * 60
+_FROST_DEDUP_TTL = 20 * 60 * 60
+_DAILY_DIGEST_DEDUP_TTL = 36 * 60 * 60
+_FROST_JOB_LOCK_TTL = 5 * 60 * 60
+_DAILY_JOB_LOCK_TTL = 6 * 60 * 60
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -27,7 +35,11 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
-async def start_scheduler(bot: Bot, session_factory: SessionFactory) -> None:
+async def start_scheduler(
+    bot: Bot,
+    session_factory: SessionFactory,
+    coordination: CoordinationBackend,
+) -> None:
     scheduler = get_scheduler()
     if scheduler.running:
         return
@@ -36,7 +48,7 @@ async def start_scheduler(bot: Bot, session_factory: SessionFactory) -> None:
         trigger="cron",
         hour="0,6,12,18",
         minute=10,
-        args=[bot, session_factory],
+        args=[bot, session_factory, coordination],
         id="frost_check",
         replace_existing=True,
         max_instances=1,
@@ -48,7 +60,7 @@ async def start_scheduler(bot: Bot, session_factory: SessionFactory) -> None:
         trigger="cron",
         hour=7,
         minute=0,
-        args=[bot, session_factory],
+        args=[bot, session_factory, coordination],
         id="daily_digest",
         replace_existing=True,
         max_instances=1,
@@ -66,43 +78,143 @@ async def stop_scheduler() -> None:
     _scheduler = None
 
 
-async def check_frost_alerts(bot: Bot, session_factory: SessionFactory) -> None:
-    logger.info("[%s] Frost screening started", datetime.now().isoformat(timespec="minutes"))
+async def _targets(
+    session_factory: SessionFactory,
+    *,
+    daily_digest_only: bool = False,
+) -> list[NotificationTarget]:
     async with session_factory() as session:
-        async for user in get_all_active_users(session):
+        return await list_notification_targets(
+            session,
+            daily_digest_only=daily_digest_only,
+        )
+
+
+async def _send_once(
+    coordination: CoordinationBackend,
+    key: str,
+    committed_ttl_seconds: int,
+    sender: Callable[[], Awaitable[object]],
+) -> bool:
+    lease = await coordination.acquire(key, _NOTIFICATION_RESERVATION_TTL)
+    if lease is None:
+        return False
+
+    try:
+        await sender()
+    except Exception:
+        try:
+            await coordination.release(lease)
+        except Exception:
+            logger.exception("Failed to release notification reservation %s", key)
+        raise
+
+    if not await coordination.renew(lease, committed_ttl_seconds):
+        logger.error(
+            "Notification was sent but its deduplication lease was not persisted: %s",
+            key,
+        )
+    return True
+
+
+async def _release_job_lock(
+    coordination: CoordinationBackend,
+    lease: Lease,
+    job_name: str,
+) -> None:
+    try:
+        await coordination.release(lease)
+    except Exception:
+        logger.exception("Failed to release distributed lock for %s", job_name)
+
+
+async def check_frost_alerts(
+    bot: Bot,
+    session_factory: SessionFactory,
+    coordination: CoordinationBackend,
+) -> None:
+    job_lease = await coordination.acquire("job:frost-check", _FROST_JOB_LOCK_TTL)
+    if job_lease is None:
+        logger.info("Frost screening skipped: another process owns the job lock")
+        return
+
+    logger.info("[%s] Frost screening started", datetime.now().isoformat(timespec="minutes"))
+    try:
+        for target in await _targets(session_factory):
+            if not await coordination.renew(job_lease, _FROST_JOB_LOCK_TTL):
+                logger.error("Frost screening lost its distributed lock; aborting")
+                return
             try:
-                weather = await fetch_agro_data(user.latitude, user.longitude)
+                weather = await fetch_agro_data(target.latitude, target.longitude)
                 risk = calc_frost_risk(
                     weather.daily,
                     utc_offset_seconds=weather.meta.utc_offset_seconds,
                 )
                 for event in risk["alerts"]:
                     alert_key = (
-                        f"frost:{user.telegram_id}:{event['event_date']}:"
-                        f"{event['t_min']:.1f}"
+                        f"notification:frost:{target.telegram_id}:"
+                        f"{event['event_date']}:{event['level']}"
                     )
-                    if not await should_send_alert(alert_key):
-                        continue
-                    await bot.send_message(
-                        user.telegram_id,
-                        format_frost_alert(event, user.selected_crop),
+
+                    async def send(event: dict = event, target: NotificationTarget = target) -> object:
+                        return await bot.send_message(
+                            target.telegram_id,
+                            format_frost_alert(event, target.selected_crop),
+                        )
+
+                    await _send_once(
+                        coordination,
+                        alert_key,
+                        _FROST_DEDUP_TTL,
+                        send,
                     )
-                    await mark_alert_sent(alert_key, ttl_hours=20)
             except OpenMeteoError as exc:
-                logger.warning("Open-Meteo unavailable for user %s: %s", user.telegram_id, exc)
+                logger.warning(
+                    "Open-Meteo unavailable for user %s: %s",
+                    target.telegram_id,
+                    exc,
+                )
             except Exception:
-                logger.exception("Frost alert failed for user %s", user.telegram_id)
+                logger.exception("Frost alert failed for user %s", target.telegram_id)
+    finally:
+        await _release_job_lock(coordination, job_lease, "frost-check")
 
 
-async def send_daily_digest(bot: Bot, session_factory: SessionFactory) -> None:
-    async with session_factory() as session:
-        async for user in get_users_with_daily_digest(session):
+async def send_daily_digest(
+    bot: Bot,
+    session_factory: SessionFactory,
+    coordination: CoordinationBackend,
+) -> None:
+    job_lease = await coordination.acquire("job:daily-digest", _DAILY_JOB_LOCK_TTL)
+    if job_lease is None:
+        logger.info("Daily digest skipped: another process owns the job lock")
+        return
+
+    settings = get_settings()
+    local_date = datetime.now(ZoneInfo(settings.scheduler_timezone)).date().isoformat()
+    try:
+        for target in await _targets(session_factory, daily_digest_only=True):
+            if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
+                logger.error("Daily digest lost its distributed lock; aborting")
+                return
+            digest_key = f"notification:digest:{target.telegram_id}:{local_date}"
             try:
                 report = await generate_agro_report(
-                    user.latitude,
-                    user.longitude,
-                    user.selected_crop or "wheat",
+                    target.latitude,
+                    target.longitude,
+                    target.selected_crop,
                 )
-                await bot.send_message(user.telegram_id, report.text)
+
+                async def send(report_text: str = report.text, target: NotificationTarget = target) -> object:
+                    return await bot.send_message(target.telegram_id, report_text)
+
+                await _send_once(
+                    coordination,
+                    digest_key,
+                    _DAILY_DIGEST_DEDUP_TTL,
+                    send,
+                )
             except Exception:
-                logger.exception("Daily digest failed for user %s", user.telegram_id)
+                logger.exception("Daily digest failed for user %s", target.telegram_id)
+    finally:
+        await _release_job_lock(coordination, job_lease, "daily-digest")
