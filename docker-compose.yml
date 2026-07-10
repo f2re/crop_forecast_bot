@@ -1,102 +1,72 @@
-version: '3.8'
+name: crop-forecast-bot
 
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: crop_forecast_bot_db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-crop_forecast_bot}
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_USER: ${DB_USER:-cropbot}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-crop_forecast_bot}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
-      retries: 5
-    networks:
-      - bot_network
+      retries: 10
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
-  crop_forecast_bot:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging: *default-logging
+
+  bot:
     build:
       context: .
       dockerfile: Dockerfile
-    image: crop_forecast_bot:latest
-    container_name: crop_forecast_bot
+    image: crop-forecast-bot:local
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-cropbot}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-crop_forecast_bot}
+      REDIS_URL: redis://redis:6379/0
+      HEARTBEAT_FILE: /tmp/crop_forecast_bot/heartbeat
     depends_on:
       postgres:
         condition: service_healthy
-
-    environment:
-      # Telegram Bot
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-
-      # Copernicus CDS API (New format - no UID prefix in key)
-      CDS_API_URL: ${CDS_API_URL:-https://cds.climate.copernicus.eu/api}
-      CDS_API_KEY: ${CDS_API_KEY}
-
-      # OpenRouter API (optional)
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-
-      # PostgreSQL Database
-      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/crop_forecast_bot}
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_PORT: ${DB_PORT:-5432}
-      DB_NAME: ${DB_NAME:-crop_forecast_bot}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-
-      # Python settings
-      PYTHONUNBUFFERED: 1
-
+      redis:
+        condition: service_healthy
     volumes:
-      # Data persistence (for climate data cache, etc.)
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./logs:/app/logs
-
-      # Earth Engine credentials (if using service account)
-      - ${HOME}/.config/earthengine:/root/.config/earthengine:ro
-
-    networks:
-      - bot_network
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-
-    # Resource limits
-    deploy:
-      resources:
-        limits:
-          cpus: '2.0'
-          memory: 4G
-        reservations:
-          cpus: '0.5'
-          memory: 1G
-
-    # Logging
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-    # Health check - verify network and bot process
+      - bot_data:/app/data
+      - bot_logs:/app/logs
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.gethostbyname('api.telegram.org')"]
-      interval: 60s
-      timeout: 10s
-      retries: 5
+      test: ["CMD-SHELL", "python -m src.ops.heartbeat $${HEARTBEAT_FILE} --max-age 90"]
+      interval: 30s
+      timeout: 5s
       start_period: 60s
-
-networks:
-  bot_network:
-    driver: bridge
+      retries: 3
+    logging: *default-logging
 
 volumes:
   postgres_data:
-    driver: local
+  redis_data:
+  bot_data:
+  bot_logs:
