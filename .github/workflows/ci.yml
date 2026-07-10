@@ -16,6 +16,18 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build source audit snapshot
+        run: tar --exclude=.git -czf source-audit.tar.gz .
+
+      - name: Upload source audit snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-audit
+          path: source-audit.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
