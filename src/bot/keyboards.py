@@ -11,7 +11,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.agro.crop_catalog import CATEGORIES, CROPS, get_crop, get_crop_name
+from src.agro.crop_catalog import CATEGORIES, CROPS, get_crop_name, get_crop_phases
 
 
 class FieldKeyboardItem(Protocol):
@@ -165,7 +165,7 @@ def get_crop_list_keyboard(category_id: str) -> InlineKeyboardMarkup:
     category = CATEGORIES.get(category_id)
     if category:
         for crop_key in category["crops"]:
-            crop = CROPS.get(crop_key)
+            crop = CROPS.get(str(crop_key))
             if crop:
                 builder.button(
                     text=f"{crop['emoji']} {crop['name_ru']}",
@@ -193,8 +193,7 @@ def get_season_keyboard(*, has_start: bool, has_phase: bool) -> InlineKeyboardMa
 
 def get_phase_keyboard(crop_key: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    phases = list(get_crop(crop_key).get("gdd_stages", {}).keys())
-    for index, phase in enumerate(phases):
+    for index, phase in enumerate(get_crop_phases(crop_key)):
         builder.button(text=phase, callback_data=f"phase_pick:{index}")
     builder.button(text="◀️ К сезону", callback_data="season")
     builder.adjust(1)
