@@ -17,7 +17,7 @@ install_system_packages() {
   log "Installing operating-system dependencies"
   apt-get update
   apt-get install -y --no-install-recommends \
-    ca-certificates git openssl curl flock rsync \
+    ca-certificates git openssl curl util-linux rsync \
     python3 python3-venv python3-dev build-essential \
     libpq-dev gdal-bin libgdal-dev \
     postgresql postgresql-client redis-server
