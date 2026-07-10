@@ -1,74 +1,46 @@
-# Crop Forecast Bot Dockerfile
-# Multi-stage build for optimization
-
-# Stage 1: Builder
 FROM python:3.11-slim AS builder
 
-# Set working directory
-WORKDIR /build
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
-# Install system dependencies for building
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    make \
+    build-essential \
     libpq-dev \
     libgdal-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+WORKDIR /build
 COPY requirements.txt .
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements.txt
 
-# Install Python dependencies globally
-RUN pip install --no-cache-dir -r requirements.txt
+FROM python:3.11-slim AS runtime
 
-# Stage 2: Runtime
-FROM python:3.11-slim
-
-# Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    DEBIAN_FRONTEND=noninteractive
+    PATH="/opt/venv/bin:$PATH" \
+    HEARTBEAT_FILE=/tmp/crop_forecast_bot/heartbeat
 
-# Set working directory
-WORKDIR /app
-
-# Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    gdal-bin \
-    curl \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    curl \
+    gdal-bin \
+    libpq5 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin cropbot
 
-# Copy Python dependencies from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+WORKDIR /app
+COPY --from=builder /opt/venv /opt/venv
+COPY . /app
 
-# Create necessary directories
-RUN mkdir -p /app/data/era5 \
-    /app/data/satellite \
-    /app/data/soil \
-    /app/data/training \
-    /app/models \
-    /app/logs
+RUN mkdir -p /app/data/cache /app/data/literature /app/logs /tmp/crop_forecast_bot && \
+    chown -R cropbot:cropbot /app/data /app/logs /tmp/crop_forecast_bot
 
-# Copy application code
-COPY . /app/
+USER cropbot
 
-# Set proper permissions
-RUN chmod -R 755 /app && \
-    chmod 777 /app/data /app/models /app/logs
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD-SHELL python -m src.ops.heartbeat "${HEARTBEAT_FILE}" --max-age 90
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
-
-# Run as non-root user for security
-RUN useradd -m -u 1000 botuser && \
-    chown -R botuser:botuser /app
-USER botuser
-
-# Default command
-CMD ["python", "-u", "run_bot.py"]
+CMD ["python", "-m", "src.bot.main"]
