@@ -8,9 +8,12 @@ cat <<EOF
 🌾 Crop Forecast Bot — справка
 
 Telegram:
-  /start   открыть главное меню
+  /start   открыть профиль и главное меню
   /help    показать пользовательскую справку
   /cancel  отменить текущий ввод
+
+  Основной путь:
+    Моё поле → культура → Сезон и фаза → Агроотчёт
 
 Сервис:
   sudo systemctl status crop-forecast-bot
@@ -31,6 +34,7 @@ Telegram:
 
 База данных:
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic current'
+  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic heads'
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic upgrade head'
 
 Разработка:
@@ -38,5 +42,6 @@ Telegram:
   . .venv/bin/activate
   pip install -r requirements-dev.txt
   alembic upgrade head
+  ruff check alembic config src tests
   python -m pytest -q
 EOF
