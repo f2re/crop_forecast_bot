@@ -30,6 +30,25 @@ infrastructure adapters
 8. релиз принимается после зелёного CI, migration check и runtime smoke;
 9. production разворачивается Bash/systemd без Docker.
 
+## Ближайший вертикальный срез — persistence и concurrency
+
+Приоритет: **P0**. Цель — доказать устойчивость уже реализованного Telegram flow на реальных PostgreSQL и Redis, а не добавлять новые источники данных.
+
+1. Добавить изолированные integration tests с реальными PostgreSQL и Redis: Alembic `upgrade head`, partial indexes, row locking, Redis TTL и lease semantics.
+2. Устранить race conditions в `get_or_create_user`, создании active field и crop season через idempotent upsert либо обработку `IntegrityError`.
+3. Добавить сценарные aiogram/FSM tests для создания поля и ввода сезона до и после рестарта Redis.
+4. Запустить два scheduler-процесса против одной БД/Redis и проверить distributed lock, deduplication, повтор после падения и отсутствие двойной отправки.
+5. Проверить недоступность PostgreSQL/Redis, повторные callback, рестарт между шагами FSM и корректное закрытие ресурсов.
+
+Definition of Done среза:
+
+- миграции и repository contracts проходят на PostgreSQL, а не только SQLite;
+- FSM продолжается после рестарта процесса;
+- два scheduler worker не создают двойной alert;
+- повторный callback идемпотентен;
+- CI воспроизводит срез без внешних секретов;
+- эксплуатационные ограничения и команды обновлены в README/runbook.
+
 ## Этап 0 — стабилизация runtime
 
 Статус: **выполнено**.
@@ -64,7 +83,7 @@ infrastructure adapters
 
 ## Этап 2 — научная целостность оперативного отчёта
 
-Статус: **реализован, ожидает финальной CI-проверки**.
+Статус: **реализован, CI подтверждён; clean-host smoke не выполнен**.
 
 - [x] local-calendar partition текущего дня;
 - [x] explicit `reanalysis / operational_past / forecast` labels;
@@ -77,7 +96,7 @@ infrastructure adapters
 - [x] read-only provider contract smoke;
 - [x] capability matrix;
 - [x] единый verification script;
-- [ ] зелёный CI и merge;
+- [x] зелёный CI полного среза;
 - [ ] clean-host production smoke.
 
 ## Этап 3 — provider resilience
@@ -205,11 +224,11 @@ infrastructure adapters
 
 ## Definition of Done ближайшего релиза
 
-- [ ] CI зелёный для всего `src/config/alembic/tests`;
+- [x] CI зелёный для всего `src/config/alembic/tests`;
 - [ ] Open-Meteo live smoke проходит на контрольной точке;
 - [ ] two-field Telegram smoke проходит после deployment;
 - [ ] Alembic head подтверждён на production-копии;
 - [ ] deploy/update/rollback проверены на чистом Debian 12;
-- [ ] отсутствуют legacy entrypoints, Docker scripts и synthetic models;
-- [ ] README, capability matrix, status и changelog совпадают с runtime;
-- [ ] все недоступные научные функции явно выключены.
+- [x] отсутствуют legacy entrypoints, Docker scripts и synthetic models;
+- [x] README, capability matrix, status и changelog совпадают с runtime;
+- [x] все недоступные научные функции явно выключены.
