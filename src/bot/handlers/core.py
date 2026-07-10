@@ -26,7 +26,6 @@ from src.database.crud import (
     clear_manual_phase,
     get_field_context,
     get_or_create_user,
-    get_user,
     save_coordinates,
     set_daily_digest,
     set_manual_phase,
