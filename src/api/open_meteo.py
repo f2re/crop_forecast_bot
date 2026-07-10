@@ -1,7 +1,7 @@
 """Open-Meteo provider for operational agrometeorological data.
 
 The public contract is deliberately small and asynchronous: callers receive one
-``AgroWeatherData`` DTO or an explicit ``OpenMeteoError``.  Synchronous vendor
+``AgroWeatherData`` DTO or an explicit ``OpenMeteoError``. Synchronous vendor
 code is isolated in a bounded worker thread and never blocks the bot event loop.
 """
 from __future__ import annotations
@@ -9,12 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from pathlib import Path
+from functools import lru_cache
 
 import openmeteo_requests
 import pandas as pd
 import requests_cache
 from retry_requests import retry
+
+from config.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,19 +50,21 @@ class AgroWeatherData:
     forecast_days: int = FORECAST_DAYS
 
 
-_CACHE_DIR = Path("data/cache/open_meteo")
-_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-_cache_session = requests_cache.CachedSession(
-    str(_CACHE_DIR / "responses"),
-    expire_after=3600,
-)
-_retry_session = retry(
-    _cache_session,
-    retries=4,
-    backoff_factor=0.5,
-    status_to_retry=(429, 500, 502, 503, 504),
-)
-_client = openmeteo_requests.Client(session=_retry_session)
+@lru_cache(maxsize=1)
+def _get_client() -> openmeteo_requests.Client:
+    cache_path = get_settings().open_meteo_cache_path
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_session = requests_cache.CachedSession(
+        str(cache_path),
+        expire_after=3600,
+    )
+    retry_session = retry(
+        cache_session,
+        retries=4,
+        backoff_factor=0.5,
+        status_to_retry=(429, 500, 502, 503, 504),
+    )
+    return openmeteo_requests.Client(session=retry_session)
 
 
 async def fetch_agro_data(lat: float, lon: float) -> AgroWeatherData:
@@ -103,7 +107,7 @@ def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
         "timezone": "auto",
     }
 
-    responses = _client.weather_api(OM_URL, params=params)
+    responses = _get_client().weather_api(OM_URL, params=params)
     if not responses:
         raise OpenMeteoError("Provider returned an empty response list")
     response = responses[0]
