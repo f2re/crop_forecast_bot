@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from datetime import datetime
-from sqlalchemy import BigInteger, DateTime, Float, Integer, String
+
+from sqlalchemy import BigInteger, DateTime, Float, Integer, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from typing import Optional
 
 
 class Base(DeclarativeBase):
@@ -9,29 +11,53 @@ class Base(DeclarativeBase):
 
 
 class User(Base):
-    """User model for storing user information and coordinates"""
+    """Telegram user profile and the currently selected field."""
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False, index=True)
-    username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    first_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    telegram_id: Mapped[int] = mapped_column(
+        BigInteger,
+        unique=True,
+        nullable=False,
+        index=True,
+    )
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    # Coordinates
-    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # Crop profile
-    selected_crop: Mapped[Optional[str]] = mapped_column(
-        String(50), nullable=True, default="wheat"
+    selected_crop: Mapped[str | None] = mapped_column(
+        String(50),
+        nullable=True,
+        default="wheat",
+        server_default="wheat",
+    )
+    daily_digest: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
     )
 
-    # Preferences
-    daily_digest: Mapped[bool] = mapped_column(Integer, default=0) # 0=Off, 1=On
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
 
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    def __repr__(self):
-        return f"<User(id={self.id}, telegram_id={self.telegram_id}, username={self.username})>"
+    def __repr__(self) -> str:
+        return (
+            "<User("
+            f"id={self.id}, telegram_id={self.telegram_id}, username={self.username!r}"
+            ")>"
+        )
