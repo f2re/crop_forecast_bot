@@ -138,7 +138,10 @@ async def check_frost_alerts(
         logger.info("Frost screening skipped: another process owns the job lock")
         return
 
-    logger.info("[%s] Frost screening started", datetime.now().isoformat(timespec="minutes"))
+    logger.info(
+        "[%s] Frost screening started",
+        datetime.now().isoformat(timespec="minutes"),
+    )
     try:
         for target in await _targets(session_factory):
             if not await coordination.renew(job_lease, _FROST_JOB_LOCK_TTL):
@@ -156,7 +159,10 @@ async def check_frost_alerts(
                         f"{event['event_date']}:{event['level']}"
                     )
 
-                    async def send(event: dict = event, target: NotificationTarget = target) -> object:
+                    async def send(
+                        event: dict = event,
+                        target: NotificationTarget = target,
+                    ) -> object:
                         return await bot.send_message(
                             target.telegram_id,
                             format_frost_alert(event, target.selected_crop),
@@ -191,7 +197,8 @@ async def send_daily_digest(
         return
 
     settings = get_settings()
-    local_date = datetime.now(ZoneInfo(settings.scheduler_timezone)).date().isoformat()
+    timezone = ZoneInfo(settings.scheduler_timezone)
+    local_date = datetime.now(timezone).date().isoformat()
     try:
         for target in await _targets(session_factory, daily_digest_only=True):
             if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
@@ -205,7 +212,10 @@ async def send_daily_digest(
                     target.selected_crop,
                 )
 
-                async def send(report_text: str = report.text, target: NotificationTarget = target) -> object:
+                async def send(
+                    report_text: str = report.text,
+                    target: NotificationTarget = target,
+                ) -> object:
                     return await bot.send_message(target.telegram_id, report_text)
 
                 await _send_once(
