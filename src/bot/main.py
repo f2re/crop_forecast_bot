@@ -17,7 +17,7 @@ from aiogram.types import TelegramObject
 from config.settings import Settings, get_settings
 from src.bot.scheduler import start_scheduler, stop_scheduler
 from src.database import Database, init_db
-from src.ops.heartbeat import run_heartbeat
+from src.ops.heartbeat import notify_ready, notify_stopping, run_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +82,14 @@ async def run() -> None:
     try:
         await start_scheduler(bot, database.get_session)
         logger.info("Crop Forecast Bot started with aiogram")
+        notify_ready()
         await dispatcher.start_polling(
             bot,
             allowed_updates=dispatcher.resolve_used_update_types(),
             close_bot_session=False,
         )
     finally:
+        notify_stopping()
         await stop_scheduler()
         heartbeat_task.cancel()
         with suppress(asyncio.CancelledError):
