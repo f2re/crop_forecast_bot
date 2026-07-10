@@ -51,17 +51,21 @@ def _tables():
 
 def _backfill_from_users(bind) -> None:
     users, fields, seasons = _tables()
-    rows = bind.execute(
-        sa.select(
-            users.c.id,
-            users.c.latitude,
-            users.c.longitude,
-            users.c.selected_crop,
-        ).where(
-            users.c.latitude.is_not(None),
-            users.c.longitude.is_not(None),
+    rows = (
+        bind.execute(
+            sa.select(
+                users.c.id,
+                users.c.latitude,
+                users.c.longitude,
+                users.c.selected_crop,
+            ).where(
+                users.c.latitude.is_not(None),
+                users.c.longitude.is_not(None),
+            )
         )
-    ).mappings()
+        .mappings()
+        .all()
+    )
 
     for row in rows:
         bind.execute(
@@ -211,14 +215,18 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     users, fields, seasons = _tables()
-    rows = bind.execute(
-        sa.select(
-            fields.c.user_id,
-            fields.c.id.label("field_id"),
-            fields.c.latitude,
-            fields.c.longitude,
-        ).where(fields.c.is_active.is_(True))
-    ).mappings()
+    rows = (
+        bind.execute(
+            sa.select(
+                fields.c.user_id,
+                fields.c.id.label("field_id"),
+                fields.c.latitude,
+                fields.c.longitude,
+            ).where(fields.c.is_active.is_(True))
+        )
+        .mappings()
+        .all()
+    )
 
     for row in rows:
         crop_key = bind.scalar(
