@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly update check for Crop Forecast Bot
+Documentation=https://github.com/f2re/crop_forecast_bot
+
+[Timer]
+OnCalendar=Sun *-*-* 04:15:00
+RandomizedDelaySec=45m
+Persistent=true
+Unit=crop-forecast-bot-update.service
+
+[Install]
+WantedBy=timers.target
