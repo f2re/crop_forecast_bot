@@ -2,8 +2,7 @@
 set -Eeuo pipefail
 
 # Native installation for Debian/Ubuntu/Astra-compatible hosts.
-# The script installs system packages, creates local PostgreSQL/Redis services,
-# builds an isolated release and starts the bot through systemd.
+# Installs system packages, PostgreSQL/Redis, an isolated release and systemd.
 
 # shellcheck source=scripts/common.sh
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
@@ -23,35 +22,22 @@ install_system_packages() {
 }
 
 ensure_service_account() {
-  if ! getent group "${APP_GROUP}" >/dev/null; then
-    groupadd --system "${APP_GROUP}"
-  fi
+  if ! getent group "${APP_GROUP}" >/dev/null; then groupadd --system "${APP_GROUP}"; fi
   if ! id "${APP_USER}" >/dev/null 2>&1; then
-    useradd \
-      --system \
-      --gid "${APP_GROUP}" \
-      --create-home \
-      --home-dir "/var/lib/${APP_USER}" \
-      --shell /usr/sbin/nologin \
-      "${APP_USER}"
+    useradd --system --gid "${APP_GROUP}" --create-home \
+      --home-dir "/var/lib/${APP_USER}" --shell /usr/sbin/nologin "${APP_USER}"
   fi
 }
 
 create_local_database() {
-  local db_name="$1"
-  local db_user="$2"
-  local db_password="$3"
-
+  local db_name="$1" db_user="$2" db_password="$3"
   [[ "${db_name}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail "Unsafe DB_NAME: ${db_name}"
   [[ "${db_user}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || fail "Unsafe DB_USER: ${db_user}"
-  [[ "${db_password}" =~ ^[a-zA-Z0-9._~-]+$ ]] || \
-    fail "DB_PASSWORD contains characters unsafe for an unescaped URL"
+  [[ "${db_password}" =~ ^[a-zA-Z0-9._~-]+$ ]] || fail "DB_PASSWORD contains URL-unsafe characters"
 
   log "Creating or updating local PostgreSQL role"
-  runuser -u postgres -- psql \
-    --set=ON_ERROR_STOP=1 \
-    --set=role_name="${db_user}" \
-    --set=role_password="${db_password}" <<'SQL'
+  runuser -u postgres -- psql --set=ON_ERROR_STOP=1 \
+    --set=role_name="${db_user}" --set=role_password="${db_password}" <<'SQL'
 SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role_name', :'role_password')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role_name')
 \gexec
@@ -72,12 +58,10 @@ create_runtime_config() {
   db_user="${DB_USER:-cropbot}"
   db_password="${DB_PASSWORD:-$(openssl rand -hex 24)}"
   token="${TELEGRAM_BOT_TOKEN:-}"
-
   if [[ -n "${TOKEN_FILE:-}" ]]; then
     [[ -r "${TOKEN_FILE}" ]] || fail "TOKEN_FILE is not readable: ${TOKEN_FILE}"
     token="$(tr -d '\r\n' < "${TOKEN_FILE}")"
   fi
-
   create_local_database "${db_name}" "${db_user}" "${db_password}"
 
   umask 0027
@@ -91,9 +75,12 @@ LOG_LEVEL=INFO
 SCHEDULER_TIMEZONE=Europe/Moscow
 HEARTBEAT_FILE=/run/crop-forecast-bot/heartbeat
 OPEN_METEO_CACHE_PATH=/var/cache/crop-forecast-bot/openmeteo
-CDS_API_URL=https://cds.climate.copernicus.eu/api
-CDS_API_KEY=
-OPENROUTER_API_KEY=
+RAG_ENABLED=false
+INSTALL_RAG_PROFILE=0
+LLM_PROVIDER=groq
+GROQ_API_KEY=
+TOGETHER_API_KEY=
+OPENAI_API_KEY=
 EOF
   chown root:"${APP_GROUP}" "${ENV_FILE}"
   chmod 0640 "${ENV_FILE}"
@@ -102,10 +89,7 @@ EOF
 
 install_systemd_units() {
   local unit source
-  for unit in \
-    crop-forecast-bot.service \
-    crop-forecast-bot-update.service \
-    crop-forecast-bot-update.timer; do
+  for unit in crop-forecast-bot.service crop-forecast-bot-update.service crop-forecast-bot-update.timer; do
     source="${SOURCE_ROOT}/deploy/systemd/${unit}"
     [[ -f "${source}" ]] || fail "Missing systemd template: ${source}"
     render_template "${source}" "/etc/systemd/system/${unit}"
@@ -130,10 +114,7 @@ ensure_service_account
 prepare_runtime_directories
 systemctl enable --now postgresql redis-server
 
-if [[ ! -f "${ENV_FILE}" ]]; then
-  create_runtime_config
-fi
-
+if [[ ! -f "${ENV_FILE}" ]]; then create_runtime_config; fi
 if ! grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "${ENV_FILE}"; then
   cat >&2 <<EOF
 
