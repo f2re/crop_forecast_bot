@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends shellcheck
           python -m pip install --upgrade pip
           pip install \
-            pytest pytest-asyncio ruff \
+            pytest pytest-asyncio ruff alembic aiosqlite \
             pandas numpy python-dotenv \
             aiogram redis SQLAlchemy asyncpg APScheduler \
             openmeteo-requests requests-cache retry-requests
@@ -35,18 +35,21 @@ jobs:
       - name: Python static checks
         run: |
           ruff check \
+            alembic \
             config/settings.py \
             src/domain \
             src/application \
+            src/infrastructure \
             src/agro/indices.py \
             src/api/open_meteo.py \
             src/bot/main.py \
             src/bot/handlers \
             src/bot/keyboards.py \
             src/bot/scheduler.py \
+            src/database \
             src/ops \
             tests
-          python -m compileall -q config src tests
+          python -m compileall -q alembic config src tests
 
       - name: Native deployment checks
         run: |
@@ -56,6 +59,7 @@ jobs:
             scripts/update.sh \
             scripts/rollback.sh \
             scripts/status.sh \
+            scripts/help.sh \
             scripts/install-systemd.sh
           test ! -e Dockerfile
           test ! -e docker-compose.yml
