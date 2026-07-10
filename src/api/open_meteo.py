@@ -1,25 +1,15 @@
+"""Open-Meteo provider for operational agrometeorological data.
+
+The public contract is deliberately small and asynchronous: callers receive one
+``AgroWeatherData`` DTO or an explicit ``OpenMeteoError``.  Synchronous vendor
+code is isolated in a bounded worker thread and never blocks the bot event loop.
 """
-Клиент Open-Meteo для получения агрометеорологических данных.
+from __future__ import annotations
 
-Без API-ключа, с кэшированием (1ч) и авто-retry (5x).
-
-Параметры запроса:
-  past_days=14    — для ГДД и ГТК за текущую декаду
-  forecast_days=7 — горизонт для алертов заморозков (KPI проекта ≥ 48ч)
-
-Переменные hourly:
-  temperature_2m            — T (°C) для ГДД и заморозков
-  precipitation             — осадки (мм/ч)
-  et0_fao_evapotranspiration — ЕТ0 по Penman-Monteith FAO-56 (мм/ч)
-  soil_moisture_0_to_1cm    — влажность верхнего слоя почвы (м³/м³)
-
-Переменные daily (агрегаты — быстрее для индексов):
-  temperature_2m_max/min/mean, precipitation_sum,
-  et0_fao_evapotranspiration, wind_speed_10m_max
-"""
-import logging
 import asyncio
-from typing import Tuple, Optional
+import logging
+from dataclasses import dataclass
+from pathlib import Path
 
 import openmeteo_requests
 import pandas as pd
@@ -28,38 +18,73 @@ from retry_requests import retry
 
 logger = logging.getLogger(__name__)
 
-PAST_DAYS     = 14
+PAST_DAYS = 14
 FORECAST_DAYS = 7
-OM_URL        = "https://api.open-meteo.com/v1/forecast"
-
-# Глобальная сессия с кэшем и retry — инициализируется один раз
-_cache_session = requests_cache.CachedSession(".openmeteo_cache", expire_after=3600)
-_retry_session = retry(_cache_session, retries=5, backoff_factor=0.2)
-_client        = openmeteo_requests.Client(session=_retry_session)
+OM_URL = "https://api.open-meteo.com/v1/forecast"
+_MAX_CONCURRENT_REQUESTS = 4
+_REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
 
 
-async def fetch_agro_data(lat: float, lon: float) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
-    """
-    Запрашивает агрометеорологические данные (асинхронная обертка).
-
-    Returns:
-        (df_daily, df_hourly)
-    """
-    loop = asyncio.get_event_loop()
-    try:
-        result = await loop.run_in_executor(None, _fetch_sync, lat, lon)
-        return result["daily"], result["hourly"]
-    except Exception as e:
-        logger.error(f"Ошибка при получении данных Open-Meteo: {e}")
-        return None, None
+class OpenMeteoError(RuntimeError):
+    """The provider could not return a valid operational dataset."""
 
 
-def _fetch_sync(lat: float, lon: float) -> dict:
-    """Оригинальная синхронная логика запроса."""
+@dataclass(frozen=True, slots=True)
+class WeatherMeta:
+    latitude: float
+    longitude: float
+    elevation_m: float
+    utc_offset_seconds: int
+    timezone: str
+    source: str = "Open-Meteo Forecast API"
+
+
+@dataclass(slots=True)
+class AgroWeatherData:
+    meta: WeatherMeta
+    daily: pd.DataFrame
+    hourly: pd.DataFrame
+    past_days: int = PAST_DAYS
+    forecast_days: int = FORECAST_DAYS
+
+
+_CACHE_DIR = Path("data/cache/open_meteo")
+_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+_cache_session = requests_cache.CachedSession(
+    str(_CACHE_DIR / "responses"),
+    expire_after=3600,
+)
+_retry_session = retry(
+    _cache_session,
+    retries=4,
+    backoff_factor=0.5,
+    status_to_retry=(429, 500, 502, 503, 504),
+)
+_client = openmeteo_requests.Client(session=_retry_session)
+
+
+async def fetch_agro_data(lat: float, lon: float) -> AgroWeatherData:
+    """Fetch a typed operational dataset without blocking the event loop."""
+    if not -90 <= lat <= 90:
+        raise ValueError(f"Latitude outside [-90, 90]: {lat}")
+    if not -180 <= lon <= 180:
+        raise ValueError(f"Longitude outside [-180, 180]: {lon}")
+
+    async with _REQUEST_SEMAPHORE:
+        try:
+            return await asyncio.to_thread(_fetch_sync, lat, lon)
+        except (ValueError, OpenMeteoError):
+            raise
+        except Exception as exc:
+            logger.exception("Open-Meteo request failed for %.5f, %.5f", lat, lon)
+            raise OpenMeteoError(str(exc)) from exc
+
+
+def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
     params = {
-        "latitude":     lat,
-        "longitude":    lon,
-        "past_days":    PAST_DAYS,
+        "latitude": lat,
+        "longitude": lon,
+        "past_days": PAST_DAYS,
         "forecast_days": FORECAST_DAYS,
         "hourly": [
             "temperature_2m",
@@ -79,54 +104,65 @@ def _fetch_sync(lat: float, lon: float) -> dict:
     }
 
     responses = _client.weather_api(OM_URL, params=params)
-    response  = responses[0]
+    if not responses:
+        raise OpenMeteoError("Provider returned an empty response list")
+    response = responses[0]
 
-    logger.info(
-        f"🌐 Open-Meteo OK: {response.Latitude():.3f}°N {response.Longitude():.3f}°E "
-        f"elev={response.Elevation():.0f}m UTC+{response.UtcOffsetSeconds() // 3600}h"
-    )
-
-    # ── Hourly ────────────────────────────────────────────────────────────────
     hourly = response.Hourly()
+    daily = response.Daily()
+    if hourly is None or daily is None:
+        raise OpenMeteoError("Provider response does not contain hourly/daily blocks")
+
     dates_h = pd.date_range(
         start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
         end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
         freq=pd.Timedelta(seconds=hourly.Interval()),
         inclusive="left",
     )
-    df_hourly = pd.DataFrame({
-        "date":              dates_h,
-        "temperature_2m":    hourly.Variables(0).ValuesAsNumpy(),
-        "precipitation":     hourly.Variables(1).ValuesAsNumpy(),
-        "et0":               hourly.Variables(2).ValuesAsNumpy(),
-        "soil_moisture_0_1": hourly.Variables(3).ValuesAsNumpy(),
-    })
+    df_hourly = pd.DataFrame(
+        {
+            "date": dates_h,
+            "temperature_2m": hourly.Variables(0).ValuesAsNumpy(),
+            "precipitation": hourly.Variables(1).ValuesAsNumpy(),
+            "et0": hourly.Variables(2).ValuesAsNumpy(),
+            "soil_moisture_0_1": hourly.Variables(3).ValuesAsNumpy(),
+        }
+    )
 
-    # ── Daily ─────────────────────────────────────────────────────────────────
-    daily = response.Daily()
     dates_d = pd.date_range(
         start=pd.to_datetime(daily.Time(), unit="s", utc=True),
         end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
         freq=pd.Timedelta(seconds=daily.Interval()),
         inclusive="left",
     )
-    df_daily = pd.DataFrame({
-        "date":       dates_d,
-        "t_max":      daily.Variables(0).ValuesAsNumpy(),
-        "t_min":      daily.Variables(1).ValuesAsNumpy(),
-        "t_mean":     daily.Variables(2).ValuesAsNumpy(),
-        "precip_sum": daily.Variables(3).ValuesAsNumpy(),
-        "et0_sum":    daily.Variables(4).ValuesAsNumpy(),
-        "wind_max":   daily.Variables(5).ValuesAsNumpy(),
-    })
+    df_daily = pd.DataFrame(
+        {
+            "date": dates_d,
+            "t_max": daily.Variables(0).ValuesAsNumpy(),
+            "t_min": daily.Variables(1).ValuesAsNumpy(),
+            "t_mean": daily.Variables(2).ValuesAsNumpy(),
+            "precip_sum": daily.Variables(3).ValuesAsNumpy(),
+            "et0_sum": daily.Variables(4).ValuesAsNumpy(),
+            "wind_max": daily.Variables(5).ValuesAsNumpy(),
+        }
+    )
 
-    return {
-        "meta": {
-            "lat":        response.Latitude(),
-            "lon":        response.Longitude(),
-            "elevation":  response.Elevation(),
-            "utc_offset": response.UtcOffsetSeconds(),
-        },
-        "hourly": df_hourly,
-        "daily":  df_daily,
-    }
+    required_daily = {"date", "t_max", "t_min", "t_mean", "precip_sum", "et0_sum"}
+    if df_daily.empty or not required_daily.issubset(df_daily.columns):
+        raise OpenMeteoError("Daily dataset is empty or incomplete")
+
+    meta = WeatherMeta(
+        latitude=float(response.Latitude()),
+        longitude=float(response.Longitude()),
+        elevation_m=float(response.Elevation()),
+        utc_offset_seconds=int(response.UtcOffsetSeconds()),
+        timezone=str(response.Timezone() or "auto"),
+    )
+    logger.info(
+        "Open-Meteo OK: %.3f %.3f, elevation %.0f m, %s",
+        meta.latitude,
+        meta.longitude,
+        meta.elevation_m,
+        meta.timezone,
+    )
+    return AgroWeatherData(meta=meta, daily=df_daily, hourly=df_hourly)
