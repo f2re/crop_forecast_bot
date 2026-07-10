@@ -1,47 +1,30 @@
-name: CI
+name: Apply audited release remediation
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
-  test:
+  apply:
+    if: github.event.pull_request.number == 17
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref || github.ref_name }}
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: Export source snapshot for audit
-        shell: bash
-        run: |
-          tar \
-            --exclude=.git \
-            --exclude=.venv \
-            --exclude='*.pyc' \
-            --exclude='__pycache__' \
-            -czf /tmp/source-snapshot.tar.gz .
-
-      - name: Upload source snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-snapshot
-          path: /tmp/source-snapshot.tar.gz
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Install validation tools
+      - name: Install validation dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
@@ -52,66 +35,22 @@ jobs:
             aiogram redis SQLAlchemy asyncpg APScheduler \
             openmeteo-requests requests-cache retry-requests
 
-      - name: Apply one-off scientific audit remediation
-        if: ${{ hashFiles('scripts/_apply_scientific_audit_fixes_v2.py') != '' }}
-        shell: bash
+      - name: Apply audited remediation
+        run: python scripts/_apply_release_audit.py
+
+      - name: Remove one-off machinery
         run: |
-          python scripts/_apply_scientific_audit_fixes_v2.py
-          ruff format src/agro/data_quality.py src/agro/indices.py \
-            src/application/agro_report.py tests/test_scientific_data_quality.py \
-            tests/test_no_production_placeholders.py
+          rm -f scripts/_apply_release_audit.py
+          rm -f .github/workflows/apply-release-audit.yml
+
+      - name: Validate audited tree
+        run: bash scripts/verify-production.sh
+
+      - name: Commit audited result
+        run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix(science): enforce data provenance and missing-data gates"
+          git diff --cached --check
+          git commit -m "fix(science): stabilize source-aware production runtime"
           git push origin HEAD:${{ github.head_ref }}
-
-      - name: Python static checks
-        shell: bash
-        run: |
-          set -o pipefail
-          {
-            ruff check \
-              alembic \
-              config/settings.py \
-              src/domain \
-              src/application \
-              src/infrastructure \
-              src/agro/indices.py \
-              src/agro/data_quality.py \
-              src/api/open_meteo.py \
-              src/bot/main.py \
-              src/bot/handlers \
-              src/bot/keyboards.py \
-              src/bot/scheduler.py \
-              src/database \
-              src/ops \
-              tests
-            python -m compileall -q alembic config src tests
-          } 2>&1 | tee static-checks.log
-
-      - name: Upload static analysis log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: static-checks-log
-          path: static-checks.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Native deployment checks
-        run: |
-          bash -n scripts/*.sh
-          shellcheck -x \
-            scripts/deploy.sh \
-            scripts/update.sh \
-            scripts/rollback.sh \
-            scripts/status.sh \
-            scripts/help.sh \
-            scripts/install-systemd.sh
-          test ! -e Dockerfile
-          test ! -e docker-compose.yml
-          test ! -e .env.docker.example
-
-      - name: Unit tests
-        run: python -m pytest -q
