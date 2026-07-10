@@ -3,10 +3,10 @@
 Sources:
 - Selyaninov hydrothermal coefficient: Selyaninov (1937).
 - Growing degree days: McMaster & Wilhelm (1997), Agric. For. Meteorol.
-- Reference evapotranspiration source: Open-Meteo ET0 variable based on FAO-56.
+- Reference evapotranspiration source: provider ET0 based on FAO-56.
 
-The module does not infer yield.  Phenology is not inferred unless a season start
-is supplied and the dataset actually covers that period.
+The module does not infer yield. Crop-stage thresholds in the catalogue are not
+used as an automatic phenology model until they are validated by crop and region.
 """
 from __future__ import annotations
 
@@ -15,28 +15,16 @@ from datetime import timedelta
 
 import pandas as pd
 
+from src.agro.crop_catalog import CROPS, get_crop
+
 logger = logging.getLogger(__name__)
 
+# Compatibility exports, now derived from the single crop catalogue.
 GDD_BASE: dict[str, float] = {
-    "wheat": 5.0,
-    "barley": 5.0,
-    "corn": 10.0,
-    "sunflower": 10.0,
-    "soy": 10.0,
-    "rapeseed": 5.0,
-    "potato": 7.0,
-    "sugar_beet": 5.0,
+    crop_key: float(crop["t_base"]) for crop_key, crop in CROPS.items()
 }
-
 GDD_PHENOLOGY: dict[str, dict[str, int]] = {
-    "wheat": {"посев": 0, "кущение": 150, "колошение": 600, "молочная спелость": 900, "уборка": 1200},
-    "corn": {"посев": 0, "всходы": 100, "6-й лист": 400, "цветение": 800, "уборка": 1800},
-    "sunflower": {"посев": 0, "всходы": 80, "бутонизация": 400, "цветение": 700, "уборка": 1400},
-    "barley": {"посев": 0, "кущение": 120, "колошение": 550, "уборка": 1100},
-    "soy": {"посев": 0, "всходы": 80, "цветение": 600, "уборка": 1400},
-    "rapeseed": {"посев": 0, "розетка": 100, "цветение": 400, "уборка": 900},
-    "potato": {"посев": 0, "всходы": 120, "бутонизация": 400, "уборка": 900},
-    "sugar_beet": {"посев": 0, "всходы": 100, "смыкание": 500, "уборка": 1300},
+    crop_key: dict(crop.get("gdd_stages", {})) for crop_key, crop in CROPS.items()
 }
 
 FROST_WARNING_T = 2.0
@@ -53,6 +41,13 @@ def _require_columns(df: pd.DataFrame, columns: set[str]) -> None:
         raise ValueError(f"Missing weather columns: {', '.join(sorted(missing))}")
 
 
+def _as_utc(value: pd.Timestamp) -> pd.Timestamp:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        return timestamp.tz_localize("UTC")
+    return timestamp.tz_convert("UTC")
+
+
 def calc_htc(
     df_daily: pd.DataFrame,
     window_days: int = 30,
@@ -66,7 +61,7 @@ def calc_htc(
         & (df_daily["date"] >= now - pd.Timedelta(days=window_days))
     ][["date", "t_mean", "precip_sum"]].dropna()
     warm = df[df["t_mean"] > 10.0]
-    available_days = int(len(warm))
+    available_days = int(warm["date"].dt.normalize().nunique())
     sum_precip = float(warm["precip_sum"].clip(lower=0).sum())
     sum_t = float(warm["t_mean"].sum())
 
@@ -106,59 +101,95 @@ def calc_gdd(
     crop: str = "wheat",
     season_start: pd.Timestamp | None = None,
 ) -> dict:
-    """Calculate GDD for the explicitly available period or a supplied season."""
-    _require_columns(df_daily, {"date", "t_max", "t_min"})
-    t_base = GDD_BASE.get(crop, 5.0)
-    now = _now_utc()
-    df = df_daily[["date", "t_max", "t_min"]].dropna().copy()
+    """Calculate GDD for the available series or a fully covered season.
 
+    GDD_day = max(0, (Tmax + Tmin) / 2 - Tbase), °C·day. Tbase is read from
+    ``crop_catalog``. Automatic phenological stage inference is deliberately
+    disabled: catalogue thresholds still require regional validation.
+    """
+    _require_columns(df_daily, {"date", "t_max", "t_min"})
+    crop_definition = get_crop(crop)
+    t_base = float(crop_definition["t_base"])
+    now = _now_utc()
+    df = df_daily[[column for column in df_daily.columns if column in {
+        "date", "t_max", "t_min", "data_kind", "data_source"
+    }]].dropna(subset=["date", "t_max", "t_min"]).copy()
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+
+    normalized_start: pd.Timestamp | None = None
     if season_start is not None:
-        season_start = pd.Timestamp(season_start)
-        if season_start.tzinfo is None:
-            season_start = season_start.tz_localize("UTC")
-        else:
-            season_start = season_start.tz_convert("UTC")
-        df = df[df["date"] >= season_start]
+        normalized_start = _as_utc(pd.Timestamp(season_start))
+        df = df[df["date"] >= normalized_start - pd.Timedelta(hours=36)]
 
     df["gdd_day"] = ((df["t_max"] + df["t_min"]) / 2.0 - t_base).clip(lower=0)
-    past_gdd = round(float(df.loc[df["date"] <= now, "gdd_day"].sum()), 1)
-    forecast_gdd = round(float(df.loc[df["date"] > now, "gdd_day"].sum()), 1)
+    past = df[df["date"] <= now]
+    forecast = df[df["date"] > now]
+    past_gdd = round(float(past["gdd_day"].sum()), 1)
+    forecast_gdd = round(float(forecast["gdd_day"].sum()), 1)
 
-    phase: str | None = None
-    next_phase: dict | None = None
-    period_is_season = season_start is not None and (
-        df.empty or df["date"].min() <= season_start + pd.Timedelta(days=1)
+    period_is_season = bool(
+        normalized_start is not None
+        and not past.empty
+        and past["date"].min() <= normalized_start + pd.Timedelta(hours=36)
     )
-    if period_is_season:
-        phases = list(GDD_PHENOLOGY.get(crop, {}).items())
-        for index, (name, threshold) in enumerate(phases):
-            if past_gdd >= threshold:
-                phase = name
-                if index + 1 < len(phases):
-                    next_name, next_threshold = phases[index + 1]
-                    next_phase = {
-                        "name": next_name,
-                        "gdd_needed": max(0.0, round(next_threshold - past_gdd, 1)),
-                    }
+    period_start = None if past.empty else past["date"].min()
+    expected_start = normalized_start if period_is_season else period_start
+    if expected_start is None:
+        expected_days = 0
+    else:
+        expected_days = max(0, (now.normalize() - expected_start.normalize()).days + 1)
+    valid_days = int(past["date"].dt.normalize().nunique())
+    missing_days = max(0, expected_days - valid_days)
+    missing_fraction = round(missing_days / expected_days, 3) if expected_days else None
+
+    source_counts: dict[str, int] = {}
+    if "data_kind" in past.columns:
+        source_counts = {
+            str(key): int(value)
+            for key, value in past["data_kind"].value_counts().to_dict().items()
+        }
 
     return {
         "crop": crop,
         "t_base": t_base,
+        "t_upper": crop_definition.get("t_upper"),
         "gdd_past": past_gdd,
         "gdd_forecast_7d": forecast_gdd,
-        "current_phase": phase,
-        "next_phase": next_phase,
+        "current_phase": None,
+        "next_phase": None,
         "period_is_season": period_is_season,
-        "period_start": None if df.empty else df["date"].min().isoformat(),
+        "period_start": None if period_start is None else period_start.isoformat(),
+        "season_start": (
+            None if normalized_start is None else normalized_start.date().isoformat()
+        ),
+        "valid_days": valid_days,
+        "expected_days": expected_days,
+        "missing_days": missing_days,
+        "missing_fraction": missing_fraction,
+        "source_counts": source_counts,
         "phenology_thresholds": GDD_PHENOLOGY.get(crop, {}),
+        "phenology_note": (
+            "автоматическая фенофаза не определяется: пороги требуют "
+            "валидации по культуре и региону"
+        ),
     }
 
 
 def calc_frost_risk(
     df_daily: pd.DataFrame,
     utc_offset_seconds: int = 0,
+    *,
+    crop: str | None = None,
+    phase: str | None = None,
+    elevation_m: float | None = None,
 ) -> dict:
-    """Screen model air-temperature minima for potential frost conditions."""
+    """Screen model air-temperature minima for potential frost conditions.
+
+    The generic 2/0°C screening thresholds are not presented as crop damage
+    thresholds. Crop, manually observed phase and model elevation are carried as
+    context for the user, while the air/surface-temperature distinction remains
+    explicit.
+    """
     _require_columns(df_daily, {"date", "t_min"})
     now = _now_utc()
     future = df_daily[df_daily["date"] > now][["date", "t_min"]].dropna().copy()
@@ -181,7 +212,13 @@ def calc_frost_risk(
                 "min_temp": round(t_min, 1),
                 "lead_hours": lead_hours,
                 "level": level,
-                "action": "уточнить локальный прогноз и оценить защитные меры по фазе культуры",
+                "crop_key": crop,
+                "phase": phase,
+                "elevation_m": elevation_m,
+                "action": (
+                    "сверить локальный прогноз, фактическую фазу и условия "
+                    "микрорельефа"
+                ),
             }
         )
 
@@ -189,7 +226,15 @@ def calc_frost_risk(
         "alerts": alerts,
         "frost_free_days_7d": max(0, int(len(future) - len(alerts))),
         "forecast_contains_48h": bool(len(future) >= 2),
-        "method_note": "скрининг по прогнозной Tmin воздуха на высоте 2 м",
+        "method_note": (
+            "скрининг по прогнозной Tmin воздуха на высоте 2 м; это не "
+            "температура поверхности растений и не порог повреждения культуры"
+        ),
+        "context": {
+            "crop": crop,
+            "phase": phase,
+            "elevation_m": elevation_m,
+        },
     }
 
 
@@ -226,22 +271,29 @@ def compute_all_indices(
     *,
     utc_offset_seconds: int = 0,
     season_start: pd.Timestamp | None = None,
+    phase: str | None = None,
+    elevation_m: float | None = None,
 ) -> dict:
     return {
         "htc": calc_htc(df_daily),
         "gdd": calc_gdd(df_daily, crop, season_start=season_start),
-        "frost": calc_frost_risk(df_daily, utc_offset_seconds=utc_offset_seconds),
+        "frost": calc_frost_risk(
+            df_daily,
+            utc_offset_seconds=utc_offset_seconds,
+            crop=crop,
+            phase=phase,
+            elevation_m=elevation_m,
+        ),
         "et0_bal": calc_et0_balance(df_daily),
     }
 
 
 def format_indices_for_rag(indices: dict, crop: str, crop_phase: str | None = None) -> str:
     lines = ["=== ОПЕРАТИВНОЕ СОСТОЯНИЕ ПОЛЯ ===", f"Культура: {crop}"]
-    phase = crop_phase or indices.get("gdd", {}).get("current_phase")
-    if phase:
-        lines.append(f"Фенологическая фаза: {phase}")
+    if crop_phase:
+        lines.append(f"Фенологическая фаза (указана пользователем): {crop_phase}")
     else:
-        lines.append("Фенологическая фаза: не определена без даты начала сезона")
+        lines.append("Фенологическая фаза: не задана пользователем")
 
     htc_data = indices.get("htc", {})
     if htc_data.get("htc") is not None:
@@ -253,7 +305,8 @@ def format_indices_for_rag(indices: dict, crop: str, crop_phase: str | None = No
 
     gdd_data = indices.get("gdd", {})
     if gdd_data.get("gdd_past") is not None:
-        lines.append(f"ГДД за доступный период: {gdd_data['gdd_past']:.0f} °C·сут")
+        scope = "с начала сезона" if gdd_data.get("period_is_season") else "за доступный период"
+        lines.append(f"ГДД {scope}: {gdd_data['gdd_past']:.0f} °C·сут")
 
     alerts = indices.get("frost", {}).get("alerts", [])
     if alerts:
@@ -265,6 +318,7 @@ def format_indices_for_rag(indices: dict, crop: str, crop_phase: str | None = No
     balance = indices.get("et0_bal", {}).get("balance_mm")
     if balance is not None:
         lines.append(f"Баланс осадки − ET0: {balance:.1f} мм")
-    lines.append("Источник: оперативные данные; не климатическая норма и не прогноз урожайности")
+    lines.append("Источник: реанализ и оперативный прогноз разделены в метаданных")
+    lines.append("Это не климатическая норма и не прогноз урожайности")
     lines.append("=== КОНЕЦ ДАННЫХ ===")
     return "\n".join(lines)
