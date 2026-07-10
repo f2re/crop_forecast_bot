@@ -18,6 +18,7 @@ class AgroReport:
     text: str
     generated_at: datetime
     source: str
+    metadata_source: str
     timezone: str
     elevation_m: float
     coverage: WeatherCoverage
@@ -71,6 +72,7 @@ async def generate_agro_report(
         text=text,
         generated_at=datetime.now(timezone.utc),
         source=" + ".join(sources),
+        metadata_source=weather.meta.source,
         timezone=weather.meta.timezone,
         elevation_m=weather.meta.elevation_m,
         coverage=weather.coverage,
