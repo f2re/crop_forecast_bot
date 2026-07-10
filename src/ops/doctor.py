@@ -19,7 +19,13 @@ async def check_runtime() -> list[str]:
         errors.append(str(exc))
         return errors
 
-    for path in (Path("data"), Path("logs"), settings.heartbeat_file.parent):
+    writable_paths = {
+        Path("data"),
+        Path("logs"),
+        settings.heartbeat_file.parent,
+        settings.open_meteo_cache_path.parent,
+    }
+    for path in writable_paths:
         try:
             path.mkdir(parents=True, exist_ok=True)
             probe = path / ".write-test"
