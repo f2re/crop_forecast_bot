@@ -8,14 +8,12 @@ cat <<EOF
 🌾 Crop Forecast Bot — справка
 
 Telegram:
-  /start   открыть профиль и главное меню
-  /help    показать пользовательскую справку
+  /start   главное меню и активное поле
+  /help    пользовательская справка
   /cancel  отменить текущий ввод
 
   Основной путь:
-    Мои поля → активное поле → культура → сезон и фаза → агроотчёт
-
-  У каждого поля отдельно сохраняются сезон и настройки уведомлений.
+    Мои поля → культура → сезон/фаза → агроотчёт
 
 Сервис:
   sudo systemctl status crop-forecast-bot
@@ -25,6 +23,11 @@ Telegram:
 Диагностика:
   sudo bash ${CURRENT}/scripts/status.sh
   sudo -u cropbot ${CURRENT}/.venv/bin/python -m src.ops.doctor --runtime
+
+Полная проверка release:
+  sudo -u cropbot bash ${CURRENT}/scripts/verify-production.sh
+  sudo -u cropbot bash ${CURRENT}/scripts/verify-production.sh \
+    --live-provider 55.75 37.62 2026-04-15
 
 Обновление и откат:
   sudo bash ${CURRENT}/scripts/update.sh main
@@ -39,11 +42,9 @@ Telegram:
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic heads'
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic upgrade head'
 
-Разработка:
-  python3 -m venv .venv
-  . .venv/bin/activate
-  pip install -r requirements-dev.txt
-  alembic upgrade head
-  ruff check alembic config src tests
-  python -m pytest -q
+Опциональный RAG:
+  INSTALL_RAG_PROFILE=1
+  RAG_ENABLED=true
+  sudo bash ${CURRENT}/scripts/update.sh main
+  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/python -m src.knowledge.indexer --reset'
 EOF

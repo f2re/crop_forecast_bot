@@ -11,6 +11,22 @@ from src.database import Database
 from src.database.schema import require_current_schema
 
 
+def _check_rag_dependencies() -> list[str]:
+    missing: list[str] = []
+    for module_name in ("chromadb", "sentence_transformers", "pypdf", "openai"):
+        try:
+            __import__(module_name)
+        except ImportError:
+            missing.append(module_name)
+    if not missing:
+        return []
+    return [
+        "RAG_ENABLED=true but optional dependencies are missing: "
+        + ", ".join(missing)
+        + "; install requirements-rag.txt"
+    ]
+
+
 async def check_runtime() -> list[str]:
     settings = get_settings()
     errors: list[str] = []
@@ -43,6 +59,9 @@ async def check_runtime() -> list[str]:
         errors.append(f"Database check failed: {exc}")
     finally:
         await database.dispose()
+
+    if settings.rag_enabled:
+        errors.extend(_check_rag_dependencies())
 
     if settings.redis_url:
         redis = Redis.from_url(settings.redis_url, socket_connect_timeout=5)

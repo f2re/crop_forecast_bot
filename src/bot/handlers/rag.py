@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
@@ -11,6 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 
+from config.settings import get_settings
 from src.agro.indices import compute_all_indices, format_indices_for_rag
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
 from src.bot.keyboards import get_rag_keyboard
@@ -28,6 +30,9 @@ class RagStates(StatesGroup):
 
 @router.callback_query(F.data == "agro_advisor")
 async def start_rag_session(callback: CallbackQuery, state: FSMContext) -> None:
+    if not get_settings().rag_enabled:
+        await callback.answer("Модуль базы знаний отключён", show_alert=True)
+        return
     await callback.answer()
     rag = get_rag_engine()
     if not rag.is_available():
@@ -80,7 +85,7 @@ async def handle_rag_question(message: Message, state: FSMContext, session) -> N
                         time.min,
                         tzinfo=ZoneInfo(weather.meta.timezone),
                     )
-                    season_start = pd.Timestamp(local_start).tz_convert("UTC")
+                    season_start = pd.Timestamp(local_start)
                 indices = compute_all_indices(
                     weather.daily,
                     context.crop_key,
@@ -105,7 +110,7 @@ async def handle_rag_question(message: Message, state: FSMContext, session) -> N
         )
         sources = rag.format_for_bot(question, n_results=2)
         await progress.edit_text(
-            f"🤖 <b>Ответ агросоветника</b>\n\n{answer}\n\n"
+            f"🤖 <b>Ответ агросоветника</b>\n\n{html.escape(answer)}\n\n"
             f"───────────────────\n{sources}"
         )
     except Exception:

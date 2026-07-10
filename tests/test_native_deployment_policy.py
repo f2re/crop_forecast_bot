@@ -9,6 +9,13 @@ def test_only_native_deployment_artifacts_are_present() -> None:
         "Dockerfile",
         "docker-compose.yml",
         ".env.docker.example",
+        ".dockerignore",
+        "main.py",
+        "run_bot.py",
+        "scripts/deploy_to_platform.sh",
+        "scripts/check_network.sh",
+        "scripts/train_basic_model.py",
+        "src/bot/simple_recommender.py",
     )
     for relative_path in forbidden:
         assert not (ROOT / relative_path).exists(), relative_path
@@ -21,6 +28,7 @@ def test_native_operations_commands_are_versioned() -> None:
         "scripts/rollback.sh",
         "scripts/status.sh",
         "scripts/help.sh",
+        "scripts/verify-production.sh",
         "alembic.ini",
         "alembic/versions/20260710_0001_initial_schema.py",
         "alembic/versions/20260710_0002_field_season_profile.py",
@@ -28,6 +36,9 @@ def test_native_operations_commands_are_versioned() -> None:
         "deploy/systemd/crop-forecast-bot.service",
         "deploy/systemd/crop-forecast-bot-update.service",
         "deploy/systemd/crop-forecast-bot-update.timer",
+        "docs/CAPABILITIES.md",
+        "docs/STATUS.md",
+        "CHANGELOG.md",
     )
     for relative_path in required:
         assert (ROOT / relative_path).is_file(), relative_path
@@ -42,7 +53,7 @@ def test_systemd_service_uses_readiness_and_watchdog() -> None:
     assert "ExecStart=@CURRENT_LINK@/.venv/bin/python -m src.bot.main" in unit
 
 
-def test_production_startup_requires_alembic_schema() -> None:
+def test_production_startup_requires_alembic_schema_and_provider_shutdown() -> None:
     main = (ROOT / "src/bot/main.py").read_text(encoding="utf-8")
     database = (ROOT / "src/database/__init__.py").read_text(encoding="utf-8")
     common = (ROOT / "scripts/common.sh").read_text(encoding="utf-8")
@@ -50,6 +61,7 @@ def test_production_startup_requires_alembic_schema() -> None:
     update = (ROOT / "scripts/update.sh").read_text(encoding="utf-8")
 
     assert "require_current_schema" in main
+    assert "close_open_meteo_resources" in main
     assert "create_all" not in database
     assert "run_migrations()" in common
     assert 'run_migrations "${NEW_RELEASE}"' in deploy
@@ -73,3 +85,15 @@ def test_field_season_and_multi_field_flows_are_reachable() -> None:
     assert "async def activate_field(" in repository
     assert "season_start_date=context.season_start_date" in handlers
     assert "season_start_date: date | None" in report
+
+
+def test_synthetic_model_claims_are_absent_from_runtime() -> None:
+    forbidden_markers = (
+        "RandomForestClassifier",
+        "synthetic_crop_data",
+        "yield_estimate",
+    )
+    for path in (ROOT / "src").rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for marker in forbidden_markers:
+            assert marker not in text, f"{marker} in {path.relative_to(ROOT)}"

@@ -1,8 +1,11 @@
+from datetime import date
+
 import pandas as pd
 import pytest
 
 from src.api.open_meteo import (
     OpenMeteoError,
+    _classify_local_days,
     _merge_daily,
     _parse_history_payload,
 )
@@ -24,13 +27,23 @@ def test_parse_history_payload_preserves_source_and_local_day() -> None:
     frame = _parse_history_payload(payload, timezone_name="UTC")
     assert list(frame["data_kind"].unique()) == ["reanalysis"]
     assert frame.iloc[0]["date"].isoformat() == "2026-06-30T21:00:00+00:00"
+    assert frame.iloc[0]["local_date"] == date(2026, 7, 1)
     assert frame.iloc[0]["t_mean"] == 20.0
+
+
+def test_current_local_day_is_not_classified_as_completed_past() -> None:
+    kinds = _classify_local_days(
+        [date(2026, 7, 9), date(2026, 7, 10), date(2026, 7, 11)],
+        today_local=date(2026, 7, 10),
+    )
+    assert kinds == ["operational_past", "forecast", "forecast"]
 
 
 def test_operational_row_wins_when_local_days_overlap() -> None:
     history = pd.DataFrame(
         {
             "date": [pd.Timestamp("2026-06-30T21:00:00Z")],
+            "local_date": [date(2026, 7, 1)],
             "t_max": [20.0],
             "t_min": [10.0],
             "t_mean": [15.0],
@@ -42,12 +55,14 @@ def test_operational_row_wins_when_local_days_overlap() -> None:
         }
     )
     operational = history.copy()
+    operational["date"] = pd.Timestamp("2026-07-01T00:00:00Z")
     operational["t_max"] = 30.0
     operational["data_kind"] = "operational_past"
     operational["data_source"] = "forecast-api"
 
     merged = _merge_daily(history, operational, "Europe/Moscow")
     assert len(merged) == 1
+    assert merged.iloc[0]["local_date"] == date(2026, 7, 1)
     assert merged.iloc[0]["t_max"] == 30.0
     assert merged.iloc[0]["data_kind"] == "operational_past"
 

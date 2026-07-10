@@ -11,72 +11,87 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
-      - name: Install validation tools
+      - name: Install validation dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends shellcheck
           python -m pip install --upgrade pip
-          pip install \
-            pytest pytest-asyncio ruff alembic aiosqlite \
-            pandas numpy python-dotenv \
-            aiogram redis SQLAlchemy asyncpg APScheduler \
-            openmeteo-requests requests-cache retry-requests
+          pip install -r requirements-dev.txt
+          pip check
 
       - name: Python static checks
-        shell: bash
         run: |
-          set -o pipefail
-          {
-            ruff check \
-              alembic \
-              config/settings.py \
-              src/domain \
-              src/application \
-              src/infrastructure \
-              src/agro/indices.py \
-              src/api/open_meteo.py \
-              src/bot/main.py \
-              src/bot/handlers \
-              src/bot/keyboards.py \
-              src/bot/scheduler.py \
-              src/database \
-              src/ops \
-              tests
-            python -m compileall -q alembic config src tests
-          } 2>&1 | tee static-checks.log
+          ruff check src config alembic tests
+          python -m compileall -q alembic config src tests
 
-      - name: Upload static analysis log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: static-checks-log
-          path: static-checks.log
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Bash syntax
+        run: bash -n scripts/*.sh
 
-      - name: Native deployment checks
+      - name: Shellcheck native operations
         run: |
-          bash -n scripts/*.sh
           shellcheck -x \
+            scripts/common.sh \
             scripts/deploy.sh \
             scripts/update.sh \
             scripts/rollback.sh \
             scripts/status.sh \
             scripts/help.sh \
-            scripts/install-systemd.sh
-          test ! -e Dockerfile
-          test ! -e docker-compose.yml
-          test ! -e .env.docker.example
+            scripts/install-systemd.sh \
+            scripts/verify-production.sh
 
-      - name: Unit tests
+      - name: Repository legacy policy
+        run: |
+          for path in \
+            Dockerfile \
+            docker-compose.yml \
+            .env.docker.example \
+            main.py \
+            run_bot.py \
+            scripts/train_basic_model.py \
+            scripts/deploy_to_platform.sh \
+            src/bot/simple_recommender.py; do
+            test ! -e "${path}"
+          done
+
+      - name: Repository scientific-claims policy
+        run: |
+          set +e
+          matches="$(grep -R --line-number --include='*.py' \
+            -E 'RandomForestClassifier|synthetic_crop_data|yield_estimate' \
+            src scripts 2>&1)"
+          status=$?
+          set -e
+          case "${status}" in
+            0)
+              printf '%s\n' "${matches}"
+              echo "Forbidden synthetic-model marker found" >&2
+              exit 1
+              ;;
+            1)
+              ;;
+            *)
+              printf '%s\n' "${matches}" >&2
+              echo "Repository policy scan failed" >&2
+              exit "${status}"
+              ;;
+          esac
+
+      - name: Unit and contract tests
         run: python -m pytest -q
+
+      - name: Alembic graph
+        run: python -m alembic heads

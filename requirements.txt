@@ -3,8 +3,7 @@ aiogram>=3.15,<4
 python-dotenv>=1.0,<2
 redis>=5,<6
 
-# Async HTTP and operational weather provider
-aiohttp>=3.10,<4
+# Open-Meteo operational provider
 openmeteo-requests>=1.3,<2
 requests>=2.32,<3
 requests-cache>=1.2,<2
@@ -16,26 +15,5 @@ asyncpg>=0.30,<1
 alembic>=1.14,<2
 APScheduler>=3.10,<4
 
-# Geospatial and climate data
-geopy>=2.4,<3
-cdsapi>=0.7.5,<1
-xarray>=2024.10
-netCDF4>=1.7,<2
-
-# Data processing and scientific stack
-numpy>=1.26,<3
+# Scientific tabular calculations
 pandas>=2.2,<3
-scipy>=1.13,<2
-scikit-learn>=1.5,<2
-joblib>=1.4,<2
-matplotlib>=3.9,<4
-
-# Optional satellite provider
-earthengine-api>=1.1,<2
-
-# RAG and LLM adapters
-chromadb>=0.5,<2
-sentence-transformers>=3,<6
-pypdf>=5,<7
-openai>=1.60,<3
-anthropic>=0.40,<1

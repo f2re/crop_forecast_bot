@@ -3,6 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC2034
 SOURCE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 APP_NAME="${APP_NAME:-crop-forecast-bot}"
@@ -82,6 +83,14 @@ validate_runtime_env() {
   [[ "${DATABASE_URL}" == postgresql+asyncpg://* ]] || \
     fail "Native production deployment requires postgresql+asyncpg:// DATABASE_URL"
   [[ -n "${REDIS_URL:-}" ]] || fail "REDIS_URL is empty in ${ENV_FILE}"
+  case "${RAG_ENABLED:-false}" in
+    true|false|1|0|yes|no|on|off) ;;
+    *) fail "RAG_ENABLED must be a boolean value" ;;
+  esac
+  if [[ "${RAG_ENABLED:-false}" =~ ^(true|1|yes|on)$ ]] && \
+     [[ "${INSTALL_RAG_PROFILE:-0}" != "1" ]]; then
+    fail "RAG_ENABLED requires INSTALL_RAG_PROFILE=1"
+  fi
 }
 
 run_as_app() {
@@ -150,12 +159,18 @@ create_release() {
 
 build_release() {
   local release="$1"
+  local requirements_file="${release}/requirements.txt"
+  if [[ "${INSTALL_RAG_PROFILE:-0}" == "1" ]]; then
+    requirements_file="${release}/requirements-rag.txt"
+    log "Optional RAG dependency profile is enabled"
+  fi
+
   log "Creating isolated Python environment"
   python3 -m venv "${release}/.venv"
   PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
     "${release}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
   PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
-    "${release}/.venv/bin/python" -m pip install -r "${release}/requirements.txt"
+    "${release}/.venv/bin/python" -m pip install -r "${requirements_file}"
 
   "${release}/.venv/bin/python" -m pip check
   "${release}/.venv/bin/python" -m compileall -q \

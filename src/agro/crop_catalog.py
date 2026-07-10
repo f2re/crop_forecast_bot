@@ -1,406 +1,323 @@
+"""Supported crops and transparent GDD parameters.
+
+The catalogue contains no yield, suitability, pesticide, fertiliser or economic
+coefficients. ``t_base`` values are operational reference parameters for the
+simple daily-average GDD method. They are not a cultivar/region validation and
+must never be used to infer phenological stage automatically.
+
+``phases`` are labels for a user's direct field observation. They deliberately
+contain no numeric GDD thresholds.
 """
-Каталог сельскохозяйственных культур.
+from __future__ import annotations
 
-Единый источник истины для:
-  - клавиатур выбора культуры (keyboards.py)
-  - агроиндексов (indices.py)
-  - будущего ML-модуля
+from typing import TypedDict
 
-Структура:
-  CATEGORIES — dict[cat_id, {label, emoji, crops: list[crop_key]}]
-  CROPS       — dict[crop_key, {name_ru, emoji, t_base, gdd_stages, category}]
-"""
 
-# ─────────────────────────────────────────────────────────────
-# Категории культур
-# ─────────────────────────────────────────────────────────────
-CATEGORIES: dict = {
+class CropDefinition(TypedDict):
+    name_ru: str
+    emoji: str
+    category: str
+    t_base: float
+    t_upper: float | None
+    phases: tuple[str, ...]
+
+
+CATEGORIES: dict[str, dict[str, object]] = {
     "grains": {
         "label": "Зерновые",
         "emoji": "🌾",
-        "crops": ["wheat", "barley", "oat", "rye", "triticale", "sorghum"],
+        "crops": ("wheat", "barley", "oat", "rye", "triticale", "sorghum"),
     },
     "corn_cereals": {
         "label": "Кукуруза / крупы",
         "emoji": "🌽",
-        "crops": ["corn", "millet", "buckwheat", "rice"],
+        "crops": ("corn", "millet", "buckwheat", "rice"),
     },
     "oilseeds": {
-        "label": "Масличные",
+        "label": "Масличные и бобовые",
         "emoji": "🌻",
-        "crops": ["sunflower", "rapeseed", "flax", "soy", "mustard"],
+        "crops": ("sunflower", "rapeseed", "flax", "soy", "mustard"),
     },
     "root_crops": {
         "label": "Корнеплоды",
         "emoji": "🥔",
-        "crops": ["potato", "sugarbeet", "carrot", "beet"],
+        "crops": ("potato", "sugarbeet", "carrot", "beet"),
     },
     "vegetables": {
         "label": "Овощи / бахчевые",
         "emoji": "🍅",
-        "crops": ["tomato", "cucumber", "zucchini", "watermelon", "melon", "onion", "garlic"],
+        "crops": (
+            "tomato",
+            "cucumber",
+            "zucchini",
+            "watermelon",
+            "melon",
+            "onion",
+            "garlic",
+        ),
     },
     "forage": {
         "label": "Кормовые",
         "emoji": "🌿",
-        "crops": ["alfalfa", "clover", "timothy", "corn_silage"],
-    },
-}
-
-# ─────────────────────────────────────────────────────────────
-# Культуры
-# t_base  — базовая температура для расчёта ГДД (°C)
-# gdd_stages — {phase_name: накопленные ГДД от посева}
-# ─────────────────────────────────────────────────────────────
-CROPS: dict = {
-    # ── Зерновые ────────────────────────────────────────────
-    "wheat": {
-        "name_ru": "Пшеница",
-        "emoji": "🌾",
-        "t_base": 5.0,
-        "category": "grains",
-        "gdd_stages": {
-            "Всходы":         100,
-            "Кущение":        300,
-            "Выход в трубку": 600,
-            "Колошение":      900,
-            "Молочная спелость": 1200,
-            "Полная спелость":   1500,
-        },
-    },
-    "barley": {
-        "name_ru": "Ячмень",
-        "emoji": "🌾",
-        "t_base": 5.0,
-        "category": "grains",
-        "gdd_stages": {
-            "Всходы":         90,
-            "Кущение":        250,
-            "Выход в трубку": 550,
-            "Колошение":      800,
-            "Полная спелость":  1300,
-        },
-    },
-    "oat": {
-        "name_ru": "Овёс",
-        "emoji": "🌾",
-        "t_base": 4.0,
-        "category": "grains",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Кущение":      300,
-            "Выметывание":  700,
-            "Полная спелость": 1400,
-        },
-    },
-    "rye": {
-        "name_ru": "Рожь",
-        "emoji": "🌾",
-        "t_base": 5.0,
-        "category": "grains",
-        "gdd_stages": {
-            "Всходы":       90,
-            "Кущение":      280,
-            "Колошение":    850,
-            "Полная спелость": 1450,
-        },
-    },
-    "triticale": {
-        "name_ru": "Тритикале",
-        "emoji": "🌾",
-        "t_base": 5.0,
-        "category": "grains",
-        "gdd_stages": {
-            "Всходы":       95,
-            "Кущение":      290,
-            "Колошение":    870,
-            "Полная спелость": 1480,
-        },
-    },
-    "sorghum": {
-        "name_ru": "Сорго",
-        "emoji": "🌾",
-        "t_base": 10.0,
-        "category": "grains",
-        "gdd_stages": {
-            "Всходы":       165,
-            "Выметывание":  800,
-            "Полная спелость": 1400,
-        },
-    },
-    # ── Кукуруза / крупы ────────────────────────────────────
-    "corn": {
-        "name_ru": "Кукуруза",
-        "emoji": "🌽",
-        "t_base": 10.0,
-        "category": "corn_cereals",
-        "gdd_stages": {
-            "Всходы":        100,
-            "6 листьев":     380,
-            "Выметывание":   800,
-            "Молочная спелость": 1100,
-            "Полная спелость":   1400,
-        },
-    },
-    "millet": {
-        "name_ru": "Просо",
-        "emoji": "🌾",
-        "t_base": 10.0,
-        "category": "corn_cereals",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Выметывание":  700,
-            "Полная спелость": 1200,
-        },
-    },
-    "buckwheat": {
-        "name_ru": "Гречиха",
-        "emoji": "🌿",
-        "t_base": 8.0,
-        "category": "corn_cereals",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Цветение":     500,
-            "Полная спелость": 900,
-        },
-    },
-    "rice": {
-        "name_ru": "Рис",
-        "emoji": "🍚",
-        "t_base": 10.0,
-        "category": "corn_cereals",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Выметывание":  900,
-            "Полная спелость": 1500,
-        },
-    },
-    # ── Масличные ───────────────────────────────────────────
-    "sunflower": {
-        "name_ru": "Подсолнечник",
-        "emoji": "🌻",
-        "t_base": 6.0,
-        "category": "oilseeds",
-        "gdd_stages": {
-            "Всходы":       170,
-            "Бутонизация":  600,
-            "Цветение":     850,
-            "Полная спелость": 1400,
-        },
-    },
-    "rapeseed": {
-        "name_ru": "Рапс",
-        "emoji": "🌼",
-        "t_base": 5.0,
-        "category": "oilseeds",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Цветение":     600,
-            "Полная спелость": 1300,
-        },
-    },
-    "flax": {
-        "name_ru": "Лён",
-        "emoji": "🌿",
-        "t_base": 5.0,
-        "category": "oilseeds",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Цветение":     500,
-            "Полная спелость": 950,
-        },
-    },
-    "soy": {
-        "name_ru": "Соя",
-        "emoji": "🫘",
-        "t_base": 10.0,
-        "category": "oilseeds",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Цветение":     500,
-            "Налив бобов":  900,
-            "Полная спелость": 1300,
-        },
-    },
-    "mustard": {
-        "name_ru": "Горчица",
-        "emoji": "🌼",
-        "t_base": 5.0,
-        "category": "oilseeds",
-        "gdd_stages": {
-            "Всходы":       80,
-            "Цветение":     400,
-            "Полная спелость": 800,
-        },
-    },
-    # ── Корнеплоды ──────────────────────────────────────────
-    "potato": {
-        "name_ru": "Картофель",
-        "emoji": "🥔",
-        "t_base": 7.0,
-        "category": "root_crops",
-        "gdd_stages": {
-            "Всходы":       200,
-            "Бутонизация":  600,
-            "Полная спелость": 1200,
-        },
-    },
-    "sugarbeet": {
-        "name_ru": "Сахарная свёкла",
-        "emoji": "🥕",
-        "t_base": 5.0,
-        "category": "root_crops",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Смыкание рядов": 600,
-            "Техническая спелость": 1400,
-        },
-    },
-    "carrot": {
-        "name_ru": "Морковь",
-        "emoji": "🥕",
-        "t_base": 5.0,
-        "category": "root_crops",
-        "gdd_stages": {
-            "Всходы":       120,
-            "Техническая спелость": 900,
-        },
-    },
-    "beet": {
-        "name_ru": "Свёкла столовая",
-        "emoji": "🟣",
-        "t_base": 5.0,
-        "category": "root_crops",
-        "gdd_stages": {
-            "Всходы":       120,
-            "Техническая спелость": 850,
-        },
-    },
-    # ── Овощи / бахчевые ────────────────────────────────────
-    "tomato": {
-        "name_ru": "Томат",
-        "emoji": "🍅",
-        "t_base": 10.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Цветение":     450,
-            "Плодоношение": 900,
-        },
-    },
-    "cucumber": {
-        "name_ru": "Огурец",
-        "emoji": "🥒",
-        "t_base": 10.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Цветение":     300,
-            "Плодоношение": 700,
-        },
-    },
-    "zucchini": {
-        "name_ru": "Кабачок",
-        "emoji": "🥒",
-        "t_base": 10.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       100,
-            "Плодоношение": 650,
-        },
-    },
-    "watermelon": {
-        "name_ru": "Арбуз",
-        "emoji": "🍉",
-        "t_base": 10.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Цветение":     500,
-            "Полная спелость": 1200,
-        },
-    },
-    "melon": {
-        "name_ru": "Дыня",
-        "emoji": "🍈",
-        "t_base": 10.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Цветение":     500,
-            "Полная спелость": 1100,
-        },
-    },
-    "onion": {
-        "name_ru": "Лук",
-        "emoji": "🧅",
-        "t_base": 5.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       150,
-            "Луковица":     700,
-        },
-    },
-    "garlic": {
-        "name_ru": "Чеснок",
-        "emoji": "🧄",
-        "t_base": 5.0,
-        "category": "vegetables",
-        "gdd_stages": {
-            "Всходы":       120,
-            "Полная спелость": 800,
-        },
-    },
-    # ── Кормовые ────────────────────────────────────────────
-    "alfalfa": {
-        "name_ru": "Люцерна",
-        "emoji": "🌿",
-        "t_base": 5.0,
-        "category": "forage",
-        "gdd_stages": {
-            "Всходы":   100,
-            "Цветение": 600,
-        },
-    },
-    "clover": {
-        "name_ru": "Клевер",
-        "emoji": "☘️",
-        "t_base": 5.0,
-        "category": "forage",
-        "gdd_stages": {
-            "Всходы":   100,
-            "Цветение": 550,
-        },
-    },
-    "timothy": {
-        "name_ru": "Тимофеевка",
-        "emoji": "🌿",
-        "t_base": 5.0,
-        "category": "forage",
-        "gdd_stages": {
-            "Всходы":   90,
-            "Выметывание": 500,
-        },
-    },
-    "corn_silage": {
-        "name_ru": "Кукуруза на силос",
-        "emoji": "🌽",
-        "t_base": 10.0,
-        "category": "forage",
-        "gdd_stages": {
-            "Всходы":       100,
-            "6 листьев":    380,
-            "Молочная спелость": 1000,
-        },
+        "crops": ("alfalfa", "clover", "timothy", "corn_silage"),
     },
 }
 
 
-def get_crop(crop_key: str) -> dict:
-    """Возвращает данные культуры по ключу, или wheat по умолчанию."""
-    return CROPS.get(crop_key, CROPS["wheat"])
+def _crop(
+    name_ru: str,
+    emoji: str,
+    category: str,
+    t_base: float,
+    phases: tuple[str, ...],
+    *,
+    t_upper: float | None = None,
+) -> CropDefinition:
+    return {
+        "name_ru": name_ru,
+        "emoji": emoji,
+        "category": category,
+        "t_base": t_base,
+        "t_upper": t_upper,
+        "phases": phases,
+    }
+
+
+CROPS: dict[str, CropDefinition] = {
+    "wheat": _crop(
+        "Пшеница",
+        "🌾",
+        "grains",
+        5.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Колошение", "Молочная спелость", "Полная спелость"),
+    ),
+    "barley": _crop(
+        "Ячмень",
+        "🌾",
+        "grains",
+        5.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Колошение", "Полная спелость"),
+    ),
+    "oat": _crop(
+        "Овёс",
+        "🌾",
+        "grains",
+        4.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Вымётывание", "Полная спелость"),
+    ),
+    "rye": _crop(
+        "Рожь",
+        "🌾",
+        "grains",
+        5.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Колошение", "Полная спелость"),
+    ),
+    "triticale": _crop(
+        "Тритикале",
+        "🌾",
+        "grains",
+        5.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Колошение", "Полная спелость"),
+    ),
+    "sorghum": _crop(
+        "Сорго",
+        "🌾",
+        "grains",
+        10.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Вымётывание", "Созревание"),
+    ),
+    "corn": _crop(
+        "Кукуруза",
+        "🌽",
+        "corn_cereals",
+        10.0,
+        ("Всходы", "6 листьев", "Вымётывание", "Цветение", "Молочная спелость", "Полная спелость"),
+    ),
+    "millet": _crop(
+        "Просо",
+        "🌾",
+        "corn_cereals",
+        10.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Вымётывание", "Созревание"),
+    ),
+    "buckwheat": _crop(
+        "Гречиха",
+        "🌿",
+        "corn_cereals",
+        8.0,
+        ("Всходы", "Ветвление", "Бутонизация", "Цветение", "Созревание"),
+    ),
+    "rice": _crop(
+        "Рис",
+        "🍚",
+        "corn_cereals",
+        10.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Вымётывание", "Созревание"),
+    ),
+    "sunflower": _crop(
+        "Подсолнечник",
+        "🌻",
+        "oilseeds",
+        6.0,
+        ("Всходы", "Формирование листьев", "Бутонизация", "Цветение", "Налив семян", "Созревание"),
+    ),
+    "rapeseed": _crop(
+        "Рапс",
+        "🌼",
+        "oilseeds",
+        5.0,
+        ("Всходы", "Розетка", "Стеблевание", "Бутонизация", "Цветение", "Созревание"),
+    ),
+    "flax": _crop(
+        "Лён",
+        "🌿",
+        "oilseeds",
+        5.0,
+        ("Всходы", "Ёлочка", "Бутонизация", "Цветение", "Созревание"),
+    ),
+    "soy": _crop(
+        "Соя",
+        "🫘",
+        "oilseeds",
+        10.0,
+        ("Всходы", "Ветвление", "Бутонизация", "Цветение", "Налив бобов", "Созревание"),
+    ),
+    "mustard": _crop(
+        "Горчица",
+        "🌼",
+        "oilseeds",
+        5.0,
+        ("Всходы", "Розетка", "Стеблевание", "Бутонизация", "Цветение", "Созревание"),
+    ),
+    "potato": _crop(
+        "Картофель",
+        "🥔",
+        "root_crops",
+        7.0,
+        ("Всходы", "Бутонизация", "Цветение", "Клубнеобразование", "Отмирание ботвы"),
+    ),
+    "sugarbeet": _crop(
+        "Сахарная свёкла",
+        "🥕",
+        "root_crops",
+        5.0,
+        ("Всходы", "Первая пара листьев", "Смыкание рядов", "Рост корнеплода", "Техническая спелость"),
+    ),
+    "carrot": _crop(
+        "Морковь",
+        "🥕",
+        "root_crops",
+        5.0,
+        ("Всходы", "Формирование розетки", "Рост корнеплода", "Техническая спелость"),
+    ),
+    "beet": _crop(
+        "Свёкла столовая",
+        "🟣",
+        "root_crops",
+        5.0,
+        ("Всходы", "Формирование розетки", "Рост корнеплода", "Техническая спелость"),
+    ),
+    "tomato": _crop(
+        "Томат",
+        "🍅",
+        "vegetables",
+        10.0,
+        ("Всходы", "Бутонизация", "Цветение", "Завязывание плодов", "Плодоношение"),
+    ),
+    "cucumber": _crop(
+        "Огурец",
+        "🥒",
+        "vegetables",
+        10.0,
+        ("Всходы", "Формирование плетей", "Цветение", "Плодоношение"),
+    ),
+    "zucchini": _crop(
+        "Кабачок",
+        "🥒",
+        "vegetables",
+        10.0,
+        ("Всходы", "Формирование листьев", "Цветение", "Плодоношение"),
+    ),
+    "watermelon": _crop(
+        "Арбуз",
+        "🍉",
+        "vegetables",
+        10.0,
+        ("Всходы", "Формирование плетей", "Цветение", "Рост плодов", "Созревание"),
+    ),
+    "melon": _crop(
+        "Дыня",
+        "🍈",
+        "vegetables",
+        10.0,
+        ("Всходы", "Формирование плетей", "Цветение", "Рост плодов", "Созревание"),
+    ),
+    "onion": _crop(
+        "Лук",
+        "🧅",
+        "vegetables",
+        5.0,
+        ("Всходы", "Рост листьев", "Формирование луковицы", "Полегание пера"),
+    ),
+    "garlic": _crop(
+        "Чеснок",
+        "🧄",
+        "vegetables",
+        5.0,
+        ("Всходы", "Рост листьев", "Формирование луковицы", "Созревание"),
+    ),
+    "alfalfa": _crop(
+        "Люцерна",
+        "🌿",
+        "forage",
+        5.0,
+        ("Всходы", "Ветвление", "Бутонизация", "Цветение"),
+    ),
+    "clover": _crop(
+        "Клевер",
+        "☘️",
+        "forage",
+        5.0,
+        ("Всходы", "Ветвление", "Бутонизация", "Цветение"),
+    ),
+    "timothy": _crop(
+        "Тимофеевка",
+        "🌿",
+        "forage",
+        5.0,
+        ("Всходы", "Кущение", "Выход в трубку", "Вымётывание", "Цветение"),
+    ),
+    "corn_silage": _crop(
+        "Кукуруза на силос",
+        "🌽",
+        "forage",
+        10.0,
+        ("Всходы", "6 листьев", "Вымётывание", "Цветение", "Молочная спелость"),
+    ),
+}
+
+
+_ALIASES = {
+    "soybean": "soy",
+    "sugar_beet": "sugarbeet",
+}
+
+
+def normalise_crop_key(crop_key: str) -> str:
+    key = _ALIASES.get(crop_key, crop_key)
+    if key not in CROPS:
+        raise ValueError(f"Неподдерживаемая культура: {crop_key}")
+    return key
+
+
+def get_crop(crop_key: str) -> CropDefinition:
+    """Return a supported crop without silently substituting another crop."""
+    return CROPS[normalise_crop_key(crop_key)]
 
 
 def get_crop_name(crop_key: str) -> str:
-    """Возвращает русское название культуры."""
-    return CROPS.get(crop_key, CROPS["wheat"])["name_ru"]
+    return get_crop(crop_key)["name_ru"]
+
+
+def get_crop_phases(crop_key: str) -> tuple[str, ...]:
+    return get_crop(crop_key)["phases"]

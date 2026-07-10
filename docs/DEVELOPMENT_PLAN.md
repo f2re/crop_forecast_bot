@@ -1,209 +1,234 @@
 # План модернизации Crop Forecast Bot
 
+Дата актуализации: **2026-07-10**.
+
 ## Целевая архитектура
 
 ```text
-Telegram
-  → aiogram handlers / persistent FSM
-    → application services / ports
-      → domain and agro calculations
-        → infrastructure adapters
-          ├─ Open-Meteo forecast / historical reanalysis
-          ├─ PostgreSQL repositories / Alembic
-          ├─ Redis FSM / locks / deduplication
-          └─ RAG adapters
+Telegram / aiogram Router + Redis FSM
+        ↓
+application services / typed ports
+        ↓
+domain and scientifically bounded agro calculations
+        ↓
+infrastructure adapters
+  ├─ Open-Meteo forecast / historical reanalysis
+  ├─ PostgreSQL repositories / Alembic
+  ├─ Redis leases / deduplication
+  └─ optional source-attributed RAG
 ```
 
-Правила проекта:
+Правила принятия изменений:
 
-- один Telegram framework и entrypoint;
-- handlers не выполняют расчёты, HTTP и блокирующие операции;
-- все I/O-контракты async и типизированы;
-- PostgreSQL — source of truth;
-- Redis — persistent FSM, locks и deduplication;
-- observations, reanalysis, operational past и forecast разделяются;
-- fallback всегда виден пользователю;
-- формулы имеют источник, единицы, период применимости и тесты;
-- production устанавливается Bash-скриптами и управляется systemd;
-- merge разрешён только после зелёного CI.
+1. один Telegram framework и один entrypoint;
+2. handlers не выполняют HTTP, расчёты и блокирующий I/O;
+3. PostgreSQL — source of truth, Redis — FSM/coordination;
+4. observation, reanalysis и forecast не смешиваются;
+5. отсутствие данных не заменяется эвристикой или нулём;
+6. формула имеет источник, единицы, период и тесты;
+7. неподдерживаемая функция явно выключена;
+8. релиз принимается после зелёного CI, migration check и runtime smoke;
+9. production разворачивается Bash/systemd без Docker.
+
+## Ближайший вертикальный срез — persistence и concurrency
+
+Приоритет: **P0**. Цель — доказать устойчивость уже реализованного Telegram flow на реальных PostgreSQL и Redis, а не добавлять новые источники данных.
+
+1. Добавить изолированные integration tests с реальными PostgreSQL и Redis: Alembic `upgrade head`, partial indexes, row locking, Redis TTL и lease semantics.
+2. Устранить race conditions в `get_or_create_user`, создании active field и crop season через idempotent upsert либо обработку `IntegrityError`.
+3. Добавить сценарные aiogram/FSM tests для создания поля и ввода сезона до и после рестарта Redis.
+4. Запустить два scheduler-процесса против одной БД/Redis и проверить distributed lock, deduplication, повтор после падения и отсутствие двойной отправки.
+5. Проверить недоступность PostgreSQL/Redis, повторные callback, рестарт между шагами FSM и корректное закрытие ресурсов.
+
+Definition of Done среза:
+
+- миграции и repository contracts проходят на PostgreSQL, а не только SQLite;
+- FSM продолжается после рестарта процесса;
+- два scheduler worker не создают двойной alert;
+- повторный callback идемпотентен;
+- CI воспроизводит срез без внешних секретов;
+- эксплуатационные ограничения и команды обновлены в README/runbook.
 
 ## Этап 0 — стабилизация runtime
 
 Статус: **выполнено**.
 
-- [x] единый aiogram 3.x entrypoint;
-- [x] удаление telebot и глобальных user state dictionaries;
-- [x] основной Router/FSM;
-- [x] единый async Open-Meteo contract;
-- [x] корректный DB/scheduler lifecycle;
-- [x] heartbeat, readiness и systemd watchdog;
-- [x] native deploy/update/rollback/status;
-- [x] CI, unit tests и запрет контейнерных deployment-файлов.
+- [x] aiogram 3.x как единственный Telegram runtime;
+- [x] entrypoint `python -m src.bot.main`;
+- [x] Router/FSM для поля, культуры, сезона, отчёта и уведомлений;
+- [x] удаление глобального пользовательского состояния;
+- [x] async DB lifecycle и middleware session;
+- [x] typed Open-Meteo contract;
+- [x] scheduler session factory;
+- [x] graceful startup/shutdown;
+- [x] systemd readiness, heartbeat и watchdog;
+- [x] native deploy/update/rollback/status.
 
-## Этап 1 — схема, состояние и multi-field profile
+## Этап 1 — схема и устойчивое состояние
 
-Приоритет: P0. Статус: **production vertical slice выполнен**.
+Статус: **production vertical slice выполнен**.
 
-- [x] Alembic baseline и принятие legacy `create_all()` schema;
-- [x] обязательный `alembic upgrade head` в deploy/update;
-- [x] проверка schema revision при startup;
-- [x] Redis notification deduplication и distributed scheduler lock;
-- [x] `Field`: имя, координаты, timezone, высота, metadata source, active flag;
-- [x] `CropSeason`: культура, дата посева/начала, фактическая фаза и source;
-- [x] миграция legacy coordinates/crop в `Основное поле`;
-- [x] несколько полей в Telegram;
-- [x] создание, переименование, обновление координат и переключение active field;
-- [x] ownership checks и case-insensitive duplicate validation;
-- [x] отдельные daily/frost settings каждого поля;
-- [x] тесты независимости сезона и уведомлений двух полей;
-- [ ] restart FSM scenario tests;
-- [ ] real PostgreSQL/Redis integration tests;
-- [ ] concurrent two-process scheduler test;
-- [ ] cleanup migration legacy columns после production verification.
+- [x] Alembic baseline и обязательный head;
+- [x] adoption legacy `users` schema;
+- [x] `Field` и `CropSeason`;
+- [x] несколько полей и одно активное поле;
+- [x] отдельные crop/season/phase/preferences;
+- [x] Redis FSM;
+- [x] Redis scheduler leases;
+- [x] persistent notification deduplication;
+- [x] snapshot DB targets before external I/O;
+- [ ] real PostgreSQL migration/repository integration tests;
+- [ ] Redis restart and concurrent-process tests;
+- [ ] cleanup migration legacy user coordinate/crop columns after production verification.
 
-Критерий: переключение активного поля атомарно восстанавливает его crop/season/phase/settings, а restart не теряет FSM progress.
+## Этап 2 — научная целостность оперативного отчёта
 
-## Этап 2 — provider layer
+Статус: **реализован, CI подтверждён; clean-host smoke не выполнен**.
 
-Приоритет: P0/P1. Статус: **Open-Meteo slice выполнен**.
+- [x] local-calendar partition текущего дня;
+- [x] explicit `reanalysis / operational_past / forecast` labels;
+- [x] forecast исключён из completed HTC и P−ET₀;
+- [x] NaN не превращается в ложный ноль;
+- [x] GDD completed и forecast contributions разделены;
+- [x] frost screening использует только forecast rows;
+- [x] daily frost data не заявляет точный час события;
+- [x] automatic phase inference отключён;
+- [x] read-only provider contract smoke;
+- [x] capability matrix;
+- [x] единый verification script;
+- [x] зелёный CI полного среза;
+- [ ] clean-host production smoke.
 
-- [x] WeatherProvider port и domain DTO;
-- [x] forecast/reanalysis source classification;
-- [x] coverage metadata и controlled degraded mode;
-- [x] bounded worker, retry и cache;
-- [x] unit tests history parsing/merge precedence;
-- [ ] общий async HTTP lifecycle;
-- [ ] retry jitter, rate limiter и circuit breaker;
-- [ ] mocked full Open-Meteo integration tests;
-- [ ] observation provider DTO;
-- [ ] ERA5-Land/CDS job lifecycle и cache integrity;
-- [ ] SoilGrids adapter с ocean/no-data validation;
-- [ ] Sentinel-2/MODIS provider после проверки доступа и квот;
-- [ ] изоляция optional Google Earth Engine dependency.
+## Этап 3 — provider resilience
 
-Критерий: outage любого provider приводит к контролируемому degraded report без выдуманных данных.
+Приоритет: **P0/P1**.
 
-## Этап 3 — научный расчётный слой
+- [x] application weather port and domain DTO;
+- [x] timeout, retry/backoff, cache and bounded concurrency;
+- [x] optional historical extension and explicit degradation;
+- [x] cached session shutdown;
+- [ ] общий lifecycle для будущих HTTP providers;
+- [ ] jittered retry policy;
+- [ ] measurable per-provider rate limiter;
+- [ ] circuit breaker with half-open probe;
+- [ ] stale-cache fallback с возрастом и quality marker;
+- [ ] mocked full HTTP contract tests;
+- [ ] provider latency/error/fallback metrics.
 
-Приоритет: P0.
+## Этап 4 — агрометеорологические показатели
 
 ### ГДД
 
-- [x] настраиваемая дата сезона;
-- [x] crop-specific `Tbase` из единого catalogue;
-- [x] разделение reanalysis/operational/forecast;
-- [x] coverage и missing fraction;
-- [x] запрет автоматической фазы до валидации;
-- [ ] optional upper temperature cutoff;
-- [ ] независимая валидация phase thresholds по культурам/регионам;
-- [ ] leap year, DST, season boundary и long-gap tests.
+- [x] configurable season start;
+- [x] crop-specific `Tbase` from one catalogue;
+- [x] optional `Tupper` only when explicitly configured;
+- [x] completed/forecast separation;
+- [x] coverage and missing fraction;
+- [x] no automatic phenology;
+- [ ] independent crop/region validation;
+- [ ] leap year, DST and long-gap integration cases;
+- [ ] cultivar/version metadata.
 
 ### ГТК
 
-- [x] только сутки `Tmean > 10°C`;
-- [x] minimum valid warm days;
-- [x] короткое окно не называется сезонным;
-- [ ] согласованный сезонный observation/reanalysis ряд;
-- [ ] missing fraction для окна ГТК;
-- [ ] правила непрерывности вегетационного периода.
+- [x] completed days only;
+- [x] `Tmean > 10°C` rule;
+- [x] minimum warm-day count;
+- [x] missing fraction control;
+- [x] no universal moisture classification;
+- [ ] season-consistent homogeneous series;
+- [ ] vegetation-period continuity rules;
+- [ ] regional interpretation backed by sources.
 
-### ET₀ и водный баланс
+### ET₀ and water status
 
-- [x] provider ET₀ явно маркирован;
-- [ ] локальная FAO-56 Penman–Monteith;
-- [ ] Kc/root-zone model только с phase/soil context;
-- [ ] запрет доз полива без проверяемого контекста.
+- [x] ET₀ identified as provider variable;
+- [x] paired-data validation;
+- [x] no irrigation dose claim;
+- [ ] local FAO-56 Penman–Monteith with complete inputs;
+- [ ] soil/root-zone storage model;
+- [ ] Kc only with validated phase and crop context.
 
-### Заморозки
+### Frost
 
-- [x] local time, crop, manual phase и elevation как контекст;
-- [x] air 2 m отделён от plant/surface temperature;
-- [x] общие 2/0°C не названы damage thresholds;
-- [ ] crop/phase susceptibility sources;
-- [ ] surface temperature provider/estimate;
-- [ ] terrain correction и cold-air drainage;
+- [x] local date and lead in days;
+- [x] air 2 m vs plant/surface distinction;
+- [x] crop/phase/elevation shown as context;
+- [x] no fake probability or exact daily event hour;
+- [ ] normative crop/phase damage thresholds;
+- [ ] surface temperature provider;
+- [ ] terrain/cold-air drainage correction;
 - [ ] ensemble uncertainty;
-- [ ] POD/FAR/CSI/lead-time validation.
+- [ ] POD/FAR/CSI validation dataset.
 
-### SPI
+### SPI and yield
 
-- [x] не рассчитывать по короткому прогнозу;
-- [ ] длинный однородный месячный ряд;
-- [ ] distribution fitting и goodness-of-fit.
+- [x] disabled for short operational data;
+- [x] synthetic yield model removed;
+- [ ] homogeneous monthly precipitation archive + distribution fit for SPI;
+- [ ] real yield dataset, temporal/regional holdout and baseline before any ML release.
 
-Критерий: каждый показатель имеет источник, единицы, валидный период, uncertainty note и тесты.
+## Этап 5 — новые provider domains
 
-## Этап 4 — Telegram UX
+Приоритет: **P1/P2**.
 
-Приоритет: P1. Статус: **основной multi-field flow доступен**.
+- [ ] soil DTO and SoilGrids adapter;
+- [ ] ocean/no-data/uncertainty validation;
+- [ ] ERA5-Land queued job and cache integrity;
+- [ ] satellite DTO and actual provider selection;
+- [ ] cloud/quality masks and acquisition metadata;
+- [ ] source/version/resolution/fallback metadata in every report;
+- [ ] no feature exposed before reachable Telegram flow and tests.
 
-- [x] fields → active field → crop → season → report;
+## Этап 6 — Telegram UX and operations
+
+- [x] field → crop → season → report;
 - [x] `/start`, `/help`, `/cancel`;
-- [x] список, создание, rename и coordinate update;
-- [x] ручная дата и фактическая фаза;
-- [x] field-level notification settings;
-- [x] compact report: what/reliability/action/recheck;
-- [x] explicit progress и fallback;
-- [ ] delete/archive field flow с подтверждением;
-- [ ] back/cancel на каждом callback branch;
-- [ ] duplicate callback/idempotency middleware;
-- [ ] user-editable timezone;
-- [ ] notification hour/quiet hours per field;
-- [ ] admin diagnostics and error export;
-- [ ] aiogram scenario tests;
-- [ ] restart test в середине create-field/date FSM.
+- [x] multi-field management;
+- [x] field-level notification switches;
+- [x] explicit progress and degraded output;
+- [ ] callback idempotency middleware;
+- [ ] quiet hours and notification windows;
+- [ ] archive/delete field flow;
+- [ ] admin diagnostics and provider status;
+- [ ] scenario tests with mocked Telegram updates;
+- [ ] restart test during each FSM branch.
 
-Критерий: полный сценарий достижим из `/start`, идемпотентен и переживает restart.
+## Этап 7 — RAG
 
-## Этап 5 — RAG и рекомендации
-
-Приоритет: P1/P2.
-
-- [x] field/season/phase context в RAG;
-- [x] отсутствие выдуманного weather context при fallback;
-- [ ] lazy initialization;
-- [ ] optional dependency profile;
-- [ ] document metadata: version/page/category/date;
-- [ ] citation validation;
-- [ ] source-only mode и prompt-injection resistance;
-- [ ] запрет доз/препаратов без нормативного источника;
+- [x] optional dependency profile;
+- [x] lazy heavy imports;
+- [x] runtime feature flag;
+- [x] source display;
+- [x] fail-closed answer when provider/context is unavailable;
+- [ ] document version/date/category metadata;
+- [ ] citation validation against retrieved chunks;
+- [ ] prompt-injection tests;
 - [ ] Russian agronomy evaluation set;
-- [ ] удалить accuracy claims до независимой валидации.
+- [ ] hard guard against dose/pesticide advice without normative context.
 
-## Этап 6 — operations и release engineering
+## Этап 8 — release engineering and observability
 
-Приоритет: P1.
-
-- [x] native systemd deployment;
-- [x] atomic releases, backup и rollback;
-- [x] mandatory Alembic migration;
-- [x] operator README, QUICK_START и `scripts/help.sh`;
-- [ ] clean-host Debian 12 smoke test;
-- [ ] Astra Linux smoke test;
+- [x] native Bash/systemd release path;
+- [x] PostgreSQL backup before update;
+- [x] atomic symlink activation and code rollback;
+- [x] verification command and live provider smoke;
+- [ ] `uv.lock` validated on Debian/Astra;
+- [ ] clean-host Debian 12 test;
+- [ ] Astra Linux test;
 - [ ] automated failed-start rollback test;
-- [ ] periodic PostgreSQL restore verification;
-- [ ] systemd watchdog fault-injection test;
-- [ ] `uv.lock` на целевых платформах;
-- [ ] dependency profiles: core/climate/satellite/rag/dev;
-- [ ] JSON logging, correlation ID и metrics;
-- [ ] release tags, changelog и source verification policy.
-
-## Ближайший следующий вертикальный срез
-
-1. Реальные PostgreSQL/Redis integration tests.
-2. FSM restart tests для создания поля и ввода даты.
-3. Field archive/delete с подтверждением и безопасным выбором нового active field.
-4. Notification local hour и quiet hours.
-5. Mocked Open-Meteo end-to-end contract tests.
+- [ ] periodic restore verification;
+- [ ] JSON logs and correlation ID;
+- [ ] provider/scheduler metrics;
+- [ ] release tags and signed/verified source policy.
 
 ## Definition of Done ближайшего релиза
 
-- один aiogram entrypoint;
-- несколько полей с независимыми season/settings;
-- актуальная Alembic schema;
-- Redis locks/deduplication;
-- controlled Open-Meteo fallback;
-- научно корректные подписи ГДД/ГТК/ET₀/frost;
-- native deploy/update/rollback;
-- зелёные Python, shell и unit/integration checks;
-- отсутствие telebot, Docker runtime, global user state и unsupported accuracy claims.
+- [x] CI зелёный для всего `src/config/alembic/tests`;
+- [ ] Open-Meteo live smoke проходит на контрольной точке;
+- [ ] two-field Telegram smoke проходит после deployment;
+- [ ] Alembic head подтверждён на production-копии;
+- [ ] deploy/update/rollback проверены на чистом Debian 12;
+- [x] отсутствуют legacy entrypoints, Docker scripts и synthetic models;
+- [x] README, capability matrix, status и changelog совпадают с runtime;
+- [x] все недоступные научные функции явно выключены.
