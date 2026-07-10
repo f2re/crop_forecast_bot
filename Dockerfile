@@ -41,6 +41,6 @@ RUN mkdir -p /app/data/cache /app/data/literature /app/logs /tmp/crop_forecast_b
 USER cropbot
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD-SHELL python -m src.ops.heartbeat "${HEARTBEAT_FILE}" --max-age 90
+    CMD python -m src.ops.heartbeat "${HEARTBEAT_FILE}" --max-age 90
 
 CMD ["python", "-m", "src.bot.main"]
