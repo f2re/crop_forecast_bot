@@ -85,7 +85,8 @@ validate_runtime_env() {
 }
 
 run_as_app() {
-  runuser -u "${APP_USER}" --preserve-environment -- "$@"
+  runuser -u "${APP_USER}" --preserve-environment -- \
+    env HOME="${STATE_ROOT}" XDG_CACHE_HOME="${CACHE_ROOT}" "$@"
 }
 
 run_as_app_in_release() {
@@ -101,7 +102,8 @@ prepare_runtime_directories() {
   install -d -m 0755 "${APP_ROOT}" "${RELEASES_DIR}"
   install -d -m 0750 -o "${APP_USER}" -g "${APP_GROUP}" \
     "${STATE_ROOT}" "${STATE_ROOT}/data" "${STATE_ROOT}/data/literature" \
-    "${STATE_ROOT}/models" "${CACHE_ROOT}" "${CACHE_ROOT}/pip" "${LOG_ROOT}"
+    "${STATE_ROOT}/models" "${CACHE_ROOT}" "${CACHE_ROOT}/pip" \
+    "${CACHE_ROOT}/huggingface" "${LOG_ROOT}"
   install -d -m 0700 "${BACKUP_ROOT}"
 }
 
@@ -203,8 +205,11 @@ activate_release() {
 heartbeat_is_fresh() {
   local heartbeat_file="${HEARTBEAT_FILE:-/run/crop-forecast-bot/heartbeat}"
   [[ -x "${CURRENT_LINK}/.venv/bin/python" ]] || return 1
-  "${CURRENT_LINK}/.venv/bin/python" \
-    -m src.ops.heartbeat "${heartbeat_file}" --max-age 120
+  (
+    cd "${CURRENT_LINK}"
+    "${CURRENT_LINK}/.venv/bin/python" \
+      -m src.ops.heartbeat "${heartbeat_file}" --max-age 120
+  )
 }
 
 restart_and_verify() {
@@ -213,7 +218,7 @@ restart_and_verify() {
   rm -f "${HEARTBEAT_FILE:-/run/crop-forecast-bot/heartbeat}" || true
   systemctl restart "${SERVICE_NAME}"
 
-  for attempt in $(seq 1 45); do
+  for ((attempt = 1; attempt <= 45; attempt++)); do
     if systemctl is-active --quiet "${SERVICE_NAME}" && heartbeat_is_fresh; then
       log "Service is active and heartbeat is current"
       return 0
