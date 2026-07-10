@@ -11,7 +11,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -20,15 +20,19 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install focused test dependencies
+
+      - name: Install validation tools
         run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
           python -m pip install --upgrade pip
           pip install \
             pytest pytest-asyncio ruff \
             pandas numpy python-dotenv \
             aiogram redis SQLAlchemy asyncpg APScheduler \
             openmeteo-requests requests-cache retry-requests
-      - name: Static checks for the migrated runtime
+
+      - name: Python static checks
         run: |
           ruff check \
             config/settings.py \
@@ -43,35 +47,14 @@ jobs:
             src/ops \
             tests
           python -m compileall -q config src tests
+
+      - name: Native deployment checks
+        run: |
+          bash -n scripts/*.sh
+          shellcheck -x scripts/*.sh
+          test ! -e Dockerfile
+          test ! -e docker-compose.yml
+          test ! -e .env.docker.example
+
       - name: Unit tests
         run: python -m pytest -q
-
-  docker-build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - name: Build production image
-        id: docker_build
-        shell: bash
-        run: |
-          set +e
-          docker buildx build \
-            --progress=plain \
-            --tag crop-forecast-bot:ci \
-            --load \
-            . > docker-build.log 2>&1
-          status=$?
-          if [[ ${status} -ne 0 ]]; then
-            tail -n 80 docker-build.log
-          fi
-          exit ${status}
-      - name: Upload Docker build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-build-log
-          path: docker-build.log
-          if-no-files-found: error
-          retention-days: 7
