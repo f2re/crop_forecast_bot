@@ -1,15 +1,18 @@
-"""Open-Meteo provider for operational agrometeorological data.
+"""Open-Meteo adapter for operational forecast and bounded season history.
 
-The public contract is deliberately small and asynchronous: callers receive one
-``AgroWeatherData`` DTO or an explicit ``OpenMeteoError``. Synchronous vendor
-code is isolated in a bounded worker thread and never blocks the bot event loop.
+The adapter separates forecast data from historical reanalysis in every daily
+row. Historical Weather API data is used only to extend an explicitly requested
+active season; failure of that optional extension degrades the report rather
+than fabricating a complete seasonal series.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from datetime import date, timedelta
 from functools import lru_cache
+from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import openmeteo_requests
 import pandas as pd
@@ -17,74 +20,176 @@ import requests_cache
 from retry_requests import retry
 
 from config.settings import get_settings
+from src.application.ports.weather import WeatherProvider, WeatherProviderError
+from src.domain.weather import AgroWeatherData, WeatherCoverage, WeatherMeta
 
 logger = logging.getLogger(__name__)
 
 PAST_DAYS = 14
 FORECAST_DAYS = 7
-OM_URL = "https://api.open-meteo.com/v1/forecast"
+MAX_SEASON_HISTORY_DAYS = 730
+FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _MAX_CONCURRENT_REQUESTS = 4
 _REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
+_HISTORY_SOURCE = "Open-Meteo Historical Weather API (reanalysis Best Match)"
 
 
-class OpenMeteoError(RuntimeError):
-    """The provider could not return a valid operational dataset."""
+class OpenMeteoError(WeatherProviderError):
+    """Open-Meteo could not return a valid dataset."""
 
 
-@dataclass(frozen=True, slots=True)
-class WeatherMeta:
-    latitude: float
-    longitude: float
-    elevation_m: float
-    utc_offset_seconds: int
-    timezone: str
-    source: str = "Open-Meteo Forecast API"
-
-
-@dataclass(slots=True)
-class AgroWeatherData:
-    meta: WeatherMeta
-    daily: pd.DataFrame
-    hourly: pd.DataFrame
-    past_days: int = PAST_DAYS
-    forecast_days: int = FORECAST_DAYS
+def _timezone_name(raw_value: Any) -> str:
+    if isinstance(raw_value, (bytes, bytearray)):
+        value = raw_value.decode("utf-8", errors="replace")
+    else:
+        value = str(raw_value or "UTC")
+    try:
+        ZoneInfo(value)
+    except ZoneInfoNotFoundError:
+        logger.warning("Provider returned unknown timezone %r; using UTC", value)
+        return "UTC"
+    return value
 
 
 @lru_cache(maxsize=1)
-def _get_client() -> openmeteo_requests.Client:
+def _get_http_session():
     cache_path = get_settings().open_meteo_cache_path
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_session = requests_cache.CachedSession(
         str(cache_path),
         expire_after=3600,
     )
-    retry_session = retry(
+    return retry(
         cache_session,
         retries=4,
         backoff_factor=0.5,
         status_to_retry=(429, 500, 502, 503, 504),
     )
-    return openmeteo_requests.Client(session=retry_session)
 
 
-async def fetch_agro_data(lat: float, lon: float) -> AgroWeatherData:
-    """Fetch a typed operational dataset without blocking the event loop."""
-    if not -90 <= lat <= 90:
-        raise ValueError(f"Latitude outside [-90, 90]: {lat}")
-    if not -180 <= lon <= 180:
-        raise ValueError(f"Longitude outside [-180, 180]: {lon}")
-
-    async with _REQUEST_SEMAPHORE:
-        try:
-            return await asyncio.to_thread(_fetch_sync, lat, lon)
-        except (ValueError, OpenMeteoError):
-            raise
-        except Exception as exc:
-            logger.exception("Open-Meteo request failed for %.5f, %.5f", lat, lon)
-            raise OpenMeteoError(str(exc)) from exc
+@lru_cache(maxsize=1)
+def _get_client() -> openmeteo_requests.Client:
+    return openmeteo_requests.Client(session=_get_http_session())
 
 
-def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
+class OpenMeteoProvider(WeatherProvider):
+    async def fetch(
+        self,
+        latitude: float,
+        longitude: float,
+        *,
+        season_start: date | None = None,
+    ) -> AgroWeatherData:
+        if not -90 <= latitude <= 90:
+            raise ValueError(f"Latitude outside [-90, 90]: {latitude}")
+        if not -180 <= longitude <= 180:
+            raise ValueError(f"Longitude outside [-180, 180]: {longitude}")
+
+        async with _REQUEST_SEMAPHORE:
+            try:
+                return await asyncio.to_thread(
+                    _fetch_sync,
+                    latitude,
+                    longitude,
+                    season_start,
+                )
+            except (ValueError, OpenMeteoError):
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "Open-Meteo request failed for %.5f, %.5f",
+                    latitude,
+                    longitude,
+                )
+                raise OpenMeteoError(str(exc)) from exc
+
+
+_DEFAULT_PROVIDER = OpenMeteoProvider()
+
+
+async def fetch_agro_data(
+    lat: float,
+    lon: float,
+    *,
+    season_start: date | None = None,
+) -> AgroWeatherData:
+    """Compatibility wrapper around the typed provider adapter."""
+    return await _DEFAULT_PROVIDER.fetch(lat, lon, season_start=season_start)
+
+
+def _fetch_sync(
+    lat: float,
+    lon: float,
+    season_start: date | None,
+) -> AgroWeatherData:
+    forecast = _fetch_forecast_sync(lat, lon)
+    daily = forecast.daily
+    notes: list[str] = []
+    history_source: str | None = None
+
+    timezone_name = forecast.meta.timezone
+    zone = ZoneInfo(timezone_name)
+    forecast_start_local = daily["date"].min().tz_convert(zone).date()
+    today_local = pd.Timestamp.now(tz=zone).date()
+
+    if season_start is not None and season_start < forecast_start_local:
+        earliest_allowed = today_local - timedelta(days=MAX_SEASON_HISTORY_DAYS)
+        history_start = max(season_start, earliest_allowed)
+        history_end = forecast_start_local - timedelta(days=1)
+        if history_start > season_start:
+            notes.append(
+                "начало сезона старше поддерживаемого оперативного окна; "
+                f"реанализ ограничен {MAX_SEASON_HISTORY_DAYS} сутками"
+            )
+        if history_start <= history_end:
+            try:
+                history = _fetch_history_sync(
+                    lat,
+                    lon,
+                    history_start,
+                    history_end,
+                    timezone_name,
+                )
+                daily = _merge_daily(history, daily, timezone_name)
+                history_source = _HISTORY_SOURCE
+            except Exception as exc:
+                logger.warning(
+                    "Season history unavailable for %.5f, %.5f: %s",
+                    lat,
+                    lon,
+                    exc,
+                )
+                notes.append("сезонный реанализ недоступен; использовано короткое окно прогноза")
+
+    actual_start = daily["date"].min().tz_convert(zone).date() if not daily.empty else None
+    actual_end = daily["date"].max().tz_convert(zone).date() if not daily.empty else None
+    season_complete = bool(
+        season_start is not None
+        and actual_start is not None
+        and actual_start <= season_start
+    )
+    if season_start is not None and not season_complete:
+        notes.append("ряд не покрывает дату начала сезона; ГДД будут показаны только за доступный период")
+
+    return AgroWeatherData(
+        meta=forecast.meta,
+        daily=daily,
+        hourly=forecast.hourly,
+        past_days=PAST_DAYS,
+        forecast_days=FORECAST_DAYS,
+        coverage=WeatherCoverage(
+            requested_season_start=season_start,
+            actual_start=actual_start,
+            actual_end=actual_end,
+            season_coverage_complete=season_complete,
+            history_source=history_source,
+            notes=tuple(dict.fromkeys(notes)),
+        ),
+    )
+
+
+def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -107,16 +212,16 @@ def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
         "timezone": "auto",
     }
 
-    responses = _get_client().weather_api(OM_URL, params=params)
+    responses = _get_client().weather_api(FORECAST_URL, params=params)
     if not responses:
         raise OpenMeteoError("Provider returned an empty response list")
     response = responses[0]
-
     hourly = response.Hourly()
     daily = response.Daily()
     if hourly is None or daily is None:
         raise OpenMeteoError("Provider response does not contain hourly/daily blocks")
 
+    timezone_name = _timezone_name(response.Timezone())
     dates_h = pd.date_range(
         start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
         end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
@@ -139,6 +244,7 @@ def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
         freq=pd.Timedelta(seconds=daily.Interval()),
         inclusive="left",
     )
+    now = pd.Timestamp.now(tz="UTC")
     df_daily = pd.DataFrame(
         {
             "date": dates_d,
@@ -150,6 +256,11 @@ def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
             "wind_max": daily.Variables(5).ValuesAsNumpy(),
         }
     )
+    df_daily["data_kind"] = [
+        "forecast" if timestamp > now else "operational_past"
+        for timestamp in df_daily["date"]
+    ]
+    df_daily["data_source"] = "Open-Meteo Forecast API"
 
     required_daily = {"date", "t_max", "t_min", "t_mean", "precip_sum", "et0_sum"}
     if df_daily.empty or not required_daily.issubset(df_daily.columns):
@@ -160,13 +271,143 @@ def _fetch_sync(lat: float, lon: float) -> AgroWeatherData:
         longitude=float(response.Longitude()),
         elevation_m=float(response.Elevation()),
         utc_offset_seconds=int(response.UtcOffsetSeconds()),
-        timezone=str(response.Timezone() or "auto"),
+        timezone=timezone_name,
+        source="Open-Meteo Forecast API",
     )
     logger.info(
-        "Open-Meteo OK: %.3f %.3f, elevation %.0f m, %s",
+        "Open-Meteo forecast OK: %.3f %.3f, elevation %.0f m, %s",
         meta.latitude,
         meta.longitude,
         meta.elevation_m,
         meta.timezone,
     )
-    return AgroWeatherData(meta=meta, daily=df_daily, hourly=df_hourly)
+    coverage = WeatherCoverage(
+        actual_start=df_daily["date"].min().tz_convert(ZoneInfo(timezone_name)).date(),
+        actual_end=df_daily["date"].max().tz_convert(ZoneInfo(timezone_name)).date(),
+    )
+    return AgroWeatherData(
+        meta=meta,
+        daily=df_daily,
+        hourly=df_hourly,
+        past_days=PAST_DAYS,
+        forecast_days=FORECAST_DAYS,
+        coverage=coverage,
+    )
+
+
+def _fetch_history_sync(
+    lat: float,
+    lon: float,
+    start_date: date,
+    end_date: date,
+    timezone_name: str,
+) -> pd.DataFrame:
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "daily": ",".join(
+            [
+                "temperature_2m_max",
+                "temperature_2m_min",
+                "temperature_2m_mean",
+                "precipitation_sum",
+                "et0_fao_evapotranspiration",
+                "wind_speed_10m_max",
+            ]
+        ),
+        "timezone": timezone_name,
+        "cell_selection": "land",
+    }
+    response = _get_http_session().get(
+        ARCHIVE_URL,
+        params=params,
+        timeout=(5, 45),
+        expire_after=24 * 60 * 60,
+    )
+    response.raise_for_status()
+    return _parse_history_payload(response.json(), timezone_name=timezone_name)
+
+
+def _daily_values(daily: dict[str, Any], name: str, length: int) -> list[Any]:
+    values = daily.get(name)
+    if values is None:
+        return [float("nan")] * length
+    if len(values) != length:
+        raise OpenMeteoError(f"Historical variable {name} has an invalid length")
+    return values
+
+
+def _parse_history_payload(
+    payload: dict[str, Any],
+    *,
+    timezone_name: str,
+) -> pd.DataFrame:
+    if payload.get("error"):
+        raise OpenMeteoError(str(payload.get("reason") or "Historical API error"))
+    daily = payload.get("daily")
+    if not isinstance(daily, dict) or not daily.get("time"):
+        raise OpenMeteoError("Historical response does not contain daily data")
+
+    resolved_timezone = _timezone_name(payload.get("timezone") or timezone_name)
+    local_dates = pd.DatetimeIndex(pd.to_datetime(daily["time"]))
+    if local_dates.tz is None:
+        local_dates = local_dates.tz_localize(
+            ZoneInfo(resolved_timezone),
+            ambiguous=False,
+            nonexistent="shift_forward",
+        )
+    dates_utc = local_dates.tz_convert("UTC")
+    length = len(dates_utc)
+    t_max = _daily_values(daily, "temperature_2m_max", length)
+    t_min = _daily_values(daily, "temperature_2m_min", length)
+    t_mean = _daily_values(daily, "temperature_2m_mean", length)
+    frame = pd.DataFrame(
+        {
+            "date": dates_utc,
+            "t_max": t_max,
+            "t_min": t_min,
+            "t_mean": t_mean,
+            "precip_sum": _daily_values(daily, "precipitation_sum", length),
+            "et0_sum": _daily_values(
+                daily,
+                "et0_fao_evapotranspiration",
+                length,
+            ),
+            "wind_max": _daily_values(daily, "wind_speed_10m_max", length),
+            "data_kind": ["reanalysis"] * length,
+            "data_source": [_HISTORY_SOURCE] * length,
+        }
+    )
+    missing_mean = frame["t_mean"].isna()
+    frame.loc[missing_mean, "t_mean"] = (
+        frame.loc[missing_mean, "t_max"] + frame.loc[missing_mean, "t_min"]
+    ) / 2.0
+    if frame[["t_max", "t_min", "t_mean"]].dropna().empty:
+        raise OpenMeteoError("Historical response contains no valid temperature data")
+    return frame.sort_values("date").reset_index(drop=True)
+
+
+def _merge_daily(
+    history: pd.DataFrame,
+    operational: pd.DataFrame,
+    timezone_name: str,
+) -> pd.DataFrame:
+    if history.empty:
+        return operational.copy()
+    zone = ZoneInfo(timezone_name)
+    left = history.copy()
+    right = operational.copy()
+    left["_priority"] = 0
+    right["_priority"] = 1
+    combined = pd.concat([left, right], ignore_index=True, sort=False)
+    combined["date"] = pd.to_datetime(combined["date"], utc=True)
+    combined["_local_day"] = combined["date"].dt.tz_convert(zone).dt.date
+    combined = combined.sort_values(["_local_day", "_priority"])
+    combined = combined.drop_duplicates("_local_day", keep="last")
+    return (
+        combined.drop(columns=["_priority", "_local_day"])
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
