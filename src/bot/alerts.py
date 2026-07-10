@@ -1,67 +1,37 @@
-"""
-Форматирование алертов и дедупликация.
-Хранение sent_alert хэшей в памяти (MVP) или Redis (продакшн).
-"""
+from __future__ import annotations
+
 import asyncio
-import logging
 from datetime import datetime, timedelta
-from typing import Dict, Tuple
 
-logger = logging.getLogger(__name__)
-
-# In-memory store: {key: expiry_datetime}
-# Для продакшна заменить на Redis: await redis.setex(key, ttl, "1")
-_sent_alerts: Dict[str, datetime] = {}
+_sent_alerts: dict[str, datetime] = {}
 _lock = asyncio.Lock()
 
 
 async def should_send_alert(key: str) -> bool:
-    """True если алерт с таким ключом ещё не отправлялся."""
     async with _lock:
         expiry = _sent_alerts.get(key)
-        if expiry is None or datetime.now() > expiry:
-            return True
-        return False
+        return expiry is None or datetime.utcnow() > expiry
 
 
-async def mark_alert_sent(key: str, ttl_hours: int = 20):
-    """Отметить алерт как отправленный на ttl_hours часов."""
+async def mark_alert_sent(key: str, ttl_hours: int = 20) -> None:
     async with _lock:
-        _sent_alerts[key] = datetime.now() + timedelta(hours=ttl_hours)
-        # Очистка устаревших ключей
-        now = datetime.now()
-        expired = [k for k, v in _sent_alerts.items() if v < now]
-        for k in expired:
-            del _sent_alerts[k]
+        now = datetime.utcnow()
+        _sent_alerts[key] = now + timedelta(hours=ttl_hours)
+        expired = [stored_key for stored_key, expiry in _sent_alerts.items() if expiry < now]
+        for stored_key in expired:
+            _sent_alerts.pop(stored_key, None)
 
 
-def format_frost_alert(frost: dict, crop: str = None) -> str:
-    """
-    Форматирует алерт заморозка для Telegram (HTML).
-    
-    frost = {
-        "min_temp": -2.5,
-        "event_date": "2026-04-15",
-        "lead_hours": 36,
-        "probability": 78,
-    }
-    """
-    temp = frost.get("min_temp", "?")
-    date = frost.get("event_date", "?")
-    lead = frost.get("lead_hours", 0)
-    prob = frost.get("probability", "?")
-    
+def format_frost_alert(event: dict, crop: str | None = None) -> str:
     crop_line = f"\n🌾 Культура: <b>{crop}</b>" if crop else ""
-    
+    level = "критический" if event.get("level") == "critical" else "предупредительный"
     return (
-        f"🌡 <b>ПРЕДУПРЕЖДЕНИЕ О ЗАМОРОЗКЕ</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"📅 Дата: <b>{date}</b>\n"
-        f"🌡 Мин. температура: <b>{temp}°C</b>\n"
-        f"⏱ До события: <b>{lead} часов</b>\n"
-        f"📊 Вероятность: <b>{prob}%</b>"
-        f"{crop_line}\n"
-        f"━━━━━━━━━━━━━━━━━━━\n"
-        f"⚠️ <b>Рекомендация:</b> Примите меры по защите посевов.\n"
-        f"📡 Источник: Open-Meteo | Обновлено: {datetime.now():%H:%M}"
+        "🌡 <b>Температурный риск для поля</b>\n"
+        f"📅 Локальное время модели: <b>{event.get('date_local', '?')}</b>\n"
+        f"🌡 Прогноз Tmin воздуха: <b>{event.get('t_min', '?')}°C</b>\n"
+        f"⏱ Заблаговременность: <b>около {event.get('lead_hours', 0)} ч</b>\n"
+        f"⚠️ Уровень: <b>{level}</b>"
+        f"{crop_line}\n\n"
+        "Это скрининг по температуре воздуха на высоте 2 м, а не измерение температуры растений. "
+        "Проверьте локальный прогноз, фазу культуры и микрорельеф перед решением о защитных мерах."
     )
