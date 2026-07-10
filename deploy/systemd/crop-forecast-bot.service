@@ -1,0 +1,37 @@
+[Unit]
+Description=Crop Forecast Telegram Bot (aiogram)
+Documentation=https://github.com/f2re/crop_forecast_bot
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+ExecStartPre=@APP_DIR@/.venv/bin/python -m src.ops.doctor --runtime
+ExecStart=@APP_DIR@/.venv/bin/python -m src.bot.main
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+
+NoNewPrivileges=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=@APP_DIR@/data @APP_DIR@/logs /tmp/crop_forecast_bot
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=crop-forecast-bot
+
+[Install]
+WantedBy=multi-user.target
