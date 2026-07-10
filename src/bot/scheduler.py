@@ -108,7 +108,6 @@ async def _send_once(
         except Exception:
             logger.exception("Failed to release notification reservation %s", key)
         raise
-
     if not await coordination.renew(lease, committed_ttl_seconds):
         logger.error(
             "Notification was sent but its deduplication lease was not persisted: %s",
@@ -152,10 +151,13 @@ async def check_frost_alerts(
                 risk = calc_frost_risk(
                     weather.daily,
                     utc_offset_seconds=weather.meta.utc_offset_seconds,
+                    crop=target.selected_crop,
+                    phase=target.phenological_phase,
+                    elevation_m=weather.meta.elevation_m,
                 )
                 for event in risk["alerts"]:
                     alert_key = (
-                        f"notification:frost:{target.telegram_id}:"
+                        f"notification:frost:{target.telegram_id}:{target.field_id}:"
                         f"{event['event_date']}:{event['level']}"
                     )
 
@@ -165,7 +167,12 @@ async def check_frost_alerts(
                     ) -> object:
                         return await bot.send_message(
                             target.telegram_id,
-                            format_frost_alert(event, target.selected_crop),
+                            format_frost_alert(
+                                event,
+                                target.selected_crop,
+                                phase=target.phenological_phase,
+                                field_name=target.field_name,
+                            ),
                         )
 
                     await _send_once(
@@ -204,12 +211,18 @@ async def send_daily_digest(
             if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
                 logger.error("Daily digest lost its distributed lock; aborting")
                 return
-            digest_key = f"notification:digest:{target.telegram_id}:{local_date}"
+            digest_key = (
+                f"notification:digest:{target.telegram_id}:"
+                f"{target.field_id}:{local_date}"
+            )
             try:
                 report = await generate_agro_report(
                     target.latitude,
                     target.longitude,
                     target.selected_crop,
+                    season_start_date=target.season_start_date,
+                    phenological_phase=target.phenological_phase,
+                    field_name=target.field_name,
                 )
 
                 async def send(
