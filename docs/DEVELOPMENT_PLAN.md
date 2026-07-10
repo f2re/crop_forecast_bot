@@ -23,7 +23,8 @@ Telegram
 - PostgreSQL — source of truth, Redis — FSM/cache/locks;
 - любой fallback виден пользователю и не повышает заявленную точность;
 - формулы имеют источник, единицы, период применимости и тесты;
-- релиз принимается только после CI и container smoke test.
+- production разворачивается нативно bash-скриптами и управляется systemd;
+- релиз принимается только после CI и clean-host smoke test установки, обновления и rollback.
 
 ## Этап 0 — аварийная стабилизация runtime
 
@@ -38,12 +39,15 @@ Telegram
 - [x] согласовать frost result и formatter;
 - [x] добавить startup/shutdown БД, bot session, storage, scheduler;
 - [x] добавить Redis FSM fallback policy;
-- [x] заменить фиктивный healthcheck heartbeat-проверкой;
-- [x] обновить Docker/Compose/.env;
-- [x] добавить deploy/update/systemd scripts;
+- [x] добавить heartbeat и systemd watchdog;
+- [x] добавить native deploy/update/rollback/status scripts;
+- [x] добавить atomic release directories и PostgreSQL backup перед update;
+- [x] добавить hardened systemd service и optional update timer;
+- [x] удалить альтернативные deployment-контуры;
+- [x] синхронизировать `.env.example`, README и эксплуатационный runbook;
 - [x] добавить первый CI и unit tests.
 
-Критерий готовности: основной Telegram путь работает из aiogram entrypoint; CI зелёный; Docker image собирается.
+Критерий готовности: основной Telegram путь работает из aiogram entrypoint; CI зелёный; systemd readiness/heartbeat подтверждены на чистом хосте.
 
 ## Этап 1 — миграции и надёжность состояния
 
@@ -62,7 +66,7 @@ Telegram
 - [ ] перенести alert deduplication в Redis `SET NX EX`;
 - [ ] добавить distributed scheduler lock;
 - [ ] обработать restart во время FSM;
-- [ ] интеграционные тесты PostgreSQL/Redis через testcontainers.
+- [ ] интеграционные тесты PostgreSQL/Redis в изолированной тестовой среде.
 
 Критерий готовности: рестарт процесса не теряет пользовательский прогресс и не дублирует уведомления.
 
@@ -148,7 +152,7 @@ Telegram
 Приоритет: P1/P2.
 
 - [ ] lazy RAG initialization;
-- [ ] optional deployment profile for heavy embeddings;
+- [ ] optional dependency profile for heavy embeddings;
 - [ ] document metadata, version, page and citation validation;
 - [ ] no agronomic dose or pesticide recommendation without a normative source and context;
 - [ ] prompt-injection resistance and source-only mode;
@@ -162,17 +166,20 @@ Telegram
 Приоритет: P1.
 
 - [ ] generate and commit `uv.lock` after target-platform resolution;
-- [ ] multi-profile dependencies: core, climate, satellite, rag, dev;
-- [ ] Alembic migration in deploy/update scripts;
-- [ ] Compose smoke test with mocked Telegram endpoint;
-- [ ] backup/restore runbook for PostgreSQL and Redis;
+- [ ] dependency profiles: core, climate, satellite, rag, dev;
+- [ ] Alembic migration as mandatory step in deploy/update scripts;
+- [ ] clean-host smoke test for `deploy.sh` on Debian 12;
+- [ ] automated test of atomic update and failed-start rollback;
+- [ ] backup/restore runbook with periodic restore verification;
+- [ ] validate systemd watchdog by intentionally blocking the event loop in a test service;
 - [ ] JSON logging, request correlation ID and error metrics;
-- [ ] Prometheus/OpenTelemetry or a minimal health/metrics endpoint;
+- [ ] Prometheus/OpenTelemetry or a minimal local metrics endpoint;
 - [ ] release tags and changelog;
-- [ ] rollback command that restores code and verifies schema compatibility;
-- [ ] test on Debian 12 and Astra Linux 1.7.
+- [ ] signed or otherwise verified release source policy;
+- [ ] test on Debian 12 and Astra Linux 1.7;
+- [ ] define support policy for external PostgreSQL/Redis endpoints.
 
-Критерий готовности: a clean host can be installed, updated and rolled back using documented commands without manual code edits.
+Критерий готовности: clean host can be installed, updated, diagnosed and rolled back using documented bash commands without manual code edits.
 
 ## Definition of Done ближайшего релиза
 
@@ -182,6 +189,6 @@ Telegram
 - Open-Meteo failure has explicit degraded behavior;
 - ГТК/ГДД/ET0/frost are period-correct and scientifically labelled;
 - Alembic migration is mandatory on startup/update;
-- Docker/Compose and systemd startup pass smoke tests;
-- CI has no failing test, type or security checks;
+- native deploy/update/rollback and systemd watchdog pass clean-host tests;
+- CI has no failing test, type, shell or security checks;
 - no telebot, global user state or unsupported accuracy claims remain.
