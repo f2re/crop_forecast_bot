@@ -39,6 +39,26 @@ class OpenMeteoError(WeatherProviderError):
     """Open-Meteo could not return a valid dataset."""
 
 
+class _TimeoutCachedSession(requests_cache.CachedSession):
+    """Cached requests session with a mandatory connect/read timeout."""
+
+    def request(self, method: str, url: str, *args: Any, **kwargs: Any):
+        kwargs.setdefault("timeout", (5, 45))
+        return super().request(method, url, *args, **kwargs)
+
+
+def _classify_local_days(
+    local_days: list[date] | pd.Series,
+    *,
+    today_local: date,
+) -> list[str]:
+    """Classify complete past local days separately from current/future forecast."""
+    return [
+        "operational_past" if local_day < today_local else "forecast"
+        for local_day in local_days
+    ]
+
+
 def _timezone_name(raw_value: Any) -> str:
     if isinstance(raw_value, (bytes, bytearray)):
         value = raw_value.decode("utf-8", errors="replace")
@@ -56,7 +76,7 @@ def _timezone_name(raw_value: Any) -> str:
 def _get_http_session():
     cache_path = get_settings().open_meteo_cache_path
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_session = requests_cache.CachedSession(
+    cache_session = _TimeoutCachedSession(
         str(cache_path),
         expire_after=3600,
     )
@@ -71,6 +91,18 @@ def _get_http_session():
 @lru_cache(maxsize=1)
 def _get_client() -> openmeteo_requests.Client:
     return openmeteo_requests.Client(session=_get_http_session())
+
+
+def _close_resources_sync() -> None:
+    if _get_http_session.cache_info().currsize:
+        _get_http_session().close()
+    _get_client.cache_clear()
+    _get_http_session.cache_clear()
+
+
+async def close_open_meteo_resources() -> None:
+    """Close the cached synchronous HTTP session during application shutdown."""
+    await asyncio.to_thread(_close_resources_sync)
 
 
 class OpenMeteoProvider(WeatherProvider):
@@ -130,7 +162,7 @@ def _fetch_sync(
 
     timezone_name = forecast.meta.timezone
     zone = ZoneInfo(timezone_name)
-    forecast_start_local = daily["date"].min().tz_convert(zone).date()
+    forecast_start_local = min(daily["local_date"])
     today_local = pd.Timestamp.now(tz=zone).date()
 
     if season_start is not None and season_start < forecast_start_local:
@@ -160,17 +192,22 @@ def _fetch_sync(
                     lon,
                     exc,
                 )
-                notes.append("сезонный реанализ недоступен; использовано короткое окно прогноза")
+                notes.append(
+                    "сезонный реанализ недоступен; использовано короткое окно прогноза"
+                )
 
-    actual_start = daily["date"].min().tz_convert(zone).date() if not daily.empty else None
-    actual_end = daily["date"].max().tz_convert(zone).date() if not daily.empty else None
+    actual_start = min(daily["local_date"]) if not daily.empty else None
+    actual_end = max(daily["local_date"]) if not daily.empty else None
     season_complete = bool(
         season_start is not None
         and actual_start is not None
         and actual_start <= season_start
     )
     if season_start is not None and not season_complete:
-        notes.append("ряд не покрывает дату начала сезона; ГДД будут показаны только за доступный период")
+        notes.append(
+            "ряд не покрывает дату начала сезона; ГДД будут показаны только "
+            "за доступный период"
+        )
 
     return AgroWeatherData(
         meta=forecast.meta,
@@ -244,7 +281,6 @@ def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
         freq=pd.Timedelta(seconds=daily.Interval()),
         inclusive="left",
     )
-    now = pd.Timestamp.now(tz="UTC")
     df_daily = pd.DataFrame(
         {
             "date": dates_d,
@@ -256,10 +292,13 @@ def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
             "wind_max": daily.Variables(5).ValuesAsNumpy(),
         }
     )
-    df_daily["data_kind"] = [
-        "forecast" if timestamp > now else "operational_past"
-        for timestamp in df_daily["date"]
-    ]
+    zone = ZoneInfo(timezone_name)
+    df_daily["local_date"] = df_daily["date"].dt.tz_convert(zone).dt.date
+    today_local = pd.Timestamp.now(tz=zone).date()
+    df_daily["data_kind"] = _classify_local_days(
+        df_daily["local_date"].tolist(),
+        today_local=today_local,
+    )
     df_daily["data_source"] = "Open-Meteo Forecast API"
 
     required_daily = {"date", "t_max", "t_min", "t_mean", "precip_sum", "et0_sum"}
@@ -282,8 +321,8 @@ def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
         meta.timezone,
     )
     coverage = WeatherCoverage(
-        actual_start=df_daily["date"].min().tz_convert(ZoneInfo(timezone_name)).date(),
-        actual_end=df_daily["date"].max().tz_convert(ZoneInfo(timezone_name)).date(),
+        actual_start=min(df_daily["local_date"]),
+        actual_end=max(df_daily["local_date"]),
     )
     return AgroWeatherData(
         meta=meta,
@@ -366,6 +405,7 @@ def _parse_history_payload(
     frame = pd.DataFrame(
         {
             "date": dates_utc,
+            "local_date": list(local_dates.date),
             "t_max": t_max,
             "t_min": t_min,
             "t_mean": t_mean,
@@ -403,11 +443,17 @@ def _merge_daily(
     right["_priority"] = 1
     combined = pd.concat([left, right], ignore_index=True, sort=False)
     combined["date"] = pd.to_datetime(combined["date"], utc=True)
-    combined["_local_day"] = combined["date"].dt.tz_convert(zone).dt.date
-    combined = combined.sort_values(["_local_day", "_priority"])
-    combined = combined.drop_duplicates("_local_day", keep="last")
+    if "local_date" not in combined.columns:
+        combined["local_date"] = combined["date"].dt.tz_convert(zone).dt.date
+    else:
+        missing_local = combined["local_date"].isna()
+        combined.loc[missing_local, "local_date"] = (
+            combined.loc[missing_local, "date"].dt.tz_convert(zone).dt.date
+        )
+    combined = combined.sort_values(["local_date", "_priority"])
+    combined = combined.drop_duplicates("local_date", keep="last")
     return (
-        combined.drop(columns=["_priority", "_local_day"])
+        combined.drop(columns=["_priority"])
         .sort_values("date")
         .reset_index(drop=True)
     )
