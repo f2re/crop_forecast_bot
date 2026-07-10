@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck
+          python -m pip install --upgrade pip
+          pip install \
+            pytest pytest-asyncio ruff \
+            pandas numpy python-dotenv \
+            aiogram redis SQLAlchemy asyncpg APScheduler \
+            openmeteo-requests requests-cache retry-requests
+
+      - name: Python static checks
+        run: |
+          ruff check \
+            config/settings.py \
+            src/domain \
+            src/application \
+            src/agro/indices.py \
+            src/api/open_meteo.py \
+            src/bot/main.py \
+            src/bot/handlers \
+            src/bot/keyboards.py \
+            src/bot/scheduler.py \
+            src/ops \
+            tests
+          python -m compileall -q config src tests
+
+      - name: Native deployment checks
+        run: |
+          bash -n scripts/*.sh
+          shellcheck -x \
+            scripts/deploy.sh \
+            scripts/update.sh \
+            scripts/rollback.sh \
+            scripts/status.sh \
+            scripts/install-systemd.sh
+          test ! -e Dockerfile
+          test ! -e docker-compose.yml
+          test ! -e .env.docker.example
+
+      - name: Unit tests
+        run: python -m pytest -q

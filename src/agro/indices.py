@@ -1,288 +1,270 @@
-"""
-Агрометеорологические индексы.
+"""Scientifically bounded agrometeorological indicators.
 
-Источники:
-  - ГТК: Селянинов Г.Т. (1937), шкала Д.И. Шашко
-  - ГДД: McMaster & Wilhelm (1997), Agric. For. Meteorol.
-  - ЕТ0: FAO Irrigation and Drainage Paper No. 56 (Allen et al. 1998)
-  - Заморозки: ГОСТ Р 58596-2019, WMO-No.8 (2018)
+Sources:
+- Selyaninov hydrothermal coefficient: Selyaninov (1937).
+- Growing degree days: McMaster & Wilhelm (1997), Agric. For. Meteorol.
+- Reference evapotranspiration source: Open-Meteo ET0 variable based on FAO-56.
 
-Все функции принимают df_daily из src.api.open_meteo.fetch_agro_data().
+The module does not infer yield.  Phenology is not inferred unless a season start
+is supplied and the dataset actually covers that period.
 """
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# ── Базовые температуры для ГДД (°C) ────────────────────────────────────────
 GDD_BASE: dict[str, float] = {
-    "wheat":      5.0,
-    "barley":     5.0,
-    "corn":      10.0,
+    "wheat": 5.0,
+    "barley": 5.0,
+    "corn": 10.0,
     "sunflower": 10.0,
-    "soy":       10.0,
-    "rapeseed":   5.0,
-    "potato":     7.0,
+    "soy": 10.0,
+    "rapeseed": 5.0,
+    "potato": 7.0,
     "sugar_beet": 5.0,
 }
 
-# ── Пороги ГДД для ключевых фенофаз (накопление с начала сезона) ────────────
 GDD_PHENOLOGY: dict[str, dict[str, int]] = {
-    "wheat":     {"посев": 0, "кущение": 150, "колошение": 600, "молочная спелость": 900, "уборка": 1200},
-    "corn":      {"посев": 0, "всходы": 100, "6-й лист": 400, "цветение": 800, "уборка": 1800},
-    "sunflower": {"посев": 0, "всходы": 80,  "бутонизация": 400, "цветение": 700, "уборка": 1400},
-    "barley":    {"посев": 0, "кущение": 120, "колошение": 550, "уборка": 1100},
-    "soy":       {"посев": 0, "всходы": 80,  "цветение": 600, "уборка": 1400},
-    "rapeseed":  {"посев": 0, "розетка": 100, "цветение": 400, "уборка": 900},
-    "potato":    {"посев": 0, "всходы": 120, "бутонизация": 400, "уборка": 900},
-    "sugar_beet":{"посев": 0, "всходы": 100, "смыкание": 500, "уборка": 1300},
+    "wheat": {"посев": 0, "кущение": 150, "колошение": 600, "молочная спелость": 900, "уборка": 1200},
+    "corn": {"посев": 0, "всходы": 100, "6-й лист": 400, "цветение": 800, "уборка": 1800},
+    "sunflower": {"посев": 0, "всходы": 80, "бутонизация": 400, "цветение": 700, "уборка": 1400},
+    "barley": {"посев": 0, "кущение": 120, "колошение": 550, "уборка": 1100},
+    "soy": {"посев": 0, "всходы": 80, "цветение": 600, "уборка": 1400},
+    "rapeseed": {"посев": 0, "розетка": 100, "цветение": 400, "уборка": 900},
+    "potato": {"посев": 0, "всходы": 120, "бутонизация": 400, "уборка": 900},
+    "sugar_beet": {"посев": 0, "всходы": 100, "смыкание": 500, "уборка": 1300},
 }
 
-# ── Заморозковые пороги ──────────────────────────────────────────────────────
-FROST_WARNING_T  = 2.0   # °C — подготовиться
-FROST_CRITICAL_T = 0.0   # °C — действовать немедленно
+FROST_WARNING_T = 2.0
+FROST_CRITICAL_T = 0.0
 
 
-def calc_htc(df_daily: pd.DataFrame, window_days: int = 30) -> dict:
-    """
-    Гидротермический коэффициент Селянинова (ГТК) за последние window_days суток.
+def _now_utc() -> pd.Timestamp:
+    return pd.Timestamp.now(tz="UTC")
 
-    K = 10 * ΣR / ΣT,  где T — суточные среднесуточные T > 10 °C.
 
-    Шкала Д.И. Шашко:
-      < 0.5  — засуха
-      0.5–1.0 — полузасушливо
-      1.0–1.5 — умеренное увлажнение
-      > 1.5  — достаточное увлажнение
-    """
-    now = pd.Timestamp.now(tz="UTC")
-    mask = (
+def _require_columns(df: pd.DataFrame, columns: set[str]) -> None:
+    missing = columns.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing weather columns: {', '.join(sorted(missing))}")
+
+
+def calc_htc(
+    df_daily: pd.DataFrame,
+    window_days: int = 30,
+    min_valid_days: int = 20,
+) -> dict:
+    """Calculate HTC only when a sufficiently long warm-period window exists."""
+    _require_columns(df_daily, {"date", "t_mean", "precip_sum"})
+    now = _now_utc()
+    df = df_daily[
         (df_daily["date"] <= now)
         & (df_daily["date"] >= now - pd.Timedelta(days=window_days))
-    )
-    df = df_daily[mask].copy()
+    ][["date", "t_mean", "precip_sum"]].dropna()
+    warm = df[df["t_mean"] > 10.0]
+    available_days = int(len(warm))
+    sum_precip = float(warm["precip_sum"].clip(lower=0).sum())
+    sum_t = float(warm["t_mean"].sum())
 
-    sum_precip     = float(df["precip_sum"].clip(lower=0).sum())
-    sum_t_above10  = float(df.loc[df["t_mean"] > 10, "t_mean"].sum())
-
-    if sum_t_above10 == 0:
-        htc_value = None
-        interpretation = "Температура ниже 10°C — вегетационный период не начался"
+    if available_days < min_valid_days:
+        value = None
+        interpretation = (
+            f"недостаточно данных тёплого периода: {available_days} сут., "
+            f"требуется не менее {min_valid_days}"
+        )
+    elif sum_t <= 0:
+        value = None
+        interpretation = "вегетационный период с Tср > 10°C не выделен"
     else:
-        htc_value = round(10 * sum_precip / sum_t_above10, 3)
-        if htc_value < 0.5:
-            interpretation = "🔴 Засуха (ГТК < 0.5)"
-        elif htc_value < 1.0:
-            interpretation = "🟡 Полузасушливо (ГТК 0.5–1.0)"
-        elif htc_value < 1.5:
-            interpretation = "🟢 Умеренное увлажнение (ГТК 1.0–1.5)"
+        value = round(10.0 * sum_precip / sum_t, 3)
+        if value < 0.5:
+            interpretation = "засушливые условия"
+        elif value < 1.0:
+            interpretation = "недостаточное увлажнение"
+        elif value < 1.5:
+            interpretation = "умеренное увлажнение"
         else:
-            interpretation = "🔵 Достаточное увлажнение (ГТК > 1.5)"
+            interpretation = "повышенное увлажнение"
 
-    logger.info(f"ГТК ({window_days}д): {htc_value} → {interpretation}")
     return {
-        "htc":             htc_value,
-        "sum_precip_mm":   round(sum_precip, 1),
-        "sum_t_above10":   round(sum_t_above10, 1),
-        "window_days":     window_days,
-        "interpretation":  interpretation,
+        "htc": value,
+        "sum_precip_mm": round(sum_precip, 1),
+        "sum_t_above10": round(sum_t, 1),
+        "window_days": window_days,
+        "available_days": available_days,
+        "min_valid_days": min_valid_days,
+        "interpretation": interpretation,
     }
 
 
-def calc_gdd(df_daily: pd.DataFrame, crop: str = "wheat") -> dict:
-    """
-    Накопленные градусо-дни роста (ГДД) по методу McMaster & Wilhelm (1997).
-
-    GDD_day = max(0, (T_max + T_min) / 2 − T_base)
-
-    Разбивка: факт (past_days) и прогноз (+7 сут).
-    Оценка текущей фенофазы по накопленным ГДД.
-    """
+def calc_gdd(
+    df_daily: pd.DataFrame,
+    crop: str = "wheat",
+    season_start: pd.Timestamp | None = None,
+) -> dict:
+    """Calculate GDD for the explicitly available period or a supplied season."""
+    _require_columns(df_daily, {"date", "t_max", "t_min"})
     t_base = GDD_BASE.get(crop, 5.0)
-    df = df_daily.copy()
-    df["gdd_day"] = ((df["t_max"] + df["t_min"]) / 2 - t_base).clip(lower=0)
+    now = _now_utc()
+    df = df_daily[["date", "t_max", "t_min"]].dropna().copy()
 
-    now        = pd.Timestamp.now(tz="UTC")
-    past_mask  = df["date"] <= now
-    past_gdd   = round(float(df.loc[past_mask,  "gdd_day"].sum()), 1)
-    fore_gdd   = round(float(df.loc[~past_mask, "gdd_day"].sum()), 1)
+    if season_start is not None:
+        season_start = pd.Timestamp(season_start)
+        if season_start.tzinfo is None:
+            season_start = season_start.tz_localize("UTC")
+        else:
+            season_start = season_start.tz_convert("UTC")
+        df = df[df["date"] >= season_start]
 
-    phenology = GDD_PHENOLOGY.get(crop, {})
-    phase = "начало сезона"
-    next_phase = None
-    if phenology:
-        phases = list(phenology.items())
-        for i, (phase_name, threshold) in enumerate(phases):
+    df["gdd_day"] = ((df["t_max"] + df["t_min"]) / 2.0 - t_base).clip(lower=0)
+    past_gdd = round(float(df.loc[df["date"] <= now, "gdd_day"].sum()), 1)
+    forecast_gdd = round(float(df.loc[df["date"] > now, "gdd_day"].sum()), 1)
+
+    phase: str | None = None
+    next_phase: dict | None = None
+    period_is_season = season_start is not None and (
+        df.empty or df["date"].min() <= season_start + pd.Timedelta(days=1)
+    )
+    if period_is_season:
+        phases = list(GDD_PHENOLOGY.get(crop, {}).items())
+        for index, (name, threshold) in enumerate(phases):
             if past_gdd >= threshold:
-                phase = phase_name
-                if i + 1 < len(phases):
-                    nxt_name, nxt_thresh = phases[i + 1]
+                phase = name
+                if index + 1 < len(phases):
+                    next_name, next_threshold = phases[index + 1]
                     next_phase = {
-                        "name": nxt_name,
-                        "gdd_needed": round(nxt_thresh - past_gdd, 1),
+                        "name": next_name,
+                        "gdd_needed": max(0.0, round(next_threshold - past_gdd, 1)),
                     }
 
-    logger.info(
-        f"ГДД ({crop}, Tbase={t_base}°C): "
-        f"факт={past_gdd}, прогноз+7д={fore_gdd}, фаза={phase}"
-    )
     return {
-        "crop":                    crop,
-        "t_base":                  t_base,
-        "gdd_past":                past_gdd,
-        "gdd_forecast_7d":         fore_gdd,
-        "current_phase":           phase,
-        "next_phase":              next_phase,
-        "phenology_thresholds":    phenology,
+        "crop": crop,
+        "t_base": t_base,
+        "gdd_past": past_gdd,
+        "gdd_forecast_7d": forecast_gdd,
+        "current_phase": phase,
+        "next_phase": next_phase,
+        "period_is_season": period_is_season,
+        "period_start": None if df.empty else df["date"].min().isoformat(),
+        "phenology_thresholds": GDD_PHENOLOGY.get(crop, {}),
     }
 
 
-def calc_frost_risk(df_daily: pd.DataFrame) -> dict:
-    """
-    Риск заморозков на горизонте 7 суток прогноза.
+def calc_frost_risk(
+    df_daily: pd.DataFrame,
+    utc_offset_seconds: int = 0,
+) -> dict:
+    """Screen model air-temperature minima for potential frost conditions."""
+    _require_columns(df_daily, {"date", "t_min"})
+    now = _now_utc()
+    future = df_daily[df_daily["date"] > now][["date", "t_min"]].dropna().copy()
+    alerts: list[dict] = []
+    offset = timedelta(seconds=utc_offset_seconds)
 
-    Уровни:
-      🔴 КРИТИЧЕСКИЙ  — T_min ≤ 0°C  — действовать 0–24ч
-      🟡 ПРЕДУПРЕЖДЕНИЕ — T_min ≤ 2°C — подготовиться 1–7 сут
-
-    KPI: lead_hours ≥ 48 для соответствия стандарту проекта.
-    """
-    now    = pd.Timestamp.now(tz="UTC")
-    future = df_daily[df_daily["date"] > now].copy()
-
-    alerts = []
     for _, row in future.iterrows():
-        t_min      = float(row["t_min"])
-        lead_hours = int((row["date"] - now).total_seconds() / 3600)
-
-        if t_min <= FROST_CRITICAL_T:
-            level  = "🔴 КРИТИЧЕСКИЙ"
-            action = "Защитить посевы — дымовые шашки, укрытие, полив дождеванием"
-        elif t_min <= FROST_WARNING_T:
-            level  = "🟡 ПРЕДУПРЕЖДЕНИЕ"
-            action = "Подготовить укрывной материал и дымовые шашки"
-        else:
+        t_min = float(row["t_min"])
+        if t_min > FROST_WARNING_T:
             continue
+        lead_hours = max(0, int((row["date"] - now).total_seconds() // 3600))
+        local_date = row["date"] + offset
+        level = "critical" if t_min <= FROST_CRITICAL_T else "warning"
+        alerts.append(
+            {
+                "date": row["date"].strftime("%d.%m %H:%M UTC"),
+                "date_local": local_date.strftime("%d.%m %H:%M"),
+                "event_date": local_date.strftime("%Y-%m-%d"),
+                "t_min": round(t_min, 1),
+                "min_temp": round(t_min, 1),
+                "lead_hours": lead_hours,
+                "level": level,
+                "action": "уточнить локальный прогноз и оценить защитные меры по фазе культуры",
+            }
+        )
 
-        alerts.append({
-            "date":       row["date"].strftime("%d.%m %H:00 UTC"),
-            "t_min":      round(t_min, 1),
-            "lead_hours": lead_hours,
-            "level":      level,
-            "action":     action,
-        })
-
-    meets_kpi = all(a["lead_hours"] >= 48 for a in alerts)
-    logger.info(f"Заморозки: алертов={len(alerts)}, KPI_48h={meets_kpi}")
     return {
-        "alerts":             alerts,
-        "frost_free_days_7d": int(len(future) - len({a["date"] for a in alerts})),
-        "kpi_lead_time_ok":   meets_kpi,
+        "alerts": alerts,
+        "frost_free_days_7d": max(0, int(len(future) - len(alerts))),
+        "forecast_contains_48h": bool(len(future) >= 2),
+        "method_note": "скрининг по прогнозной Tmin воздуха на высоте 2 м",
     }
 
 
 def calc_et0_balance(df_daily: pd.DataFrame, window_days: int = 7) -> dict:
-    """
-    Декадный баланс влаги: ΣP − ΣET0 (FAO-56) за последние window_days суток.
-
-    > 0  — профицит, полив не нужен
-    < 0  — дефицит, возможен водный стресс
-    < -30 — критический дефицит, полив необходим
-    """
-    now  = pd.Timestamp.now(tz="UTC")
-    mask = (
+    """Calculate precipitation minus provider ET0 for the completed past window."""
+    _require_columns(df_daily, {"date", "precip_sum", "et0_sum"})
+    now = _now_utc()
+    df = df_daily[
         (df_daily["date"] <= now)
         & (df_daily["date"] >= now - pd.Timedelta(days=window_days))
-    )
-    df = df_daily[mask].copy()
-
-    precip  = float(df["precip_sum"].clip(lower=0).sum())
-    et0     = float(df["et0_sum"].clip(lower=0).sum())
+    ][["precip_sum", "et0_sum"]].dropna()
+    precip = float(df["precip_sum"].clip(lower=0).sum())
+    et0 = float(df["et0_sum"].clip(lower=0).sum())
     balance = round(precip - et0, 1)
-
     if balance >= 0:
-        status = f"🟢 Профицит +{balance} мм — полив не требуется"
+        status = "профицит по расчётному балансу"
     elif balance >= -30:
-        status = f"🟡 Дефицит {balance} мм — возможен водный стресс"
+        status = "умеренный дефицит по расчётному балансу"
     else:
-        status = f"🔴 Дефицит {balance} мм — полив необходим"
-
-    logger.info(f"ЕТ0-баланс ({window_days}д): P={precip:.1f}, ET0={et0:.1f}, Δ={balance}")
+        status = "выраженный дефицит; требуется проверка влажности почвы"
     return {
         "precip_sum_mm": round(precip, 1),
-        "et0_sum_mm":    round(et0, 1),
-        "balance_mm":    balance,
-        "status":        status,
-        "window_days":   window_days,
+        "et0_sum_mm": round(et0, 1),
+        "balance_mm": balance,
+        "status": status,
+        "window_days": window_days,
+        "et0_source": "Open-Meteo et0_fao_evapotranspiration",
     }
 
 
-def compute_all_indices(df_daily: pd.DataFrame, crop: str = "wheat") -> dict:
-    """
-    Единая точка входа — вычисляет все четыре индекса за один вызов.
-
-    Returns:
-        {
-          'htc':     dict от calc_htc(),
-          'gdd':     dict от calc_gdd(),
-          'frost':   dict от calc_frost_risk(),
-          'et0_bal': dict от calc_et0_balance(),
-        }
-    """
+def compute_all_indices(
+    df_daily: pd.DataFrame,
+    crop: str = "wheat",
+    *,
+    utc_offset_seconds: int = 0,
+    season_start: pd.Timestamp | None = None,
+) -> dict:
     return {
-        "htc":     calc_htc(df_daily),
-        "gdd":     calc_gdd(df_daily, crop),
-        "frost":   calc_frost_risk(df_daily),
+        "htc": calc_htc(df_daily),
+        "gdd": calc_gdd(df_daily, crop, season_start=season_start),
+        "frost": calc_frost_risk(df_daily, utc_offset_seconds=utc_offset_seconds),
         "et0_bal": calc_et0_balance(df_daily),
     }
 
 
-def format_indices_for_rag(indices: dict, crop: str, crop_phase: str = None) -> str:
-    """
-    Форматирует агроиндексы в читаемый текст для передачи в LLM.
-    
-    Args:
-        indices: результат compute_all_indices()
-        crop: название культуры
-        crop_phase: текущая фенологическая фаза (опционально)
-    
-    Returns:
-        Текстовый блок для включения в LLM-промпт
-    """
-    lines = [
-        "=== ТЕКУЩЕЕ СОСТОЯНИЕ ПОЛЯ ===",
-        f"Культура: {crop}",
-    ]
-    
-    # Фаза из GDD если не передана явно
+def format_indices_for_rag(indices: dict, crop: str, crop_phase: str | None = None) -> str:
+    lines = ["=== ОПЕРАТИВНОЕ СОСТОЯНИЕ ПОЛЯ ===", f"Культура: {crop}"]
     phase = crop_phase or indices.get("gdd", {}).get("current_phase")
     if phase:
         lines.append(f"Фенологическая фаза: {phase}")
-    
+    else:
+        lines.append("Фенологическая фаза: не определена без даты начала сезона")
+
     htc_data = indices.get("htc", {})
-    htc = htc_data.get("htc")
-    if htc is not None:
-        lines.append(f"ГТК (30 сут): {htc:.2f} — {htc_data.get('interpretation', '')}")
-    
+    if htc_data.get("htc") is not None:
+        lines.append(
+            f"ГТК: {htc_data['htc']:.2f} — {htc_data.get('interpretation', '')}"
+        )
+    else:
+        lines.append(f"ГТК: не рассчитан — {htc_data.get('interpretation', 'нет данных')}")
+
     gdd_data = indices.get("gdd", {})
-    gdd = gdd_data.get("gdd_past")
-    if gdd is not None:
-        lines.append(f"Накопленные ГДД: {gdd:.0f}°C")
-    
-    frost_data = indices.get("frost", {})
-    alerts = frost_data.get("alerts", [])
+    if gdd_data.get("gdd_past") is not None:
+        lines.append(f"ГДД за доступный период: {gdd_data['gdd_past']:.0f} °C·сут")
+
+    alerts = indices.get("frost", {}).get("alerts", [])
     if alerts:
-        # Берем ближайший
         next_frost = alerts[0]
-        lines.append(f"⚠️ Вероятность заморозка: {next_frost['t_min']}°C на дату {next_frost['date']}")
-    
-    et0_data = indices.get("et0_bal", {})
-    balance = et0_data.get("balance_mm")
+        lines.append(
+            f"Температурный риск: Tmin {next_frost['t_min']}°C, {next_frost['date_local']}"
+        )
+
+    balance = indices.get("et0_bal", {}).get("balance_mm")
     if balance is not None:
-        lines.append(f"Водный баланс (осадки - ЕТ0): {balance:.1f} мм")
-    
+        lines.append(f"Баланс осадки − ET0: {balance:.1f} мм")
+    lines.append("Источник: оперативные данные; не климатическая норма и не прогноз урожайности")
     lines.append("=== КОНЕЦ ДАННЫХ ===")
     return "\n".join(lines)

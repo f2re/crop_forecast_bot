@@ -1,0 +1,65 @@
+[Unit]
+Description=Crop Forecast Telegram Bot (aiogram)
+Documentation=https://github.com/f2re/crop_forecast_bot
+Wants=network-online.target
+After=network-online.target postgresql.service redis-server.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=@APP_USER@
+Group=@APP_GROUP@
+WorkingDirectory=@CURRENT_LINK@
+EnvironmentFile=@ENV_FILE@
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONPATH=@CURRENT_LINK@
+Environment=HOME=/var/lib/crop-forecast-bot
+Environment=XDG_CACHE_HOME=/var/cache/crop-forecast-bot
+ExecStartPre=@CURRENT_LINK@/.venv/bin/python -m src.ops.doctor --runtime
+ExecStart=@CURRENT_LINK@/.venv/bin/python -m src.bot.main
+Restart=always
+RestartSec=5s
+WatchdogSec=90s
+TimeoutStartSec=120s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+UMask=0027
+
+RuntimeDirectory=crop-forecast-bot
+RuntimeDirectoryMode=0750
+StateDirectory=crop-forecast-bot
+StateDirectoryMode=0750
+CacheDirectory=crop-forecast-bot
+CacheDirectoryMode=0750
+LogsDirectory=crop-forecast-bot
+LogsDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/crop-forecast-bot /var/cache/crop-forecast-bot /var/log/crop-forecast-bot /run/crop-forecast-bot
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=crop-forecast-bot
+
+[Install]
+WantedBy=multi-user.target

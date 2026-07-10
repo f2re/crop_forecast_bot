@@ -1,339 +1,242 @@
-# 🚀 Быстрый старт Crop Forecast Bot
+# Быстрый старт и эксплуатация Crop Forecast Bot
 
-## Проблемы которые были исправлены
+Это руководство описывает нативную установку на Debian 12, Ubuntu Server и совместимых Astra Linux окружениях. Бот запускается отдельным непривилегированным пользователем через systemd; PostgreSQL и Redis работают как системные службы ОС.
 
-### 1. ✅ Геолокация не работала на ПК
-**Проблема:** Telegram Desktop не поддерживает `request_location`
+## 1. Подготовка
 
-**Решение:**
-- Добавлена кнопка "Ввести координаты вручную"
-- Теперь можно ввести: `55.7558, 37.6173` (Москва)
-- Работает и на мобильном и на ПК!
+Потребуются:
 
-### 2. ✅ Логи теперь показываются
-**Что добавлено:**
-```python
-logger.info(f"📍 Получена геолокация от пользователя {user_id}: {lat}, {lon}")
-logger.info(f"🌾 Пользователь {user_id} запросил рекомендации")
-logger.info(f"🚀 Запуск анализа рекомендаций")
-```
+- root-доступ к серверу;
+- исходящий HTTPS-доступ к GitHub, Telegram API и Open-Meteo;
+- токен Telegram-бота от `@BotFather`;
+- минимум 2 ГБ RAM для базового режима; RAG с локальными embeddings требует больше памяти и диска.
 
-**Просмотр логов:**
-```bash
-# В реальном времени
-sudo docker-compose logs -f
-
-# Файловые логи
-tail -f logs/bot.log
-```
-
-### 3. ✅ Обучение моделей ML
-**Скрипт создан:** `scripts/train_basic_model.py`
-
-**Запуск (в контейнере):**
-```bash
-sudo docker exec crop_forecast_bot python scripts/train_basic_model.py
-```
-
-Создаст:
-- `models/crop_rf_model.pkl` - обученная модель
-- `data/training/synthetic_crop_data.csv` - данные
-
-### 4. ⚠️ API могут быть недоступны
-**Что нужно настроить:**
-
-#### Copernicus CDS API (обязательно):
-1. Регистрация: https://cds.climate.copernicus.eu/
-2. Получить UID и API key
-3. Добавить в `.env`:
-   ```
-   CDS_API_KEY=UID:API_KEY
-   ```
-
-#### OpenRouter (для LLM, опционально):
-1. Регистрация: https://openrouter.ai/
-2. Пополнить баланс ~$5
-3. Добавить в `.env`:
-   ```
-   OPENROUTER_API_KEY=sk-or-v1-...
-   ```
-
-#### Google Earth Engine (опционально):
-```bash
-# В контейнере
-sudo docker exec -it crop_forecast_bot bash
-earthengine authenticate
-```
-
----
-
-## 🎯 Как использовать бота СЕЙЧАС
-
-### Вариант 1: С мобильного телефона
-1. Откройте бота в Telegram
-2. Нажмите `/start`
-3. Нажмите "Рекомендации по культурам 🌾"
-4. Нажмите "Отправить геолокацию"
-5. Разрешите доступ к геолокации
-6. Ждите 2-3 минуты
-
-### Вариант 2: С компьютера (ПК)
-1. Откройте бота в Telegram Desktop
-2. Нажмите `/start`
-3. Нажмите "Рекомендации по культурам 🌾"
-4. Нажмите "Ввести координаты вручную" ⬅️ **ВАЖНО!**
-5. Введите: `55.7558, 37.6173` (или ваши координаты)
-6. Бот покажет карту и запустит анализ
-
-### Вариант 3: Использовать сохраненные координаты
-1. Отправьте геолокацию один раз
-2. В следующий раз нажмите "Использовать сохраненные координаты"
-
----
-
-## 📝 Как найти свои координаты
-
-### Google Maps:
-1. Откройте maps.google.com
-2. Кликните правой кнопкой на вашем участке
-3. Первые две цифры - это координаты
-4. Формат: `широта, долгота`
-
-### Yandex Maps:
-1. Откройте yandex.ru/maps
-2. Кликните на вашем участке
-3. Координаты в URL или в левой панели
-
-### Примеры:
-```
-Москва:           55.7558, 37.6173
-Санкт-Петербург:  59.9343, 30.3351
-Краснодар:        45.0355, 38.9753
-Новосибирск:      55.0084, 82.9357
-```
-
----
-
-## 🔍 Просмотр логов
-
-### 1. Логи Docker (real-time):
-```bash
-cd /opt/telegram-bots-platform/bots/crop_forecast_bot
-sudo docker-compose logs -f
-```
-
-**Что вы увидите:**
-```
-crop_forecast_bot  | 📍 Получена геолокация от пользователя 123456: 55.7558, 37.6173
-crop_forecast_bot  | 🌾 Пользователь 123456 запросил рекомендации
-crop_forecast_bot  | 🚀 Запуск анализа рекомендаций для пользователя 123456
-crop_forecast_bot  | ☁️ Загружаю климатические данные...
-```
-
-### 2. Файловые логи:
-```bash
-tail -f /opt/telegram-bots-platform/bots/crop_forecast_bot/logs/bot.log
-```
-
-### 3. Только ошибки:
-```bash
-sudo docker-compose logs -f | grep -E "(ERROR|❌|✗)"
-```
-
----
-
-## 🤖 Обучение ML моделей
-
-### Автоматическое обучение (синтетические данные):
-```bash
-# В контейнере
-sudo docker exec crop_forecast_bot python scripts/train_basic_model.py
-```
-
-**Что создастся:**
-- `models/crop_rf_model.pkl` - Random Forest модель
-- `models/crop_model_metadata.pkl` - метаданные
-- `data/training/synthetic_crop_data.csv` - тренировочные данные
-
-### С реальными данными:
-1. Добавьте свои данные в `data/training/real_crop_data.csv`
-2. Формат CSV:
-```csv
-temperature_avg,precipitation,gdd_cumulative,lai_avg,ndvi_avg,ph,gtk,spi,soil_moisture,frost_free_days,crop
-17.5,550,1850,5.2,0.68,6.8,1.2,0.1,0.65,180,0
-22.3,650,2550,6.1,0.78,6.5,1.1,0.3,0.7,200,1
-```
-3. Crop IDs: 0=wheat, 1=corn, 2=sunflower, 3=soy, 4=barley, 5=rapeseed, 6=potato, 7=sugar_beet
-
-### Проверка модели:
-```bash
-sudo docker exec crop_forecast_bot python -c "
-import joblib
-model = joblib.load('models/crop_rf_model.pkl')
-print('Модель загружена успешно!')
-print(f'Классы: {model.classes_}')
-"
-```
-
----
-
-## 🐛 Решение проблем
-
-### Бот не отвечает?
-```bash
-# Проверьте статус
-sudo docker ps | grep crop_forecast
-
-# Перезапустите
-sudo docker-compose restart
-
-# Проверьте логи
-sudo docker-compose logs --tail=50
-```
-
-### "Ничего не происходит после нажатия кнопки"
-
-**Причина:** Telegram Desktop не поддерживает геолокацию
-
-**Решение:**
-1. Используйте "Ввести координаты вручную"
-2. Или используйте мобильное приложение
-
-### API ключи не настроены?
-
-**Симптомы:**
-```
-❌ Не удалось получить климатические данные
-❌ API недоступен
-```
-
-**Решение:**
-1. Проверьте `.env` файл:
-```bash
-cat .env | grep API_KEY
-```
-
-2. Должно быть:
-```
-TELEGRAM_BOT_TOKEN=1234567890:ABC...
-CDS_API_KEY=12345:abc-def-123-456
-OPENROUTER_API_KEY=sk-or-v1-...
-```
-
-3. Перезапустите:
-```bash
-sudo docker-compose down
-sudo docker-compose up -d
-```
-
-### Модель не найдена?
+Создайте root-only файл с токеном:
 
 ```bash
-# Обучите модель
-sudo docker exec crop_forecast_bot python scripts/train_basic_model.py
-
-# Проверьте
-sudo docker exec crop_forecast_bot ls -lh models/
+sudo install -m 600 /dev/null /root/cropbot-token
+sudo editor /root/cropbot-token
 ```
 
----
+В файле должна быть одна строка с токеном без кавычек.
 
-## 📊 Что показывает бот
+## 2. Первая установка
 
-### При наличии API:
-1. **Климатические данные** (ERA5):
-   - Температура, осадки
-   - GDD (градусо-дни)
-   - ГТК (гидротермический коэффициент)
-   - SPI (индекс осадков)
-
-2. **Спутниковые данные** (Google Earth Engine):
-   - NDVI (индекс растительности)
-   - LAI (индекс листовой поверхности)
-
-3. **Почвенные данные** (SoilGrids):
-   - Текстура (глина, песок, ил)
-   - pH
-   - Органический углерод
-
-4. **Экономический анализ**:
-   - Прогноз урожайности
-   - Прибыль/га
-   - ROI (окупаемость)
-   - Климатические риски
-
-5. **LLM рекомендации** (OpenRouter):
-   - Персонализированные советы
-   - Агротехнические рекомендации
-
-### Без API (упрощенный режим):
-1. Определение региона по координатам
-2. Базовые рекомендации на основе географии
-3. Общие советы по культурам
-
----
-
-## 🔧 Настройка для продакшена
-
-### 1. Настройте все API ключи
 ```bash
-nano .env
+git clone https://github.com/f2re/crop_forecast_bot.git
+cd crop_forecast_bot
+sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 ```
 
-### 2. Обучите модель на реальных данных
+Скрипт автоматически:
+
+1. устанавливает системные пакеты;
+2. создаёт пользователя и группу `cropbot`;
+3. запускает PostgreSQL и Redis;
+4. создаёт отдельные роль и БД PostgreSQL со случайным паролем;
+5. записывает `/etc/crop-forecast-bot.env` с правами `0640 root:cropbot`;
+6. клонирует выбранную ветку в новый release-каталог;
+7. создаёт virtualenv и устанавливает зависимости;
+8. выполняет `pip check`, компиляцию модулей и runtime preflight;
+9. устанавливает systemd units;
+10. запускает бот и проверяет heartbeat.
+
+Для установки другой ветки:
+
 ```bash
-# Добавьте данные
-nano data/training/real_crop_data.csv
-
-# Обучите
-sudo docker exec crop_forecast_bot python scripts/train_basic_model.py
+sudo BRANCH=my-branch TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 ```
 
-### 3. Настройте мониторинг
+## 3. Проверка после установки
+
 ```bash
-# Логи в файл
-tail -f logs/bot.log
-
-# Или используйте Grafana (встроена в платформу)
+sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 ```
 
-### 4. Проверьте работоспособность
+Ожидается:
+
+- service state: `active`;
+- heartbeat: `healthy`;
+- PostgreSQL check: без ошибок;
+- Redis check: без ошибок.
+
+Логи в реальном времени:
+
 ```bash
-# Диагностика сети
-./scripts/check_network.sh
-
-# Проверка готовности
-./scripts/deploy_to_platform.sh
+sudo journalctl -u crop-forecast-bot -f
 ```
 
----
+Последние сто строк:
 
-## 💡 Советы
+```bash
+sudo journalctl -u crop-forecast-bot -n 100 --no-pager
+```
 
-1. **Сначала протестируйте с мобильного** - геолокация работает надежнее
-2. **Сохраните координаты** - не нужно вводить каждый раз
-3. **Проверяйте логи** - видно что происходит
-4. **Обучите модель** - для лучших результатов
-5. **Настройте API** - для полного функционала
+## 4. Конфигурация
 
----
+Production-конфигурация находится только здесь:
 
-## 📞 Поддержка
+```text
+/etc/crop-forecast-bot.env
+```
 
-- **Логи**: `sudo docker-compose logs -f`
-- **Диагностика**: `./scripts/check_network.sh`
-- **Документация**: `README.md`, `PLATFORM_INTEGRATION.md`
-- **Issues**: https://github.com/f2re/crop_forecast_bot/issues
+Редактирование:
 
----
+```bash
+sudo editor /etc/crop-forecast-bot.env
+sudo systemctl restart crop-forecast-bot
+sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
+```
 
-## ✅ Готово к работе!
+Минимальные параметры:
 
-Бот сейчас полностью функционален:
-- ✅ Работает на ПК (ввод координат текстом)
-- ✅ Работает на мобильном (геолокация)
-- ✅ Подробные логи
-- ✅ ML модель (синтетическая)
-- ✅ Fallback режим без API
+```dotenv
+TELEGRAM_BOT_TOKEN=...
+DATABASE_URL=postgresql+asyncpg://cropbot:...@127.0.0.1:5432/crop_forecast_bot
+REDIS_URL=redis://127.0.0.1:6379/0
+HEARTBEAT_FILE=/run/crop-forecast-bot/heartbeat
+OPEN_METEO_CACHE_PATH=/var/cache/crop-forecast-bot/openmeteo
+```
 
-**Попробуйте прямо сейчас!** 🚀
+Не публикуйте этот файл и не копируйте его в репозиторий.
+
+## 5. Обновление
+
+```bash
+sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
+```
+
+Перед переключением версии создаётся резервная копия PostgreSQL. Новая версия разворачивается отдельно от активной, поэтому неудачная установка зависимостей не повреждает работающий release.
+
+После переключения скрипт проверяет systemd state и heartbeat. При ошибке он возвращает предыдущий release и перезапускает сервис.
+
+Проверка результата:
+
+```bash
+sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
+```
+
+## 6. Ручной откат
+
+Откат к предыдущей версии:
+
+```bash
+sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
+```
+
+Список сохранённых версий:
+
+```bash
+sudo find /opt/crop-forecast-bot/releases -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
+```
+
+Откат к конкретной версии:
+
+```bash
+sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh \
+  /opt/crop-forecast-bot/releases/<release-directory>
+```
+
+Откат кода не отменяет миграции БД. Dump перед обновлением хранится в `/var/backups/crop-forecast-bot/`.
+
+## 7. Автозапуск и самовосстановление
+
+Основной unit:
+
+```bash
+systemctl status crop-forecast-bot
+systemctl is-enabled crop-forecast-bot
+```
+
+systemd выполняет:
+
+- запуск после сети, PostgreSQL и Redis;
+- `ExecStartPre` диагностику;
+- автоматический restart после аварии;
+- readiness notification после запуска scheduler и polling;
+- watchdog restart, если event loop перестал обновлять heartbeat;
+- штатное завершение bot session, storage, scheduler и DB engine.
+
+## 8. Автоматическое обновление
+
+По умолчанию выключено. Включить еженедельный запуск `update.sh main`:
+
+```bash
+sudo systemctl enable --now crop-forecast-bot-update.timer
+systemctl list-timers crop-forecast-bot-update.timer
+```
+
+Выключить:
+
+```bash
+sudo systemctl disable --now crop-forecast-bot-update.timer
+```
+
+Автоматическое обновление следует использовать только для защищённой ветки с обязательным зелёным CI.
+
+## 9. Постоянные данные
+
+```text
+/var/lib/crop-forecast-bot/data/          данные приложения
+/var/lib/crop-forecast-bot/data/literature/ документы RAG
+/var/lib/crop-forecast-bot/models/        локальные модели и артефакты
+/var/cache/crop-forecast-bot/             кэши
+/var/backups/crop-forecast-bot/           PostgreSQL dumps
+```
+
+Добавление литературы:
+
+```bash
+sudo install -o cropbot -g cropbot -m 640 document.pdf \
+  /var/lib/crop-forecast-bot/data/literature/document.pdf
+sudo -u cropbot -H bash -lc '
+  cd /opt/crop-forecast-bot/current &&
+  .venv/bin/python -m src.knowledge.indexer
+'
+```
+
+## 10. Типовые неисправности
+
+### Сервис не запускается
+
+```bash
+sudo systemctl status crop-forecast-bot --no-pager -l
+sudo journalctl -u crop-forecast-bot -n 200 --no-pager
+sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
+```
+
+### Ошибка PostgreSQL
+
+```bash
+sudo systemctl status postgresql
+sudo -u postgres psql -c '\l'
+```
+
+Проверьте `DATABASE_URL` в `/etc/crop-forecast-bot.env`.
+
+### Ошибка Redis
+
+```bash
+sudo systemctl status redis-server
+redis-cli ping
+```
+
+Ожидаемый ответ: `PONG`.
+
+### Heartbeat устарел
+
+```bash
+sudo systemctl restart crop-forecast-bot
+sudo journalctl -u crop-forecast-bot -n 100 --no-pager
+```
+
+Если процесс снова зависает, сохраните журнал и не отключайте watchdog: нужно устранять блокирующий вызов в application/infrastructure слое.
+
+### Обновление откатилось
+
+```bash
+sudo journalctl -u crop-forecast-bot-update -n 200 --no-pager
+sudo ls -lh /var/backups/crop-forecast-bot/
+```
+
+Активная версия остаётся на предыдущем release. Исправьте причину в отдельной ветке и повторите обновление после зелёного CI.
