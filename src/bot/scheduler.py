@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -33,6 +33,15 @@ def get_scheduler() -> AsyncIOScheduler:
     if _scheduler is None:
         _scheduler = AsyncIOScheduler(timezone=get_settings().scheduler_timezone)
     return _scheduler
+
+
+def _local_date(timezone_name: str) -> str:
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        logger.warning("Unknown field timezone %r; using UTC", timezone_name)
+        timezone = ZoneInfo("UTC")
+    return datetime.now(timezone).date().isoformat()
 
 
 async def start_scheduler(
@@ -82,11 +91,13 @@ async def _targets(
     session_factory: SessionFactory,
     *,
     daily_digest_only: bool = False,
+    frost_alerts_only: bool = False,
 ) -> list[NotificationTarget]:
     async with session_factory() as session:
         return await list_notification_targets(
             session,
             daily_digest_only=daily_digest_only,
+            frost_alerts_only=frost_alerts_only,
         )
 
 
@@ -142,7 +153,7 @@ async def check_frost_alerts(
         datetime.now().isoformat(timespec="minutes"),
     )
     try:
-        for target in await _targets(session_factory):
+        for target in await _targets(session_factory, frost_alerts_only=True):
             if not await coordination.renew(job_lease, _FROST_JOB_LOCK_TTL):
                 logger.error("Frost screening lost its distributed lock; aborting")
                 return
@@ -183,12 +194,17 @@ async def check_frost_alerts(
                     )
             except OpenMeteoError as exc:
                 logger.warning(
-                    "Open-Meteo unavailable for user %s: %s",
+                    "Open-Meteo unavailable for user %s field %s: %s",
                     target.telegram_id,
+                    target.field_id,
                     exc,
                 )
             except Exception:
-                logger.exception("Frost alert failed for user %s", target.telegram_id)
+                logger.exception(
+                    "Frost alert failed for user %s field %s",
+                    target.telegram_id,
+                    target.field_id,
+                )
     finally:
         await _release_job_lock(coordination, job_lease, "frost-check")
 
@@ -203,17 +219,14 @@ async def send_daily_digest(
         logger.info("Daily digest skipped: another process owns the job lock")
         return
 
-    settings = get_settings()
-    timezone = ZoneInfo(settings.scheduler_timezone)
-    local_date = datetime.now(timezone).date().isoformat()
     try:
         for target in await _targets(session_factory, daily_digest_only=True):
             if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
                 logger.error("Daily digest lost its distributed lock; aborting")
                 return
             digest_key = (
-                f"notification:digest:{target.telegram_id}:"
-                f"{target.field_id}:{local_date}"
+                f"notification:digest:{target.telegram_id}:{target.field_id}:"
+                f"{_local_date(target.timezone)}"
             )
             try:
                 report = await generate_agro_report(
@@ -238,6 +251,10 @@ async def send_daily_digest(
                     send,
                 )
             except Exception:
-                logger.exception("Daily digest failed for user %s", target.telegram_id)
+                logger.exception(
+                    "Daily digest failed for user %s field %s",
+                    target.telegram_id,
+                    target.field_id,
+                )
     finally:
         await _release_job_lock(coordination, job_lease, "daily-digest")

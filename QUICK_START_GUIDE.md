@@ -1,25 +1,24 @@
-# 🚀 Быстрый старт и эксплуатация Crop Forecast Bot
+# 🚀 Быстрый старт и эксплуатация
 
-Нативная установка для Debian 12, Ubuntu Server и совместимых Astra Linux окружений. Бот работает от отдельного пользователя через systemd; PostgreSQL и Redis запускаются системными службами ОС.
+Нативная установка для Debian 12, Ubuntu Server и совместимых Astra Linux окружений. Бот работает от непривилегированного пользователя через systemd; PostgreSQL и Redis запускаются как службы ОС.
 
 ## 1. Подготовка
 
-Потребуются:
+Нужны:
 
 - root-доступ;
 - исходящий HTTPS к GitHub, Telegram API и Open-Meteo;
-- токен Telegram-бота от `@BotFather`;
-- минимум 2 ГБ RAM для базового режима;
-- больше памяти и диска при использовании локальных RAG embeddings.
+- токен от `@BotFather`;
+- минимум 2 ГБ RAM для базового режима.
 
-Создайте root-only файл с токеном:
+Создайте root-only файл токена:
 
 ```bash
 sudo install -m 600 /dev/null /root/cropbot-token
 sudo editor /root/cropbot-token
 ```
 
-В файле должна быть одна строка токена без кавычек.
+Файл должен содержать одну строку с токеном без кавычек.
 
 ## 2. Первая установка
 
@@ -31,25 +30,24 @@ sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 
 Скрипт:
 
-1. устанавливает Python и системные библиотеки;
-2. создаёт пользователя и группу `cropbot`;
-3. запускает PostgreSQL и Redis;
-4. создаёт отдельные роль и БД со случайным паролем;
-5. записывает `/etc/crop-forecast-bot.env` с правами `0640 root:cropbot`;
-6. создаёт новый release и virtualenv;
-7. выполняет PostgreSQL backup;
-8. применяет `alembic upgrade head`;
-9. выполняет `pip check`, `compileall` и runtime preflight;
-10. устанавливает systemd units;
-11. запускает сервис и проверяет heartbeat.
+1. установит системные пакеты;
+2. создаст пользователя `cropbot`;
+3. запустит PostgreSQL и Redis;
+4. создаст роль и БД PostgreSQL;
+5. запишет `/etc/crop-forecast-bot.env`;
+6. создаст release и virtualenv;
+7. сделает backup БД;
+8. выполнит `alembic upgrade head`;
+9. запустит runtime preflight;
+10. установит systemd units и проверит heartbeat.
 
-Для установки другой ветки:
+Другая ветка:
 
 ```bash
 sudo BRANCH=my-branch TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 ```
 
-## 3. Проверка после установки
+## 3. Проверка сервера
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
@@ -57,10 +55,13 @@ sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 
 Ожидается:
 
-- service state: `active`;
-- heartbeat: `healthy`;
-- PostgreSQL и Alembic schema: без ошибок;
-- Redis check: без ошибок.
+```text
+service: active
+heartbeat: healthy
+PostgreSQL: available
+Redis: available
+schema: current
+```
 
 Логи:
 
@@ -69,33 +70,36 @@ sudo journalctl -u crop-forecast-bot -f
 sudo journalctl -u crop-forecast-bot -n 100 --no-pager
 ```
 
-## 4. Проверка Telegram-сценария
+## 4. Smoke test в Telegram
 
 1. Отправьте `/start`.
-2. Откройте **«Моё поле»** и передайте координаты.
-3. Выберите культуру.
-4. Откройте **«Сезон и фаза»**.
-5. Введите дату посева, например `15.04.2026`.
-6. При наличии наблюдения выберите фактическую фазу.
-7. Откройте **«Агроотчёт»**.
+2. Откройте **«Мои поля»**.
+3. Добавьте поле `Северное` и передайте координаты.
+4. Выберите культуру и укажите дату сезона.
+5. Включите ежедневный отчёт, отключите температурные алерты.
+6. Добавьте поле `Южное` с другими координатами.
+7. Выберите другую культуру/дату и противоположные настройки уведомлений.
+8. Переключитесь между полями.
 
-Проверьте, что отчёт показывает:
+Проверьте, что для каждого поля независимо восстанавливаются:
 
-- имя поля, координаты, timezone и высоту модели;
-- культуру, дату сезона и ручную фазу;
-- ГДД с начала сезона либо явную пометку неполного покрытия;
-- отдельные подписи реанализа и прогноза;
-- ограничения frost screening и источники данных.
+- координаты;
+- культура;
+- дата сезона и фаза;
+- timezone/высота после отчёта;
+- настройки ежедневного отчёта и температурных алертов.
+
+Сформируйте **«Агроотчёт»** для каждого поля. В сообщении должны быть название активного поля, источник данных, период и ограничения.
 
 ## 5. Конфигурация
 
-Production-конфигурация:
+Production-файл:
 
 ```text
 /etc/crop-forecast-bot.env
 ```
 
-Редактирование и проверка:
+Редактирование и применение:
 
 ```bash
 sudo editor /etc/crop-forecast-bot.env
@@ -103,38 +107,40 @@ sudo systemctl restart crop-forecast-bot
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 ```
 
-Минимальные параметры:
+Минимум:
 
 ```dotenv
 APP_ENV=production
 TELEGRAM_BOT_TOKEN=...
 DATABASE_URL=postgresql+asyncpg://cropbot:...@127.0.0.1:5432/crop_forecast_bot
 REDIS_URL=redis://127.0.0.1:6379/0
-COORDINATION_NAMESPACE=crop-forecast-bot
 HEARTBEAT_FILE=/run/crop-forecast-bot/heartbeat
 OPEN_METEO_CACHE_PATH=/var/cache/crop-forecast-bot/openmeteo
 ```
 
 Не публикуйте этот файл и не копируйте его в репозиторий.
 
-## 6. Миграции БД
-
-Текущая схема содержит:
-
-- `users` — Telegram-профиль и настройки;
-- `fields` — координаты, timezone, высота и active flag;
-- `crop_seasons` — культура, дата сезона и фактическая фаза.
-
-Ручная проверка:
+## 6. Миграции
 
 ```bash
 cd /opt/crop-forecast-bot/current
 sudo -u cropbot .venv/bin/alembic current
 sudo -u cropbot .venv/bin/alembic heads
+```
+
+Ожидаемая head-revision текущего среза:
+
+```text
+20260710_0003
+```
+
+Принудительное обновление:
+
+```bash
 sudo -u cropbot .venv/bin/alembic upgrade head
 ```
 
-Migration `20260710_0002` переносит legacy-координаты и культуру в `Основное поле` и активный сезон. Перед update/deploy создаётся PostgreSQL dump.
+Миграция `0003` переносит legacy-настройку ежедневного отчёта в активное поле и добавляет отдельный переключатель температурных алертов. Для существующей timezone/высоты сохраняется пометка, что точный прежний provider не был записан.
 
 ## 7. Обновление
 
@@ -142,30 +148,30 @@ Migration `20260710_0002` переносит legacy-координаты и ку
 sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
 ```
 
-Новая версия строится отдельно от активной. До переключения выполняются backup, миграции и preflight. После переключения проверяются systemd state и heartbeat. При ошибке код возвращается к предыдущему release.
+Update создаёт PostgreSQL dump, новый release и virtualenv, применяет миграции, выполняет preflight и только затем переключает `current`. При неуспешном запуске восстанавливается предыдущий код.
 
-Проверка результата:
+Проверка:
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 ```
 
-## 8. Ручной откат
+## 8. Откат
 
-К предыдущей версии:
+К предыдущему release:
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
 ```
 
-Список release-каталогов:
+Список версий:
 
 ```bash
 sudo find /opt/crop-forecast-bot/releases \
   -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort
 ```
 
-К конкретной версии:
+К выбранной версии:
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh \
@@ -174,27 +180,14 @@ sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh \
 
 Откат кода не отменяет миграции БД. Dumps находятся в `/var/backups/crop-forecast-bot/`.
 
-## 9. Автозапуск и watchdog
+## 9. Автозапуск и обновление
 
 ```bash
 systemctl status crop-forecast-bot
 systemctl is-enabled crop-forecast-bot
 ```
 
-systemd выполняет:
-
-- запуск после сети, PostgreSQL и Redis;
-- `ExecStartPre` проверку конфигурации и схемы;
-- readiness notification после запуска scheduler и polling;
-- автоматический restart после аварии;
-- watchdog restart, если asyncio event loop не обновляет heartbeat;
-- штатное закрытие bot session, FSM storage, scheduler и DB engine.
-
-## 10. Автоматическое обновление
-
-По умолчанию выключено.
-
-Включить:
+Включить еженедельный update timer:
 
 ```bash
 sudo systemctl enable --now crop-forecast-bot-update.timer
@@ -209,30 +202,19 @@ sudo systemctl disable --now crop-forecast-bot-update.timer
 
 Используйте автоматическое обновление только для защищённой ветки с обязательным зелёным CI.
 
-## 11. Постоянные данные
+## 10. Постоянные данные
 
 ```text
 /var/lib/crop-forecast-bot/data/             данные приложения
 /var/lib/crop-forecast-bot/data/literature/  документы RAG
-/var/lib/crop-forecast-bot/models/           локальные артефакты
-/var/cache/crop-forecast-bot/                погодный, pip и embedding cache
+/var/lib/crop-forecast-bot/models/           локальные модели
+/var/cache/crop-forecast-bot/                caches
 /var/backups/crop-forecast-bot/              PostgreSQL dumps
 ```
 
-Добавление литературы:
+## 11. Типовые неисправности
 
-```bash
-sudo install -o cropbot -g cropbot -m 640 document.pdf \
-  /var/lib/crop-forecast-bot/data/literature/document.pdf
-sudo -u cropbot -H bash -lc '
-  cd /opt/crop-forecast-bot/current &&
-  .venv/bin/python -m src.knowledge.indexer
-'
-```
-
-## 12. Типовые неисправности
-
-### Сервис не запускается
+### Бот не запускается
 
 ```bash
 sudo systemctl status crop-forecast-bot --no-pager -l
@@ -240,7 +222,25 @@ sudo journalctl -u crop-forecast-bot -n 200 --no-pager
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 ```
 
-### Alembic revision устарела
+### PostgreSQL
+
+```bash
+sudo systemctl status postgresql
+sudo -u postgres psql -c '\l'
+```
+
+Проверьте `DATABASE_URL`.
+
+### Redis
+
+```bash
+sudo systemctl status redis-server
+redis-cli ping
+```
+
+Ожидается `PONG`.
+
+### Устаревшая schema
 
 ```bash
 cd /opt/crop-forecast-bot/current
@@ -249,42 +249,11 @@ sudo -u cropbot .venv/bin/alembic upgrade head
 sudo systemctl restart crop-forecast-bot
 ```
 
-### PostgreSQL недоступен
-
-```bash
-sudo systemctl status postgresql
-sudo -u postgres psql -c '\l'
-```
-
-Проверьте `DATABASE_URL` в `/etc/crop-forecast-bot.env`.
-
-### Redis недоступен
-
-```bash
-sudo systemctl status redis-server
-redis-cli ping
-```
-
-Ожидаемый ответ: `PONG`.
-
-### Сезонный ряд не загрузился
-
-Проверьте журнал на сообщения `Season history unavailable`. Бот продолжит работу с коротким оперативным окном и пометит ГДД как сумму за доступный период. Не удаляйте эту пометку из пользовательского отчёта.
-
-### Heartbeat устарел
-
-```bash
-sudo systemctl restart crop-forecast-bot
-sudo journalctl -u crop-forecast-bot -n 100 --no-pager
-```
-
-Если процесс снова зависает, сохраняйте журнал и устраняйте блокирующий вызов в application/infrastructure слое. Watchdog отключать не следует.
-
-### Обновление откатилось
+### Update откатился
 
 ```bash
 sudo journalctl -u crop-forecast-bot-update -n 200 --no-pager
 sudo ls -lh /var/backups/crop-forecast-bot/
 ```
 
-Активной останется предыдущая версия. Исправьте причину в отдельной ветке и повторите update после зелёного CI.
+Исправьте причину в отдельной ветке, дождитесь зелёного CI и повторите update.
