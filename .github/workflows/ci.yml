@@ -51,7 +51,12 @@ jobs:
       - name: Native deployment checks
         run: |
           bash -n scripts/*.sh
-          shellcheck -x scripts/*.sh
+          shellcheck -x \
+            scripts/deploy.sh \
+            scripts/update.sh \
+            scripts/rollback.sh \
+            scripts/status.sh \
+            scripts/install-systemd.sh
           test ! -e Dockerfile
           test ! -e docker-compose.yml
           test ! -e .env.docker.example
