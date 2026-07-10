@@ -11,13 +11,13 @@ from src.database.schema import expected_schema_revision
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _upgrade(database_path: Path) -> None:
+def _upgrade(database_path: Path, revision: str = "head") -> None:
     config = Config(str(PROJECT_ROOT / "alembic.ini"))
     config.set_main_option(
         "sqlalchemy.url",
         f"sqlite+aiosqlite:///{database_path.as_posix()}",
     )
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
 
 
 def _inspect(database_path: Path) -> sa.Inspector:
@@ -171,3 +171,46 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
     assert season_row[2] is None
     assert bool(season_row[3]) is True
     assert revision == "20260710_0003"
+
+
+def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "metadata.sqlite"
+    _upgrade(database_path, "20260710_0002")
+    engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
+
+    with engine.begin() as connection:
+        user_id = connection.execute(
+            sa.text(
+                "INSERT INTO users (telegram_id, selected_crop, daily_digest) "
+                "VALUES (3003, 'wheat', 1) RETURNING id"
+            )
+        ).scalar_one()
+        connection.execute(
+            sa.text(
+                "INSERT INTO fields "
+                "(user_id, name, latitude, longitude, timezone, elevation_m, is_active) "
+                "VALUES (:user_id, 'Западное', 51.0, 40.0, "
+                "'Europe/Moscow', 172.0, 1)"
+            ),
+            {"user_id": user_id},
+        )
+
+    _upgrade(database_path)
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            sa.text(
+                "SELECT timezone_source, elevation_source, "
+                "daily_digest_enabled, frost_alerts_enabled "
+                "FROM fields WHERE user_id = :user_id"
+            ),
+            {"user_id": user_id},
+        ).one()
+
+    expected_source = "legacy/provider metadata; exact source not recorded"
+    assert row[0] == expected_source
+    assert row[1] == expected_source
+    assert bool(row[2]) is True
+    assert bool(row[3]) is True
