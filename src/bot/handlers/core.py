@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
@@ -31,6 +31,19 @@ from src.domain.coordinates import Coordinates, parse_coordinates
 
 logger = logging.getLogger(__name__)
 router = Router(name="core")
+
+_HELP_TEXT = (
+    "🆘 <b>Как пользоваться ботом</b>\n\n"
+    "1️⃣ Откройте «Моё поле» и отправьте геолокацию или координаты.\n"
+    "2️⃣ Выберите культуру.\n"
+    "3️⃣ Нажмите «Агропрогноз».\n\n"
+    "Отчёт показывает оперативную оценку температуры, влагообеспеченности, "
+    "ГДД и риска заморозка. В каждом отчёте указаны источник и ограничения.\n\n"
+    "<b>Команды</b>\n"
+    "/start — главное меню\n"
+    "/help — эта справка\n"
+    "/cancel — отменить текущий ввод"
+)
 
 
 class FieldStates(StatesGroup):
@@ -75,9 +88,22 @@ async def start(message: Message, session: AsyncSession, state: FSMContext) -> N
         "🌾 <b>Агрометеорологический бот</b>\n\n"
         f"{field_status}\n"
         f"Культура: {get_crop_name(user.selected_crop or 'wheat')}\n\n"
-        "Основной сценарий: поле → культура → отчёт.",
+        "Основной сценарий: поле → культура → отчёт.\n"
+        "Справка: /help",
         reply_markup=get_main_keyboard(),
     )
+
+
+@router.message(Command("help"))
+async def help_command(message: Message) -> None:
+    await message.answer(_HELP_TEXT, reply_markup=get_main_keyboard())
+
+
+@router.message(Command("cancel"))
+async def cancel_command(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Текущий ввод отменён.", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
 
 
 @router.callback_query(F.data == "menu")
