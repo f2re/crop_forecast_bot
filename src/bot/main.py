@@ -1,93 +1,109 @@
-"""
-Основной вход для Telegram-бота на aiogram 3.x.
-Инициализация RAG, планировщика и регистрация роутеров.
-"""
+from __future__ import annotations
+
 import asyncio
 import logging
-import os
-from typing import Any, Awaitable, Callable, Dict
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+from typing import Any
 
-from aiogram import Bot, Dispatcher, BaseMiddleware
-from aiogram.types import TelegramObject
+from aiogram import BaseMiddleware, Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
-from dotenv import load_dotenv
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import TelegramObject
 
-from config.settings import TELEGRAM_BOT_TOKEN, get_database_url
-from src.database import init_db
-from src.knowledge.rag_engine import get_rag_engine
-from src.bot.scheduler import start_scheduler
+from config.settings import Settings, get_settings
+from src.bot.scheduler import start_scheduler, stop_scheduler
+from src.database import Database, init_db
+from src.ops.heartbeat import run_heartbeat
 
-load_dotenv()
-
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
 class DbSessionMiddleware(BaseMiddleware):
-    """Middleware для инъекции сессии БД в хэндлеры."""
-    def __init__(self, session_factory):
-        super().__init__()
+    def __init__(self, session_factory: Callable[[], Any]):
         self.session_factory = session_factory
 
     async def __call__(
         self,
-        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        handler: Callable[[TelegramObject, dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
-        data: Dict[str, Any]
+        data: dict[str, Any],
     ) -> Any:
         async with self.session_factory() as session:
             data["session"] = session
-            return await handler(event, data)
+            try:
+                return await handler(event, data)
+            except Exception:
+                await session.rollback()
+                raise
 
 
-async def on_startup(bot: Bot):
-    """Хук при запуске."""
-    logger.info("🚀 Запуск агробота...")
-    
-    # 1. Проверка RAG
-    rag = get_rag_engine()
-    if rag.is_available():
-        logger.info("✅ RAG база знаний доступна")
-    else:
-        logger.warning("⚠️ RAG база пуста. Проиндексируйте документы.")
-    
-    # 2. Запуск планировщика
-    await start_scheduler(bot)
+def build_storage(settings: Settings) -> BaseStorage:
+    if settings.redis_url:
+        logger.info("Persistent FSM storage: Redis")
+        return RedisStorage.from_url(settings.redis_url)
+    logger.warning("REDIS_URL is not set; FSM state will not survive restart")
+    return MemoryStorage()
 
 
-async def main():
-    if not TELEGRAM_BOT_TOKEN:
-        logger.error("BOT_TOKEN не найден в .env")
-        return
+async def run() -> None:
+    settings = get_settings()
+    settings.validate()
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
-    # Инициализация БД
-    db_url = get_database_url()
-    db = init_db(db_url)
-    
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage())
+    database: Database = init_db(settings.database_url)
+    await database.ping()
+    await database.create_tables()
 
-    # Регистрация Middleware
-    dp.update.middleware(DbSessionMiddleware(db.get_session))
+    bot = Bot(
+        token=settings.telegram_bot_token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    storage = build_storage(settings)
+    dispatcher = Dispatcher(storage=storage)
+    dispatcher.update.middleware(DbSessionMiddleware(database.get_session))
 
-    # Регистрация роутеров
+    from src.bot.handlers.core import router as core_router
     from src.bot.handlers.rag import router as rag_router
-    # Примечание: agro_router и main_router должны быть созданы 
-    # путём миграции существующих telebot хэндлеров.
-    dp.include_router(rag_router)
 
-    dp.startup.register(on_startup)
+    dispatcher.include_router(core_router)
+    dispatcher.include_router(rag_router)
 
-    logger.info("Бот готов к работе (aiogram 3.x)")
-    await dp.start_polling(bot)
+    heartbeat_task = asyncio.create_task(
+        run_heartbeat(settings.heartbeat_file),
+        name="runtime-heartbeat",
+    )
+    try:
+        await start_scheduler(bot, database.get_session)
+        logger.info("Crop Forecast Bot started with aiogram")
+        await dispatcher.start_polling(
+            bot,
+            allowed_updates=dispatcher.resolve_used_update_types(),
+            close_bot_session=False,
+        )
+    finally:
+        await stop_scheduler()
+        heartbeat_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await heartbeat_task
+        await storage.close()
+        await bot.session.close()
+        await database.dispose()
+        logger.info("Crop Forecast Bot stopped cleanly")
+
+
+def main() -> None:
+    try:
+        asyncio.run(run())
+    except (KeyboardInterrupt, SystemExit):
+        pass
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Бот остановлен.")
+    main()
