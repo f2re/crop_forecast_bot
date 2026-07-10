@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
@@ -15,6 +16,8 @@ class Settings:
     telegram_bot_token: str
     database_url: str
     redis_url: str | None
+    app_env: str
+    coordination_namespace: str
     cds_api_url: str
     cds_api_key: str | None
     openrouter_api_key: str | None
@@ -29,6 +32,17 @@ class Settings:
             errors.append("TELEGRAM_BOT_TOKEN is required")
         if not self.database_url.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
             errors.append("DATABASE_URL must use an async SQLAlchemy driver")
+        if not self.coordination_namespace:
+            errors.append("COORDINATION_NAMESPACE must not be empty")
+        try:
+            ZoneInfo(self.scheduler_timezone)
+        except ZoneInfoNotFoundError:
+            errors.append(f"Unknown SCHEDULER_TIMEZONE: {self.scheduler_timezone}")
+        if self.app_env == "production":
+            if not self.database_url.startswith("postgresql+asyncpg://"):
+                errors.append("Production requires PostgreSQL with asyncpg")
+            if not self.redis_url:
+                errors.append("Production requires REDIS_URL for FSM and scheduler leases")
         if errors:
             raise RuntimeError("Invalid runtime configuration: " + "; ".join(errors))
 
@@ -53,6 +67,10 @@ def get_settings() -> Settings:
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         database_url=database_url,
         redis_url=redis_url,
+        app_env=os.getenv("APP_ENV", "development").strip().lower(),
+        coordination_namespace=os.getenv(
+            "COORDINATION_NAMESPACE", "crop-forecast-bot"
+        ).strip(),
         cds_api_url=os.getenv(
             "CDS_API_URL", "https://cds.climate.copernicus.eu/api"
         ).strip(),

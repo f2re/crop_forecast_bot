@@ -8,6 +8,7 @@ from redis.asyncio import Redis
 
 from config.settings import get_settings
 from src.database import Database
+from src.database.schema import require_current_schema
 
 
 async def check_runtime() -> list[str]:
@@ -37,6 +38,7 @@ async def check_runtime() -> list[str]:
     database = Database(settings.database_url)
     try:
         await database.ping()
+        await require_current_schema(database.engine)
     except Exception as exc:
         errors.append(f"Database check failed: {exc}")
     finally:
@@ -55,7 +57,11 @@ async def check_runtime() -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Crop Forecast Bot diagnostics")
-    parser.add_argument("--runtime", action="store_true", help="check DB, Redis and writable paths")
+    parser.add_argument(
+        "--runtime",
+        action="store_true",
+        help="check schema, DB, Redis and writable paths",
+    )
     args = parser.parse_args()
 
     if not args.runtime:
@@ -72,7 +78,7 @@ def main() -> int:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
-    print("Runtime dependencies are available")
+    print("Runtime dependencies and database schema are ready")
     return 0
 
 

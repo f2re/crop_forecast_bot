@@ -33,9 +33,9 @@ if [[ "${NEW_RELEASE_SHA}" == "${old_sha}" ]]; then
 fi
 
 build_release "${NEW_RELEASE}"
-preflight_release "${NEW_RELEASE}"
 backup_database
-run_migrations_if_available "${NEW_RELEASE}"
+run_migrations "${NEW_RELEASE}"
+preflight_release "${NEW_RELEASE}"
 
 for unit in \
   crop-forecast-bot.service \

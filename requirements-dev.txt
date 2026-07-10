@@ -6,3 +6,4 @@ respx>=0.22,<1
 ruff>=0.9,<1
 mypy>=1.14,<2
 bandit>=1.8,<2
+aiosqlite>=0.20,<1

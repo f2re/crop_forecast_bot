@@ -51,11 +51,18 @@ Telegram
 
 ## Этап 1 — миграции и надёжность состояния
 
-Приоритет: P0.
+Приоритет: P0. Статус: **основной технический срез выполнен, модель поля и интеграционные тесты остаются**.
 
-- [ ] создать Alembic baseline из фактической модели;
-- [ ] убрать `Base.metadata.create_all()` из production startup;
-- [ ] добавить поля field/season:
+- [x] создать Alembic baseline из фактической модели;
+- [x] поддержать безопасное принятие БД, ранее созданной через `create_all()`;
+- [x] убрать `Base.metadata.create_all()` из production startup;
+- [x] проверять Alembic head в runtime doctor и при запуске приложения;
+- [x] сделать `alembic upgrade head` обязательным в deploy/update;
+- [x] перенести alert deduplication в Redis `SET NX EX` с token lease;
+- [x] добавить distributed scheduler lock;
+- [x] исключить повтор ежедневного отчёта одному пользователю в пределах даты;
+- [x] освободить DB session до длительных HTTP/Telegram операций scheduler;
+- [ ] добавить сущность field/season:
   - идентификатор и название поля;
   - timezone;
   - elevation source;
@@ -63,10 +70,9 @@ Telegram
   - sowing/season start date;
   - phenological phase and confidence;
   - notification preferences;
-- [ ] перенести alert deduplication в Redis `SET NX EX`;
-- [ ] добавить distributed scheduler lock;
-- [ ] обработать restart во время FSM;
-- [ ] интеграционные тесты PostgreSQL/Redis в изолированной тестовой среде.
+- [ ] обработать restart во время FSM сценарными тестами;
+- [ ] интеграционные тесты PostgreSQL/Redis в изолированной тестовой среде;
+- [ ] проверить конкурентный запуск двух scheduler процессов с реальным Redis.
 
 Критерий готовности: рестарт процесса не теряет пользовательский прогресс и не дублирует уведомления.
 
@@ -132,15 +138,16 @@ Telegram
 
 Приоритет: P1.
 
-- [ ] three-step main flow: field -> crop -> report;
-- [ ] back/cancel on every FSM branch;
+- [x] three-step main flow: field -> crop -> report;
+- [x] команды `/start`, `/help`, `/cancel` и регистрация меню Telegram;
+- [ ] back/cancel on every callback and FSM branch;
 - [ ] duplicate callback protection and idempotency keys;
 - [ ] compact reports with four sections:
   1. what is happening;
   2. reliability;
   3. what to do now;
   4. when to check again;
-- [ ] explicit progress without unsupported duration promises;
+- [x] explicit progress without unsupported duration promises;
 - [ ] settings for timezone, season date and notification windows;
 - [ ] administrator diagnostics: provider status, queue, alerts and error report export;
 - [ ] scenario tests using aiogram test utilities/mocks.
@@ -167,7 +174,8 @@ Telegram
 
 - [ ] generate and commit `uv.lock` after target-platform resolution;
 - [ ] dependency profiles: core, climate, satellite, rag, dev;
-- [ ] Alembic migration as mandatory step in deploy/update scripts;
+- [x] Alembic migration as mandatory step in deploy/update scripts;
+- [x] concise operator README and versioned `scripts/help.sh` command reference;
 - [ ] clean-host smoke test for `deploy.sh` on Debian 12;
 - [ ] automated test of atomic update and failed-start rollback;
 - [ ] backup/restore runbook with periodic restore verification;

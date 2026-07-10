@@ -82,9 +82,11 @@ create_runtime_config() {
 
   umask 0027
   cat > "${ENV_FILE}" <<EOF
+APP_ENV=production
 TELEGRAM_BOT_TOKEN=${token}
 DATABASE_URL=postgresql+asyncpg://${db_user}:${db_password}@127.0.0.1:5432/${db_name}
 REDIS_URL=redis://127.0.0.1:6379/0
+COORDINATION_NAMESPACE=crop-forecast-bot
 LOG_LEVEL=INFO
 SCHEDULER_TIMEZONE=Europe/Moscow
 HEARTBEAT_FILE=/run/crop-forecast-bot/heartbeat
@@ -150,8 +152,9 @@ validate_runtime_env
 install_systemd_units
 create_release "${BRANCH}"
 build_release "${NEW_RELEASE}"
+backup_database
+run_migrations "${NEW_RELEASE}"
 preflight_release "${NEW_RELEASE}"
-run_migrations_if_available "${NEW_RELEASE}"
 activate_release "${NEW_RELEASE}"
 
 systemctl enable "${SERVICE_NAME}"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import AsyncIterator
 
@@ -7,6 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import User
+
+
+@dataclass(frozen=True, slots=True)
+class NotificationTarget:
+    telegram_id: int
+    latitude: float
+    longitude: float
+    selected_crop: str
 
 
 async def get_or_create_user(
@@ -98,6 +107,36 @@ async def set_daily_digest(
     return user
 
 
+async def list_notification_targets(
+    session: AsyncSession,
+    *,
+    daily_digest_only: bool = False,
+) -> list[NotificationTarget]:
+    statement = select(
+        User.telegram_id,
+        User.latitude,
+        User.longitude,
+        User.selected_crop,
+    ).where(
+        User.latitude.is_not(None),
+        User.longitude.is_not(None),
+    )
+    if daily_digest_only:
+        statement = statement.where(User.daily_digest == 1)
+
+    result = await session.execute(statement)
+    return [
+        NotificationTarget(
+            telegram_id=row.telegram_id,
+            latitude=float(row.latitude),
+            longitude=float(row.longitude),
+            selected_crop=row.selected_crop or "wheat",
+        )
+        for row in result.all()
+    ]
+
+
+# Compatibility iterators for callers not yet migrated to snapshot loading.
 async def get_all_active_users(session: AsyncSession) -> AsyncIterator[User]:
     result = await session.stream(
         select(User).where(User.latitude.is_not(None), User.longitude.is_not(None))

@@ -20,6 +20,9 @@ def test_native_operations_commands_are_versioned() -> None:
         "scripts/update.sh",
         "scripts/rollback.sh",
         "scripts/status.sh",
+        "scripts/help.sh",
+        "alembic.ini",
+        "alembic/versions/20260710_0001_initial_schema.py",
         "deploy/systemd/crop-forecast-bot.service",
         "deploy/systemd/crop-forecast-bot-update.service",
         "deploy/systemd/crop-forecast-bot-update.timer",
@@ -35,3 +38,17 @@ def test_systemd_service_uses_readiness_and_watchdog() -> None:
     assert "Type=notify" in unit
     assert "WatchdogSec=" in unit
     assert "ExecStart=@CURRENT_LINK@/.venv/bin/python -m src.bot.main" in unit
+
+
+def test_production_startup_requires_alembic_schema() -> None:
+    main = (ROOT / "src/bot/main.py").read_text(encoding="utf-8")
+    database = (ROOT / "src/database/__init__.py").read_text(encoding="utf-8")
+    common = (ROOT / "scripts/common.sh").read_text(encoding="utf-8")
+    deploy = (ROOT / "scripts/deploy.sh").read_text(encoding="utf-8")
+    update = (ROOT / "scripts/update.sh").read_text(encoding="utf-8")
+
+    assert "require_current_schema" in main
+    assert "create_all" not in database
+    assert "run_migrations()" in common
+    assert 'run_migrations "${NEW_RELEASE}"' in deploy
+    assert 'run_migrations "${NEW_RELEASE}"' in update
