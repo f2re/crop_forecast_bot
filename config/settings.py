@@ -11,6 +11,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    value = raw_value.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean value")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     telegram_bot_token: str
@@ -18,9 +30,7 @@ class Settings:
     redis_url: str | None
     app_env: str
     coordination_namespace: str
-    cds_api_url: str
-    cds_api_key: str | None
-    openrouter_api_key: str | None
+    rag_enabled: bool
     log_level: str
     scheduler_timezone: str
     heartbeat_file: Path
@@ -30,7 +40,9 @@ class Settings:
         errors: list[str] = []
         if not self.telegram_bot_token:
             errors.append("TELEGRAM_BOT_TOKEN is required")
-        if not self.database_url.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
+        if not self.database_url.startswith(
+            ("postgresql+asyncpg://", "sqlite+aiosqlite://")
+        ):
             errors.append("DATABASE_URL must use an async SQLAlchemy driver")
         if not self.coordination_namespace:
             errors.append("COORDINATION_NAMESPACE must not be empty")
@@ -42,7 +54,9 @@ class Settings:
             if not self.database_url.startswith("postgresql+asyncpg://"):
                 errors.append("Production requires PostgreSQL with asyncpg")
             if not self.redis_url:
-                errors.append("Production requires REDIS_URL for FSM and scheduler leases")
+                errors.append(
+                    "Production requires REDIS_URL for FSM and scheduler leases"
+                )
         if errors:
             raise RuntimeError("Invalid runtime configuration: " + "; ".join(errors))
 
@@ -57,25 +71,23 @@ def get_settings() -> Settings:
         db_user = os.getenv("DB_USER", "postgres")
         db_password = os.getenv("DB_PASSWORD", "")
         database_url = (
-            f"postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+            f"postgresql+asyncpg://{db_user}:{db_password}@"
+            f"{db_host}:{db_port}/{db_name}"
         )
     elif database_url.startswith("postgresql://"):
-        database_url = database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        database_url = database_url.replace(
+            "postgresql://", "postgresql+asyncpg://", 1
+        )
 
-    redis_url = os.getenv("REDIS_URL", "").strip() or None
     return Settings(
         telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
         database_url=database_url,
-        redis_url=redis_url,
+        redis_url=os.getenv("REDIS_URL", "").strip() or None,
         app_env=os.getenv("APP_ENV", "development").strip().lower(),
         coordination_namespace=os.getenv(
             "COORDINATION_NAMESPACE", "crop-forecast-bot"
         ).strip(),
-        cds_api_url=os.getenv(
-            "CDS_API_URL", "https://cds.climate.copernicus.eu/api"
-        ).strip(),
-        cds_api_key=os.getenv("CDS_API_KEY", "").strip() or None,
-        openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip() or None,
+        rag_enabled=_env_bool("RAG_ENABLED", default=False),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         scheduler_timezone=os.getenv("SCHEDULER_TIMEZONE", "Europe/Moscow"),
         heartbeat_file=Path(
@@ -89,13 +101,3 @@ def get_settings() -> Settings:
 
 def get_database_url() -> str:
     return get_settings().database_url
-
-
-# Transitional module-level names for modules not yet migrated to dependency injection.
-# The production entrypoint uses Settings directly.
-_settings = get_settings()
-TELEGRAM_BOT_TOKEN = _settings.telegram_bot_token
-CDS_API_URL = _settings.cds_api_url
-CDS_API_KEY = _settings.cds_api_key
-OPENROUTER_API_KEY = _settings.openrouter_api_key
-DATABASE_URL = _settings.database_url
