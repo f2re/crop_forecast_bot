@@ -21,6 +21,7 @@ class Settings:
     log_level: str
     scheduler_timezone: str
     heartbeat_file: Path
+    open_meteo_cache_path: Path
 
     def validate(self) -> None:
         errors: list[str] = []
@@ -60,8 +61,11 @@ def get_settings() -> Settings:
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         scheduler_timezone=os.getenv("SCHEDULER_TIMEZONE", "Europe/Moscow"),
         heartbeat_file=Path(
-            os.getenv("HEARTBEAT_FILE", "/tmp/crop_forecast_bot/heartbeat")
-        ),
+            os.getenv("HEARTBEAT_FILE", ".runtime/heartbeat")
+        ).expanduser(),
+        open_meteo_cache_path=Path(
+            os.getenv("OPEN_METEO_CACHE_PATH", ".cache/openmeteo")
+        ).expanduser(),
     )
 
 
