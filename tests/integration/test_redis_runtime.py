@@ -87,7 +87,8 @@ async def test_redis_fsm_state_survives_storage_restart() -> None:
             "field_action": "create",
             "field_name": "Северное",
         }
-        await second.clear(key)
+        await second.set_state(key, None)
+        await second.set_data(key, {})
         assert await second.get_state(key) is None
         assert await second.get_data(key) == {}
     finally:
