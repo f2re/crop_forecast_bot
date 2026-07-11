@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from aiogram.types import CallbackQuery, Chat, Message, User
 
+import src.bot.handlers.settings as settings_handler
+from src.bot.handlers.settings import parse_setting_callback
 from src.bot.keyboards import get_settings_keyboard
 from src.bot.middlewares import CallbackIdempotencyMiddleware
-from src.bot.handlers.settings import parse_setting_callback
 from src.infrastructure.coordination import MemoryCoordination
 
 
@@ -25,6 +27,25 @@ def _callback(callback_id: str, data: str = "field_activate:42") -> CallbackQuer
         ),
         data=data,
     )
+
+
+class _FakeMessage:
+    def __init__(self) -> None:
+        self.edits: list[tuple[str, object | None]] = []
+
+    async def edit_text(self, text: str, reply_markup=None) -> None:
+        self.edits.append((text, reply_markup))
+
+
+class _FakeCallback:
+    def __init__(self, data: str) -> None:
+        self.data = data
+        self.from_user = SimpleNamespace(id=1001)
+        self.message = _FakeMessage()
+        self.answers: list[tuple[str | None, bool]] = []
+
+    async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
+        self.answers.append((text, show_alert))
 
 
 @pytest.mark.asyncio
@@ -116,3 +137,77 @@ def test_setting_callback_parser_is_strict() -> None:
         parse_setting_callback("set_digest:42:toggle", "set_digest")
     with pytest.raises(ValueError):
         parse_setting_callback("set_digest:-1:1", "set_digest")
+
+
+@pytest.mark.asyncio
+async def test_digest_callback_sets_explicit_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    before = SimpleNamespace(
+        field_id=42,
+        field_name="Северное",
+        daily_digest=False,
+        frost_alerts=True,
+    )
+    after = SimpleNamespace(
+        field_id=42,
+        field_name="Северное",
+        daily_digest=True,
+        frost_alerts=True,
+    )
+    saved: list[dict[str, bool]] = []
+
+    async def fake_context(session, telegram_id):
+        return before
+
+    async def fake_save(session, telegram_id, **kwargs):
+        saved.append(kwargs)
+        return after
+
+    monkeypatch.setattr(settings_handler, "get_field_context", fake_context)
+    monkeypatch.setattr(settings_handler, "set_field_notifications", fake_save)
+    callback = _FakeCallback("set_digest:42:1")
+
+    await settings_handler.set_digest(callback, object())
+
+    assert saved == [{"daily_digest": True}]
+    assert callback.answers[-1] == ("Ежедневный отчёт включён", False)
+    markup = callback.message.edits[-1][1]
+    callback_data = [
+        button.callback_data
+        for row in markup.inline_keyboard
+        for button in row
+    ]
+    assert "set_digest:42:0" in callback_data
+
+
+@pytest.mark.asyncio
+async def test_stale_field_callback_does_not_change_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = SimpleNamespace(
+        field_id=42,
+        field_name="Северное",
+        daily_digest=False,
+        frost_alerts=True,
+    )
+    save_called = False
+
+    async def fake_context(session, telegram_id):
+        return context
+
+    async def fake_save(session, telegram_id, **kwargs):
+        nonlocal save_called
+        save_called = True
+        return context
+
+    monkeypatch.setattr(settings_handler, "get_field_context", fake_context)
+    monkeypatch.setattr(settings_handler, "set_field_notifications", fake_save)
+    callback = _FakeCallback("set_digest:41:1")
+
+    await settings_handler.set_digest(callback, object())
+
+    assert save_called is False
+    assert callback.answers[-1][1] is True
+    assert "другому полю" in (callback.answers[-1][0] or "")
+    assert callback.message.edits == []
