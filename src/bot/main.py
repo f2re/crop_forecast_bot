@@ -16,6 +16,7 @@ from aiogram.types import BotCommand, TelegramObject
 
 from config.settings import Settings, get_settings
 from src.api.open_meteo import close_open_meteo_resources
+from src.bot.middlewares import CallbackIdempotencyMiddleware
 from src.bot.scheduler import start_scheduler, stop_scheduler
 from src.database import Database, init_db
 from src.database.schema import require_current_schema
@@ -92,16 +93,23 @@ async def run() -> None:
         )
         stack.push_async_callback(coordination.close)
         logger.info(
-            "Scheduler coordination backend: %s",
+            "Runtime coordination backend: %s",
             "Redis" if settings.redis_url else "process-local memory",
         )
 
         dispatcher = Dispatcher(storage=storage)
         dispatcher.update.middleware(DbSessionMiddleware(database.get_session))
+        dispatcher.callback_query.outer_middleware(
+            CallbackIdempotencyMiddleware(coordination)
+        )
 
         from src.bot.handlers.core import router as core_router
         from src.bot.handlers.rag import router as rag_router
+        from src.bot.handlers.settings import router as settings_router
 
+        # Settings precede the legacy core handlers so old toggle callbacks are
+        # rejected rather than replayed as non-idempotent state inversions.
+        dispatcher.include_router(settings_router)
         dispatcher.include_router(core_router)
         dispatcher.include_router(rag_router)
         await configure_bot_commands(bot)

@@ -14,7 +14,7 @@ domain and scientifically bounded agro calculations
 infrastructure adapters
   ├─ Open-Meteo forecast / historical reanalysis
   ├─ PostgreSQL repositories / Alembic
-  ├─ Redis leases / deduplication
+  ├─ Redis callback/job leases / deduplication
   └─ optional source-attributed RAG
 ```
 
@@ -27,27 +27,29 @@ infrastructure adapters
 5. отсутствие данных не заменяется эвристикой или нулём;
 6. формула имеет источник, единицы, период и тесты;
 7. неподдерживаемая функция явно выключена;
-8. релиз принимается после зелёного CI, migration check и runtime smoke;
-9. production разворачивается Bash/systemd без Docker.
+8. state-changing callback задаёт желаемое конечное состояние, а не toggle;
+9. релиз принимается после зелёного CI, migration check и runtime smoke;
+10. production разворачивается Bash/systemd без Docker.
 
-## Ближайший вертикальный срез — Telegram idempotency и process-level scheduler
+## Ближайший вертикальный срез — полный Telegram/FSM flow и отказные сценарии
 
 Приоритет: **P0**.
 
-1. Добавить idempotency key для callback, исключающий повторное выполнение операции при двойном нажатии.
-2. Покрыть полный aiogram/FSM flow `field → crop → season → report` сценарными тестами.
-3. Проверить восстановление каждого FSM branch после закрытия и повторного открытия RedisStorage.
-4. Запустить два scheduler worker против одной PostgreSQL/Redis пары и подтвердить один job owner и одну отправку.
-5. Проверить повтор job после потери lease, исключения Telegram API и рестарта worker.
-6. Проверить явную деградацию при недоступности PostgreSQL/Redis.
+1. Покрыть aiogram flow `field → crop → season → report` сценарными тестами на уровне Router/Dispatcher.
+2. Проверить восстановление каждой FSM-ветки после закрытия и повторного открытия RedisStorage.
+3. Проверить отказ PostgreSQL и Redis до, во время и после пользовательской операции.
+4. Проверить scheduler retry после потери job lease, исключения Telegram API и аварийного завершения worker.
+5. Выполнить clean-host `deploy → update → forced failure → rollback → restore` на Debian 12.
+6. Выполнить реальный Telegram API smoke для двух полей.
 
 Definition of Done:
 
-- повторный callback не создаёт вторую запись и не меняет состояние дважды;
-- FSM продолжается после рестарта во всех пользовательских ветках;
+- пользовательский flow достигается из `/start` и переживает restart;
+- повтор callback не изменяет состояние дважды;
 - два scheduler worker не создают двойной alert/digest;
-- повтор после неуспешной отправки возможен, после успешной — блокируется TTL;
-- CI воспроизводит сценарии без внешних секретов.
+- неуспешная отправка допускает retry, успешная блокируется TTL;
+- outage БД/Redis даёт контролируемую ошибку без потери согласованности;
+- CI и clean-host smoke воспроизводимы без ручного изменения кода.
 
 ## Этап 0 — стабилизация runtime
 
@@ -82,7 +84,8 @@ Definition of Done:
 - [x] real Redis multi-client lease tests;
 - [x] RedisStorage state/data restart test;
 - [x] real-service tests в CI без Docker;
-- [ ] full scheduler multi-process test;
+- [x] two-worker scheduler lock and notification dedup test on real Redis;
+- [ ] failure/restart scheduler orchestration test;
 - [ ] cleanup migration legacy user coordinate/crop columns после production verification.
 
 ## Этап 2 — научная целостность оперативного отчёта
@@ -191,7 +194,10 @@ Definition of Done:
 - [x] multi-field management;
 - [x] field-level notification switches;
 - [x] explicit progress and degraded output;
-- [ ] callback idempotency middleware;
+- [x] distributed callback delivery idempotency;
+- [x] rapid double-click semantic suppression;
+- [x] desired-state notification callbacks with field context;
+- [x] legacy toggle callbacks fail closed;
 - [ ] quiet hours and notification windows;
 - [ ] archive/delete field flow;
 - [ ] admin diagnostics and provider status;
@@ -231,6 +237,7 @@ Definition of Done:
 
 - [x] CI зелёный для всего `src/config/alembic/tests`;
 - [x] real PostgreSQL/Redis integration tests;
+- [x] callback and scheduler worker idempotency tests;
 - [x] Open-Meteo live smoke available;
 - [ ] two-field Telegram smoke проходит после deployment;
 - [ ] Alembic head подтверждён на production-копии;

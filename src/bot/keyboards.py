@@ -209,21 +209,37 @@ def get_settings_keyboard(
     *,
     daily_digest_enabled: bool,
     frost_alerts_enabled: bool,
+    field_id: int | None = None,
 ) -> InlineKeyboardMarkup:
+    """Build replay-safe notification controls for one field.
+
+    ``field_id=None`` is retained only for old handler compatibility. Such a
+    keyboard refreshes the settings page instead of changing state.
+    """
     digest_action = "Отключить" if daily_digest_enabled else "Включить"
     frost_action = "Отключить" if frost_alerts_enabled else "Включить"
+    if field_id is None:
+        digest_callback = "settings"
+        frost_callback = "settings"
+    else:
+        digest_callback = (
+            f"set_digest:{field_id}:{0 if daily_digest_enabled else 1}"
+        )
+        frost_callback = (
+            f"set_frost:{field_id}:{0 if frost_alerts_enabled else 1}"
+        )
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=f"{digest_action} ежедневный отчёт",
-                    callback_data="toggle_digest",
+                    callback_data=digest_callback,
                 )
             ],
             [
                 InlineKeyboardButton(
                     text=f"{frost_action} температурные алерты",
-                    callback_data="toggle_frost",
+                    callback_data=frost_callback,
                 )
             ],
             [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],

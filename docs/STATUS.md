@@ -7,7 +7,7 @@
 ```text
 aiogram 3.x
 PostgreSQL + Alembic
-Redis FSM / leases / deduplication
+Redis FSM / callback idempotency / scheduler leases / deduplication
 Open-Meteo Forecast + Historical Weather
 APScheduler
 systemd + Bash release scripts
@@ -33,7 +33,11 @@ systemd + Bash release scripts
 - [x] культура, дата сезона и ручная фаза;
 - [x] отдельные настройки уведомлений;
 - [x] отчёт из реального Telegram-сценария;
-- [x] `/start`, `/help`, `/cancel`.
+- [x] `/start`, `/help`, `/cancel`;
+- [x] exact callback redelivery не выполняет handler повторно;
+- [x] быстрые повторные нажатия подавляются общим Redis coordination;
+- [x] уведомления используют desired-state callback вместо неидемпотентного toggle;
+- [x] callback старого или другого поля отклоняется без изменения данных.
 
 ### Данные и расчёты
 
@@ -57,7 +61,10 @@ systemd + Bash release scripts
 - [x] атомарные Redis leases между независимыми клиентами;
 - [x] token-checked renew/release на реальном Redis;
 - [x] межклиентская дедупликация `_send_once`;
-- [x] восстановление aiogram FSM state/data после закрытия и повторного открытия RedisStorage;
+- [x] восстановление aiogram FSM state/data после повторного открытия RedisStorage;
+- [x] два runtime worker конкурируют за один callback action key;
+- [x] два scheduler worker с реальным Redis отправляют один frost alert;
+- [x] повтор scheduler job после освобождения job lock не дублирует alert;
 - [x] CI запускает PostgreSQL и Redis системными сервисами, без Docker.
 
 ### Очистка репозитория
@@ -70,14 +77,14 @@ systemd + Bash release scripts
 
 ## Выполняемый этап
 
-### P0 — идемпотентность Telegram и scheduler process tests
+### P0 — полные Telegram/FSM и отказные сценарии
 
-- [ ] callback idempotency keys и защита от повторного нажатия;
-- [ ] сценарный FSM test полного field → crop → season flow;
-- [ ] два полноценных scheduler worker против одной БД/Redis;
-- [ ] повтор job после потери lease/аварийного завершения;
-- [ ] недоступность PostgreSQL/Redis во время активного FSM;
-- [ ] real Telegram API smoke после deployment.
+- [ ] сценарный test полного field → crop → season → report flow;
+- [ ] повтор scheduler job после потери lease/аварийного завершения worker;
+- [ ] недоступность PostgreSQL во время активного FSM;
+- [ ] недоступность Redis во время callback/FSM;
+- [ ] реальный Telegram API smoke после deployment;
+- [ ] проверка callback после редактирования или удаления исходного сообщения.
 
 ### P0 — clean-host эксплуатация
 
@@ -117,6 +124,8 @@ systemd + Bash release scripts
 - [x] зелёный CI полного дерева;
 - [x] live Open-Meteo smoke;
 - [x] реальные PostgreSQL/Redis integration tests;
+- [x] callback idempotency и desired-state notification controls;
+- [x] двухворкерная Redis-защита scheduler;
 - [x] отсутствие legacy/fake runtime;
 - [x] явное отключение неподдерживаемых возможностей;
 - [ ] clean-host systemd deployment;

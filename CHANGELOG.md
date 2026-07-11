@@ -2,7 +2,27 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
-## Unreleased — real PostgreSQL and Redis verification
+## Unreleased — callback idempotency and scheduler workers
+
+### Added
+
+- Redis-backed callback delivery idempotency by `CallbackQuery.id`;
+- short semantic anti-double-click lease by user, message and callback data;
+- field-aware desired-state notification callbacks;
+- fail-closed handling of legacy `toggle_digest` and `toggle_frost` buttons;
+- unit tests for callback replay, concurrent presses and retry after handler failure;
+- real Redis competition test for two callback runtime workers;
+- real Redis two-worker frost scheduler test;
+- verification that notification deduplication persists after job lock release.
+
+### Changed
+
+- settings callbacks now encode the final `enabled/disabled` state instead of inverting current state;
+- callback for an inactive or different field is rejected as stale;
+- runtime shares one coordination backend between scheduler and callback middleware;
+- status and development plan move the next P0 focus to full FSM and outage scenarios.
+
+## 2026-07-11 — real PostgreSQL and Redis verification
 
 ### Added
 
