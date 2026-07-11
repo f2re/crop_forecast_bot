@@ -2,7 +2,24 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
-## Unreleased — scientific integrity and repository cleanup
+## Unreleased — real PostgreSQL and Redis verification
+
+### Added
+
+- PostgreSQL integration tests для Alembic adoption/backfill;
+- PostgreSQL row-lock и partial unique index tests;
+- scheduler target tests на реальной PostgreSQL schema;
+- multi-client Redis lease/deduplication tests;
+- aiogram RedisStorage restart test;
+- отдельный `integration` pytest marker;
+- CI с локальными PostgreSQL и Redis системными сервисами без Docker.
+
+### Changed
+
+- unit/contract и service integration tests выполняются отдельными CI-шагами;
+- development status и план этапов разделяют выполненную service integration и следующий process-level slice.
+
+## 2026-07-10 — scientific integrity and repository cleanup
 
 ### Added
 

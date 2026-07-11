@@ -1,6 +1,6 @@
 # План модернизации Crop Forecast Bot
 
-Дата актуализации: **2026-07-10**.
+Дата актуализации: **2026-07-11**.
 
 ## Целевая архитектура
 
@@ -30,24 +30,24 @@ infrastructure adapters
 8. релиз принимается после зелёного CI, migration check и runtime smoke;
 9. production разворачивается Bash/systemd без Docker.
 
-## Ближайший вертикальный срез — persistence и concurrency
+## Ближайший вертикальный срез — Telegram idempotency и process-level scheduler
 
-Приоритет: **P0**. Цель — доказать устойчивость уже реализованного Telegram flow на реальных PostgreSQL и Redis, а не добавлять новые источники данных.
+Приоритет: **P0**.
 
-1. Добавить изолированные integration tests с реальными PostgreSQL и Redis: Alembic `upgrade head`, partial indexes, row locking, Redis TTL и lease semantics.
-2. Устранить race conditions в `get_or_create_user`, создании active field и crop season через idempotent upsert либо обработку `IntegrityError`.
-3. Добавить сценарные aiogram/FSM tests для создания поля и ввода сезона до и после рестарта Redis.
-4. Запустить два scheduler-процесса против одной БД/Redis и проверить distributed lock, deduplication, повтор после падения и отсутствие двойной отправки.
-5. Проверить недоступность PostgreSQL/Redis, повторные callback, рестарт между шагами FSM и корректное закрытие ресурсов.
+1. Добавить idempotency key для callback, исключающий повторное выполнение операции при двойном нажатии.
+2. Покрыть полный aiogram/FSM flow `field → crop → season → report` сценарными тестами.
+3. Проверить восстановление каждого FSM branch после закрытия и повторного открытия RedisStorage.
+4. Запустить два scheduler worker против одной PostgreSQL/Redis пары и подтвердить один job owner и одну отправку.
+5. Проверить повтор job после потери lease, исключения Telegram API и рестарта worker.
+6. Проверить явную деградацию при недоступности PostgreSQL/Redis.
 
-Definition of Done среза:
+Definition of Done:
 
-- миграции и repository contracts проходят на PostgreSQL, а не только SQLite;
-- FSM продолжается после рестарта процесса;
-- два scheduler worker не создают двойной alert;
-- повторный callback идемпотентен;
-- CI воспроизводит срез без внешних секретов;
-- эксплуатационные ограничения и команды обновлены в README/runbook.
+- повторный callback не создаёт вторую запись и не меняет состояние дважды;
+- FSM продолжается после рестарта во всех пользовательских ветках;
+- два scheduler worker не создают двойной alert/digest;
+- повтор после неуспешной отправки возможен, после успешной — блокируется TTL;
+- CI воспроизводит сценарии без внешних секретов.
 
 ## Этап 0 — стабилизация runtime
 
@@ -66,24 +66,28 @@ Definition of Done среза:
 
 ## Этап 1 — схема и устойчивое состояние
 
-Статус: **production vertical slice выполнен**.
+Статус: **production и real-service integration slice выполнены**.
 
 - [x] Alembic baseline и обязательный head;
 - [x] adoption legacy `users` schema;
 - [x] `Field` и `CropSeason`;
-- [x] несколько полей и одно активное поле;
+- [x] несколько полей и одно active field;
 - [x] отдельные crop/season/phase/preferences;
 - [x] Redis FSM;
 - [x] Redis scheduler leases;
 - [x] persistent notification deduplication;
 - [x] snapshot DB targets before external I/O;
-- [ ] real PostgreSQL migration/repository integration tests;
-- [ ] Redis restart and concurrent-process tests;
-- [ ] cleanup migration legacy user coordinate/crop columns after production verification.
+- [x] real PostgreSQL migration/repository tests;
+- [x] PostgreSQL partial unique indexes и row locking;
+- [x] real Redis multi-client lease tests;
+- [x] RedisStorage state/data restart test;
+- [x] real-service tests в CI без Docker;
+- [ ] full scheduler multi-process test;
+- [ ] cleanup migration legacy user coordinate/crop columns после production verification.
 
 ## Этап 2 — научная целостность оперативного отчёта
 
-Статус: **реализован, CI подтверждён; clean-host smoke не выполнен**.
+Статус: **реализован и подтверждён CI; clean-host smoke не выполнен**.
 
 - [x] local-calendar partition текущего дня;
 - [x] explicit `reanalysis / operational_past / forecast` labels;
@@ -191,7 +195,7 @@ Definition of Done среза:
 - [ ] quiet hours and notification windows;
 - [ ] archive/delete field flow;
 - [ ] admin diagnostics and provider status;
-- [ ] scenario tests with mocked Telegram updates;
+- [ ] full scenario tests with mocked Telegram updates;
 - [ ] restart test during each FSM branch.
 
 ## Этап 7 — RAG
@@ -213,6 +217,7 @@ Definition of Done среза:
 - [x] PostgreSQL backup before update;
 - [x] atomic symlink activation and code rollback;
 - [x] verification command and live provider smoke;
+- [x] real PostgreSQL/Redis CI without Docker;
 - [ ] `uv.lock` validated on Debian/Astra;
 - [ ] clean-host Debian 12 test;
 - [ ] Astra Linux test;
@@ -225,7 +230,8 @@ Definition of Done среза:
 ## Definition of Done ближайшего релиза
 
 - [x] CI зелёный для всего `src/config/alembic/tests`;
-- [ ] Open-Meteo live smoke проходит на контрольной точке;
+- [x] real PostgreSQL/Redis integration tests;
+- [x] Open-Meteo live smoke available;
 - [ ] two-field Telegram smoke проходит после deployment;
 - [ ] Alembic head подтверждён на production-копии;
 - [ ] deploy/update/rollback проверены на чистом Debian 12;

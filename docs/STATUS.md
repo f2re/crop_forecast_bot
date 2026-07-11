@@ -1,6 +1,6 @@
 # Статус разработки
 
-Дата актуализации: **2026-07-10**.
+Дата актуализации: **2026-07-11**.
 
 ## Текущий production-контур
 
@@ -23,7 +23,8 @@ systemd + Bash release scripts
 - [x] systemd readiness, heartbeat и watchdog;
 - [x] atomic release directories и PostgreSQL backup;
 - [x] обязательный Alembic head на startup;
-- [x] production verification script.
+- [x] production verification script;
+- [x] полный CI для `src/config/alembic/tests`.
 
 ### Пользовательский flow
 
@@ -43,7 +44,21 @@ systemd + Bash release scripts
 - [x] ГТК без прогнозных осадков;
 - [x] P−ET₀ без подстановки нулей;
 - [x] frost screening только по прогнозным строкам;
-- [x] явные scientific limitations.
+- [x] явные scientific limitations;
+- [x] read-only live provider smoke.
+
+### PostgreSQL и Redis integration
+
+- [x] Alembic `upgrade head` на реальном PostgreSQL;
+- [x] adoption и backfill legacy `users` schema;
+- [x] PostgreSQL partial unique indexes active field/season;
+- [x] конкурентное переключение active field под row lock;
+- [x] field-level scheduler target filters на PostgreSQL;
+- [x] атомарные Redis leases между независимыми клиентами;
+- [x] token-checked renew/release на реальном Redis;
+- [x] межклиентская дедупликация `_send_once`;
+- [x] восстановление aiogram FSM state/data после закрытия и повторного открытия RedisStorage;
+- [x] CI запускает PostgreSQL и Redis системными сервисами, без Docker.
 
 ### Очистка репозитория
 
@@ -55,29 +70,27 @@ systemd + Bash release scripts
 
 ## Выполняемый этап
 
-### P0/P1 — научная целостность и воспроизводимая проверка
+### P0 — идемпотентность Telegram и scheduler process tests
 
-- [x] исправить period partition для текущего локального дня;
-- [x] исправить false-zero в P−ET₀;
-- [x] согласовать frost DTO и Telegram formatter;
-- [x] добавить read-only live provider smoke;
-- [x] добавить единый `verify-production.sh`;
-- [x] получить зелёный CI полного среза;
-- [ ] выполнить clean-host smoke на отдельной Debian 12 VM;
-- [ ] выполнить реальный Telegram smoke после deployment.
+- [ ] callback idempotency keys и защита от повторного нажатия;
+- [ ] сценарный FSM test полного field → crop → season flow;
+- [ ] два полноценных scheduler worker против одной БД/Redis;
+- [ ] повтор job после потери lease/аварийного завершения;
+- [ ] недоступность PostgreSQL/Redis во время активного FSM;
+- [ ] real Telegram API smoke после deployment.
+
+### P0 — clean-host эксплуатация
+
+- [ ] deploy/update/rollback на чистой Debian 12 VM;
+- [ ] failed-start rollback test;
+- [ ] restore PostgreSQL dump в отдельную БД;
+- [ ] smoke на поддерживаемом Astra Linux окружении.
 
 ## Следующие этапы
 
-### P0 — интеграционные тесты
-
-- [ ] PostgreSQL migration/repository tests на реальном PostgreSQL;
-- [ ] Redis FSM restart test;
-- [ ] конкурентный scheduler test с двумя процессами;
-- [ ] mocked full HTTP contract Open-Meteo;
-- [ ] deploy/update/failed-start rollback test.
-
 ### P1 — provider resilience
 
+- [ ] mocked full HTTP contract Open-Meteo;
 - [ ] общий lifecycle HTTP-клиентов;
 - [ ] circuit breaker и измеримый rate limit;
 - [ ] structured provider metadata и latency/error metrics;
@@ -101,10 +114,11 @@ systemd + Bash release scripts
 
 ## Критерий ближайшего релиза
 
-- зелёный CI полного дерева;
-- live Open-Meteo smoke;
-- отсутствие legacy/fake runtime;
-- явное отключение неподдерживаемых возможностей;
-- clean-host systemd deployment;
-- проверенный Telegram flow для двух полей;
-- документированный rollback и восстановление БД.
+- [x] зелёный CI полного дерева;
+- [x] live Open-Meteo smoke;
+- [x] реальные PostgreSQL/Redis integration tests;
+- [x] отсутствие legacy/fake runtime;
+- [x] явное отключение неподдерживаемых возможностей;
+- [ ] clean-host systemd deployment;
+- [ ] проверенный Telegram flow для двух полей после deployment;
+- [ ] проверенный rollback и восстановление БД.

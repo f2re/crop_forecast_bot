@@ -11,9 +11,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}
+      TEST_DATABASE_URL: postgresql+asyncpg://cropbot_test:cropbot_test@127.0.0.1:5432/crop_forecast_bot_test
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
     steps:
       - uses: actions/checkout@v4
 
@@ -25,13 +27,42 @@ jobs:
             requirements.txt
             requirements-dev.txt
 
-      - name: Install validation dependencies
+      - name: Install validation dependencies and local services
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck
+          sudo apt-get install -y --no-install-recommends \
+            shellcheck postgresql postgresql-client redis-server
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
           pip check
+
+      - name: Start PostgreSQL and Redis
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo service postgresql start
+          sudo service redis-server start
+          sudo -u postgres psql --set=ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_roles WHERE rolname = 'cropbot_test'
+            ) THEN
+              CREATE ROLE cropbot_test LOGIN PASSWORD 'cropbot_test';
+            ELSE
+              ALTER ROLE cropbot_test WITH LOGIN PASSWORD 'cropbot_test';
+            END IF;
+          END
+          $$;
+          SELECT 'CREATE DATABASE crop_forecast_bot_test OWNER cropbot_test'
+          WHERE NOT EXISTS (
+            SELECT 1 FROM pg_database WHERE datname = 'crop_forecast_bot_test'
+          )
+          \gexec
+          GRANT ALL PRIVILEGES ON DATABASE crop_forecast_bot_test TO cropbot_test;
+          SQL
+          pg_isready -h 127.0.0.1 -p 5432 -d crop_forecast_bot_test
+          redis-cli -n 15 ping | grep -qx PONG
 
       - name: Python static checks
         run: |
@@ -91,7 +122,10 @@ jobs:
           esac
 
       - name: Unit and contract tests
-        run: python -m pytest -q
+        run: python -m pytest -q -m "not integration"
+
+      - name: PostgreSQL and Redis integration tests
+        run: python -m pytest -q -m integration
 
       - name: Alembic graph
         run: python -m alembic heads
