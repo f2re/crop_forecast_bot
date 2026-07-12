@@ -9,6 +9,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.database import Database
@@ -184,6 +185,86 @@ async def test_concurrent_first_updates_create_one_user_and_field() -> None:
         assert user_count == 1
         assert field_count == 1
         assert season_count == 1
+    finally:
+        await database.dispose()
+        await _reset_database(database_url)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_initial_field_operation_rolls_back_as_one_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = _test_database_url()
+    await _reset_database(database_url)
+    await asyncio.to_thread(_upgrade, database_url)
+
+    database = Database(database_url)
+    try:
+        async with database.get_session() as session:
+            async def fail_commit() -> None:
+                # Force all pending ORM objects to reach PostgreSQL, then fail
+                # before COMMIT. User, field and season must already coexist in
+                # this one transaction; an intermediate user commit would make
+                # these assertions fail.
+                await session.flush()
+                user_count = await session.scalar(
+                    text("SELECT count(*) FROM users WHERE telegram_id = 1600")
+                )
+                field_count = await session.scalar(
+                    text(
+                        "SELECT count(*) FROM fields f "
+                        "JOIN users u ON u.id = f.user_id "
+                        "WHERE u.telegram_id = 1600"
+                    )
+                )
+                season_count = await session.scalar(
+                    text(
+                        "SELECT count(*) FROM crop_seasons s "
+                        "JOIN fields f ON f.id = s.field_id "
+                        "JOIN users u ON u.id = f.user_id "
+                        "WHERE u.telegram_id = 1600"
+                    )
+                )
+                assert (user_count, field_count, season_count) == (1, 1, 1)
+                raise OperationalError(
+                    "COMMIT",
+                    {},
+                    RuntimeError("simulated connection loss before commit"),
+                )
+
+            monkeypatch.setattr(session, "commit", fail_commit)
+            with pytest.raises(OperationalError, match="simulated connection loss"):
+                await save_coordinates(
+                    session,
+                    telegram_id=1600,
+                    latitude=55.75,
+                    longitude=37.62,
+                    username="transaction_farmer",
+                    first_name="Farmer",
+                )
+            await session.rollback()
+
+        async with database.engine.connect() as connection:
+            user_count = await connection.scalar(
+                text("SELECT count(*) FROM users WHERE telegram_id = 1600")
+            )
+            field_count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM fields f "
+                    "JOIN users u ON u.id = f.user_id "
+                    "WHERE u.telegram_id = 1600"
+                )
+            )
+            season_count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM crop_seasons s "
+                    "JOIN fields f ON f.id = s.field_id "
+                    "JOIN users u ON u.id = f.user_id "
+                    "WHERE u.telegram_id = 1600"
+                )
+            )
+        assert (user_count, field_count, season_count) == (0, 0, 0)
     finally:
         await database.dispose()
         await _reset_database(database_url)

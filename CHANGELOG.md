@@ -2,6 +2,30 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
+## 2026-07-12 — scheduler lease and transaction failure orchestration
+
+### Added
+
+- reusable token-checked `RenewingLease` heartbeat guard;
+- cancellation of protected provider/report work after lease ownership loss;
+- real Redis test for a scheduler job running longer than its initial TTL;
+- real Redis test for forced job-lock loss and safe retry by another worker;
+- subprocess crash test proving lease recovery after TTL without explicit release;
+- real PostgreSQL failure-injection after `flush` and before `COMMIT`;
+- cancellation test preventing protected coroutines from continuing after caller shutdown.
+
+### Changed
+
+- frost and daily-digest job locks renew independently of field iteration;
+- scheduler stops before starting another field after lease loss;
+- `_lock_user` no longer commits before the enclosing state-changing operation;
+- crop, season and manual-phase mutations use the same user row-lock transaction;
+- user, field and crop-season onboarding records roll back together on pre-commit failure.
+
+### Known limitation
+
+- Telegram `sendMessage` has no application idempotency key. A process death after Telegram accepts a message but before Redis dedup persistence leaves an ambiguous external outcome; the project does not claim absolute exactly-once delivery for this boundary.
+
 ## 2026-07-12 — Telegram/FSM reliability
 
 ### Added
@@ -16,7 +40,7 @@
 ### Fixed
 
 - manual phase selection no longer reads the removed `gdd_stages` structure;
-- `/help` and field-list copy now distinguish the active manual field from all enabled background-monitored fields;
+- `/help` and field-list copy distinguish the active manual field from all enabled background-monitored fields;
 - a deleted callback source message opens a fresh current menu instead of ending in an unhandled error.
 
 ## 2026-07-12 — field-readiness correctness

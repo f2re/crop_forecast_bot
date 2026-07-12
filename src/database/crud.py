@@ -136,11 +136,21 @@ async def _lock_user(
     username: str | None = None,
     first_name: str | None = None,
 ) -> User:
-    await get_or_create_user(session, telegram_id, username, first_name)
+    # Keep creation and the following state-changing operation in one
+    # transaction. Calling get_or_create_user here used to commit before the
+    # field/season mutation, leaving a partially applied operation when the
+    # second commit failed.
+    await _insert_user_if_missing(session, telegram_id, username, first_name)
     result = await session.execute(
         select(User).where(User.telegram_id == telegram_id).with_for_update()
     )
-    return result.scalar_one()
+    user = result.scalar_one()
+    if username is not None:
+        user.username = username
+    if first_name is not None:
+        user.first_name = first_name
+    user.updated_at = datetime.utcnow()
+    return user
 
 
 async def get_active_field(session: AsyncSession, user_id: int) -> Field | None:
@@ -518,7 +528,7 @@ async def update_user_crop(
     telegram_id: int,
     crop_key: str,
 ) -> User:
-    user = await get_or_create_user(session, telegram_id)
+    user = await _lock_user(session, telegram_id)
     user.selected_crop = crop_key
     user.updated_at = datetime.utcnow()
     field = await get_active_field(session, user.id)
@@ -540,7 +550,7 @@ async def set_season_start(
     telegram_id: int,
     season_start: date,
 ) -> CropSeason:
-    user = await get_or_create_user(session, telegram_id)
+    user = await _lock_user(session, telegram_id)
     field = await get_active_field(session, user.id)
     if field is None:
         raise ValueError("Сначала задайте координаты поля.")
@@ -561,7 +571,7 @@ async def set_manual_phase(
     telegram_id: int,
     phase: str,
 ) -> CropSeason:
-    user = await get_or_create_user(session, telegram_id)
+    user = await _lock_user(session, telegram_id)
     field = await get_active_field(session, user.id)
     if field is None:
         raise ValueError("Сначала задайте координаты поля.")
