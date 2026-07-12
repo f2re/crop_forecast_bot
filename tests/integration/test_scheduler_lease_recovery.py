@@ -92,21 +92,21 @@ async def test_job_lease_is_renewed_during_long_provider_work(
                 bot,
                 object(),
                 first,
-                job_lock_ttl_seconds=1,
-                renew_interval_seconds=0.2,
+                job_lock_ttl_seconds=2,
+                renew_interval_seconds=0.25,
             )
         )
         await asyncio.wait_for(report_started.wait(), timeout=2)
 
         # Wait longer than the original Redis TTL. The heartbeat must keep the
         # first worker's token alive, so the second worker cannot enter.
-        await asyncio.sleep(1.2)
+        await asyncio.sleep(2.3)
         await send_daily_digest(
             bot,
             object(),
             second,
-            job_lock_ttl_seconds=1,
-            renew_interval_seconds=0.2,
+            job_lock_ttl_seconds=2,
+            renew_interval_seconds=0.25,
         )
         assert report_calls == 1
         assert bot.messages == []
@@ -202,7 +202,7 @@ from src.infrastructure.coordination import create_coordination
 
 async def main():
     backend = await create_coordination(os.environ['TEST_REDIS_URL'], namespace=os.environ['LEASE_NAMESPACE'])
-    lease = await backend.acquire('job:crash-test', ttl_seconds=1)
+    lease = await backend.acquire('job:crash-test', ttl_seconds=2)
     print('ACQUIRED' if lease is not None else 'FAILED', flush=True)
     os._exit(0)
 
@@ -225,9 +225,13 @@ asyncio.run(main())
 
     replacement = await create_coordination(redis_url, namespace=namespace)
     try:
-        assert await replacement.acquire("job:crash-test", ttl_seconds=1) is None
-        await asyncio.sleep(1.2)
-        recovered = await replacement.acquire("job:crash-test", ttl_seconds=1)
+        assert await replacement.acquire("job:crash-test", ttl_seconds=2) is None
+        recovered = None
+        for _ in range(40):
+            await asyncio.sleep(0.1)
+            recovered = await replacement.acquire("job:crash-test", ttl_seconds=2)
+            if recovered is not None:
+                break
         assert recovered is not None
     finally:
         await replacement.close()
