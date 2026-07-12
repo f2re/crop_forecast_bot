@@ -45,3 +45,17 @@ def format_frost_alert(
         "и не порог повреждения культуры. Сверьте локальный прогноз, измерения на "
         "поле, фактическую фазу и понижения микрорельефа."
     )
+
+
+def format_frost_data_unavailable(
+    field_name: str,
+    reason: str,
+) -> str:
+    """Format a fail-closed warning when forecast Tmin cannot be evaluated."""
+    return (
+        "⚠️ <b>Температурный риск не оценён</b>\n"
+        f"🗺 Поле: <b>{html.escape(field_name)}</b>\n"
+        f"Причина: {html.escape(reason)}.\n\n"
+        "Отсутствие данных не означает отсутствие заморозка. Проверьте "
+        "независимый локальный прогноз или метеостанцию и повторите оценку позже."
+    )
