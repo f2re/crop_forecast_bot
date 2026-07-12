@@ -12,7 +12,7 @@ application services / typed ports
 domain / scientifically bounded calculations
         ↓
 infrastructure adapters
-  ├─ Open-Meteo forecast / historical reanalysis
+  ├─ Open-Meteo forecast / historical reanalysis / ERA5-Land reference
   ├─ PostgreSQL repositories / Alembic
   ├─ Redis callback/job leases / deduplication
   └─ optional source-attributed RAG
@@ -35,6 +35,9 @@ infrastructure adapters
 13. Production разворачивается Bash/systemd без Docker.
 14. Накопления строятся только по завершённым локальным суткам и сохраняют provenance.
 15. Разность двух величин вычисляется по одному и тому же набору парных наблюдений.
+16. Многолетнее сравнение использует фиксированную модель и фиксированный reference period; `Best Match` запрещён.
+17. Сумма не сравнивается при пропуске; отношение температур в °C к среднему не вычисляется.
+18. Эмпирический процентиль не называется вероятностью, SPI/SPEI или климатической станционной нормой.
 
 ## Завершённый срез — field-readiness
 
@@ -80,7 +83,7 @@ infrastructure adapters
 
 ## Завершённый срез — накопленные осадки и атмосферная испаряемость
 
-Статус: **реализован в production agro-report и покрыт unit/application tests**.
+Статус: **слит через PR #26**.
 
 - [x] накопленная сумма осадков по завершённым локальным суткам;
 - [x] накопленная provider ET₀ с независимым контролем полноты;
@@ -97,6 +100,27 @@ infrastructure adapters
 
 Методическая спецификация: `docs/SCIENTIFIC_WATER_INDICATORS.md`.
 
+## Завершённый срез — ERA5-Land seasonal reference
+
+Статус: **реализован в production agro-report, ожидает CI/merge текущего PR**.
+
+- [x] отдельные typed climate DTO и async provider port;
+- [x] фиксированный `models=era5_land`, reference period 1991–2020;
+- [x] 30-суточный cache и bounded shared concurrency;
+- [x] точная проверка покрытия reference period;
+- [x] same-length windows с одинаковой календарной датой старта;
+- [x] минимум 20 валидных референсных лет;
+- [x] эмпирический mid-rank percentile без distribution fit;
+- [x] средняя температура, осадки, provider ET₀, ГДД и сухие серии;
+- [x] накопленные метрики требуют полного ряда;
+- [x] отношение температуры в °C к среднему запрещено;
+- [x] 29 февраля не сдвигается эвристически;
+- [x] отказ climate provider не блокирует оперативный отчёт;
+- [x] Telegram-текст показывает источник, окно, число лет и ограничения;
+- [x] SPI/SPEI, station normal и вероятность не заявляются.
+
+Методическая спецификация: `docs/SCIENTIFIC_CLIMATE_REFERENCE.md`.
+
 ## Активный вертикальный срез — clean-host release gate
 
 Приоритет: **P0**.
@@ -109,7 +133,8 @@ infrastructure adapters
 6. Автоматический возврат предыдущего кода и systemd unit.
 7. `pg_restore` последнего dump в отдельную test database.
 8. Сравнение пользователей, полей, сезонов и Alembic revision.
-9. Повторение smoke на поддерживаемом Astra Linux окружении.
+9. Live smoke Forecast/Historical/ERA5-Land reference на контрольных точках.
+10. Повторение smoke на поддерживаемом Astra Linux окружении.
 
 Definition of Done:
 
@@ -198,8 +223,21 @@ Definition of Done:
 - [ ] полевая валидация осадков и ET₀ по станции/лизиметру;
 - [ ] local FAO-56 Penman–Monteith с полным набором входов;
 - [ ] soil/root-zone storage model;
-- [ ] Kc только с валидированной фазой;
-- [ ] SPI/SPEI только на длинном однородном ряду и климатической норме.
+- [ ] Kc только с валидированной фазой.
+
+### Климатическая реанализная база
+
+- [x] фиксированный ERA5-Land 1991–2020;
+- [x] same-length season-to-date windows;
+- [x] empirical percentiles и mean/median/P10/P25/P75/P90;
+- [x] climate-provider provenance и 30-day cache;
+- [x] fail-soft operational report;
+- [x] leap-day и cross-year boundary tests;
+- [x] no `Best Match`, no temperature ratio, no implicit zero;
+- [ ] live контрольные точки для полного 30-летнего запроса;
+- [ ] региональная bias-оценка по станциям;
+- [ ] прямой CDS job/object-cache pipeline;
+- [ ] SPI/SPEI только после отдельной валидации distribution fit и временных масштабов.
 
 ### Заморозки
 
@@ -218,12 +256,13 @@ Definition of Done:
 
 Приоритет: **P1**.
 
-- [x] typed weather port/DTO;
+- [x] typed weather and climate ports/DTO;
 - [x] timeout, retry, cache и bounded concurrency;
-- [x] controlled historical fallback;
+- [x] controlled historical/climate fallback;
 - [x] provider resource shutdown;
 - [x] retrieval/cache provenance;
-- [ ] mocked full HTTP contract;
+- [x] mocked ERA5-Land request contract;
+- [ ] mocked full operational HTTP contract;
 - [ ] jittered retry и circuit breaker;
 - [ ] measurable rate limiter;
 - [ ] stale-cache age/quality marker;
@@ -245,7 +284,7 @@ Definition of Done:
 Приоритет: **P1/P2**.
 
 - [ ] SoilGrids DTO/adapter и ocean/no-data validation;
-- [ ] ERA5-Land asynchronous job/cache pipeline;
+- [ ] direct CDS/ERA5-Land asynchronous job/object-cache pipeline;
 - [ ] Sentinel-2/MODIS provider с quality masks;
 - [ ] provenance/version/resolution для каждого показателя;
 - [ ] ни одна функция не появляется в UI до тестируемого vertical slice.
@@ -283,6 +322,7 @@ Definition of Done:
 - [x] field-readiness и Telegram/FSM reliability слиты с зелёным CI;
 - [x] scheduler heartbeat/loss и transaction rollback проверены реальными сервисами;
 - [x] накопленные показатели осадков/ET₀ имеют источники, единицы, QC и Telegram tests;
+- [x] seasonal ERA5-Land reference имеет фиксированный период, provenance, QC и Telegram tests;
 - [ ] clean-host deploy/update/rollback пройден;
 - [ ] реальный Telegram smoke для двух полей пройден;
 - [ ] Open-Meteo live smoke пройден на контрольных точках;
