@@ -120,3 +120,37 @@ async def test_report_does_not_render_missing_et0_as_zero() -> None:
     assert "не рассчитаны" in report.text
     assert "+0.0 мм" not in report.text
     assert "&lt;Северное&gt;" in report.text
+
+
+@pytest.mark.asyncio
+async def test_report_does_not_claim_no_frost_risk_without_forecast_tmin() -> None:
+    now = pd.Timestamp.now(tz="UTC").normalize()
+    dates = pd.date_range(start=now - pd.Timedelta(days=2), periods=5, freq="D", tz="UTC")
+    daily = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_max": [15.0, 16.0, 17.0, 18.0, 19.0],
+            "t_min": [5.0, 6.0, float("nan"), float("nan"), float("nan")],
+            "t_mean": [10.0, 11.0, 12.0, 13.0, 14.0],
+            "precip_sum": [0.0] * 5,
+            "et0_sum": [2.0] * 5,
+            "wind_max": [5.0] * 5,
+            "data_kind": ["operational_past"] * 2 + ["forecast"] * 3,
+            "data_source": ["forecast-api"] * 5,
+        }
+    )
+    start = dates.min().date()
+    provider = FakeWeatherProvider(_weather_data(daily, start=start))
+
+    report = await generate_agro_report(
+        55.75,
+        37.62,
+        "wheat",
+        season_start_date=start,
+        provider=provider,
+    )
+
+    assert "Температурный риск не оценён" in report.text
+    assert "Отсутствие данных не означает отсутствие заморозка" in report.text
+    assert "риск по заданной политике не выявлен" not in report.text
