@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 
@@ -14,6 +14,11 @@ class WeatherMeta:
     utc_offset_seconds: int
     timezone: str
     source: str
+    model: str | None = None
+    model_run: datetime | None = None
+    retrieved_at: datetime | None = None
+    cache_ttl_seconds: int | None = None
+    spatial_resolution_km: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
