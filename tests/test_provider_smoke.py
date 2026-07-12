@@ -10,7 +10,7 @@ from src.ops.provider_smoke import validate_weather_data
 def _data(
     frame: pd.DataFrame,
     *,
-    model: str | None = "best_match",
+    model: str | None = "auto",
     retrieved_at: datetime | None = datetime(2026, 7, 10, 12, tzinfo=timezone.utc),
 ) -> AgroWeatherData:
     return AgroWeatherData(
@@ -60,7 +60,7 @@ def test_provider_smoke_accepts_partitioned_real_contract() -> None:
     assert result.completed_rows == 1
     assert result.forecast_rows == 1
     assert result.season_coverage_complete is True
-    assert result.model == "best_match"
+    assert result.model == "auto"
     assert result.retrieved_at == "2026-07-10T12:00:00+00:00"
     assert result.cache_ttl_seconds == 3600
 
