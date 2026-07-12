@@ -1,0 +1,130 @@
++        f"Код ошибки: <code>{error_id}</code>",
++    )
++    return True
+diff --git a/src/bot/handlers/core.py b/src/bot/handlers/core.py
+index 509984f..b1a3cdf 100644
+--- a/src/bot/handlers/core.py
++++ b/src/bot/handlers/core.py
+@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
+ from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+ from sqlalchemy.ext.asyncio import AsyncSession
+ 
+-from src.agro.crop_catalog import CROPS, get_crop, get_crop_name
++from src.agro.crop_catalog import CROPS, get_crop_name, get_crop_phases
+ from src.api.open_meteo import OpenMeteoError
+ from src.application.agro_report import generate_agro_report
+ from src.bot.keyboards import (
+@@ -59,7 +59,8 @@ _HELP_TEXT = (
+     "фактическую фазу.\n"
+     "4️⃣ Нажмите «Агроотчёт».\n\n"
+     "У каждого поля свои координаты, сезон и настройки уведомлений. "
+-    "Отчёты и алерты формируются только для активного поля.\n\n"
++    "Ручной отчёт относится к активному полю, а фоновые уведомления — ко всем "
++    "полям, где они включены.\n\n"
+     "Дата сезона нужна для накопленных ГДД. Фаза не угадывается автоматически: "
+     "её можно указать по наблюдению на поле.\n\n"
+     "<b>Команды</b>\n"
+@@ -145,7 +146,8 @@ async def _show_fields(
+         return
+     await callback.message.edit_text(
+         "🗺 <b>Мои поля</b>\n\n"
+-        "✅ — активное поле. Отчёт, сезон и уведомления относятся к нему.\n"
++        "✅ — активное поле для ручного отчёта и редактирования.\n"
++        "Фоновые уведомления работают для каждого поля, где они включены.\n"
+         "Нажмите поле для просмотра или переключения.",
+         reply_markup=get_fields_keyboard(fields),
+     )
+@@ -696,7 +698,7 @@ async def save_phase(callback: CallbackQuery, session: AsyncSession) -> None:
+     if context is None:
+         await callback.answer("Сначала добавьте поле", show_alert=True)
+         return
+-    phases = list(get_crop(context.crop_key).get("gdd_stages", {}).keys())
++    phases = list(get_crop_phases(context.crop_key))
+     try:
+         index = int(callback.data.split(":", 1)[1])
+         phase = phases[index]
+diff --git a/src/bot/main.py b/src/bot/main.py
+index fff655a..289aee7 100644
+--- a/src/bot/main.py
++++ b/src/bot/main.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import copy
+ import logging
+ from collections.abc import Awaitable, Callable
+ from contextlib import AsyncExitStack, suppress
+@@ -16,11 +17,12 @@ from aiogram.types import BotCommand, TelegramObject
+ 
+ from config.settings import Settings, get_settings
+ from src.api.open_meteo import close_open_meteo_resources
++from src.bot.errors import handle_runtime_error
+ from src.bot.middlewares import CallbackIdempotencyMiddleware
+ from src.bot.scheduler import start_scheduler, stop_scheduler
+ from src.database import Database, init_db
+ from src.database.schema import require_current_schema
+-from src.infrastructure.coordination import create_coordination
++from src.infrastructure.coordination import CoordinationBackend, create_coordination
+ from src.ops.heartbeat import notify_ready, notify_stopping, run_heartbeat
+ 
+ logger = logging.getLogger(__name__)
+@@ -63,6 +65,33 @@ async def configure_bot_commands(bot: Bot) -> None:
+     )
+ 
+ 
++def build_dispatcher(
++    *,
++    storage: BaseStorage,
++    session_factory: Callable[[], Any],
++    coordination: CoordinationBackend,
++) -> Dispatcher:
++    """Build the production router graph without starting external services."""
++
++    dispatcher = Dispatcher(storage=storage)
++    dispatcher.errors.register(handle_runtime_error)
++    dispatcher.update.middleware(DbSessionMiddleware(session_factory))
++    dispatcher.callback_query.outer_middleware(
++        CallbackIdempotencyMiddleware(coordination)
++    )
++
++    from src.bot.handlers.core import router as core_router
++    from src.bot.handlers.rag import router as rag_router
++    from src.bot.handlers.settings import router as settings_router
++
++    # Settings precede the legacy core handlers so old toggle callbacks are
++    # rejected rather than replayed as non-idempotent state inversions.
++    dispatcher.include_router(copy.deepcopy(settings_router))
++    dispatcher.include_router(copy.deepcopy(core_router))
++    dispatcher.include_router(copy.deepcopy(rag_router))
++    return dispatcher
++
++
+ async def run() -> None:
+     settings = get_settings()
+     settings.validate()
+@@ -97,21 +126,11 @@ async def run() -> None:
+             "Redis" if settings.redis_url else "process-local memory",
+         )
+ 
+-        dispatcher = Dispatcher(storage=storage)
+-        dispatcher.update.middleware(DbSessionMiddleware(database.get_session))
+-        dispatcher.callback_query.outer_middleware(
+-            CallbackIdempotencyMiddleware(coordination)
++        dispatcher = build_dispatcher(
++            storage=storage,
++            session_factory=database.get_session,
++            coordination=coordination,
+         )
+-
+-        from src.bot.handlers.core import router as core_router
+-        from src.bot.handlers.rag import router as rag_router
+-        from src.bot.handlers.settings import router as settings_router
+-
+-        # Settings precede the legacy core handlers so old toggle callbacks are
+-        # rejected rather than replayed as non-idempotent state inversions.
+-        dispatcher.include_router(settings_router)
+-        dispatcher.include_router(core_router)
+-        dispatcher.include_router(rag_router)
+         await configure_bot_commands(bot)
+ 
