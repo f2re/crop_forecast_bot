@@ -13,7 +13,7 @@ from config.settings import get_settings
 from src.agro.indices import FROST_STATUS_INSUFFICIENT, calc_frost_risk
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
 from src.application.agro_report import generate_agro_report
-from src.bot.alerts import format_frost_alert
+from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
 from src.database.crud import NotificationTarget
 from src.database.notification_targets import list_enabled_notification_targets
 from src.infrastructure.coordination import CoordinationBackend, Lease
@@ -24,6 +24,7 @@ _scheduler: AsyncIOScheduler | None = None
 
 _NOTIFICATION_RESERVATION_TTL = 5 * 60
 _FROST_DEDUP_TTL = 20 * 60 * 60
+_FROST_UNAVAILABLE_DEDUP_TTL = 20 * 60 * 60
 _DAILY_DIGEST_DEDUP_TTL = 36 * 60 * 60
 _FROST_JOB_LOCK_TTL = 5 * 60 * 60
 _DAILY_JOB_LOCK_TTL = 6 * 60 * 60
@@ -196,6 +197,30 @@ async def check_frost_alerts(
                         target.telegram_id,
                         target.field_id,
                         risk["status_note"],
+                    )
+                    unavailable_key = (
+                        "notification:frost-data-unavailable:"
+                        f"{target.telegram_id}:{target.field_id}:"
+                        f"{_local_date(target.timezone)}"
+                    )
+
+                    async def send_unavailable(
+                        target: NotificationTarget = target,
+                        reason: str = str(risk["status_note"]),
+                    ) -> object:
+                        return await bot.send_message(
+                            target.telegram_id,
+                            format_frost_data_unavailable(
+                                target.field_name,
+                                reason,
+                            ),
+                        )
+
+                    await _send_once(
+                        coordination,
+                        unavailable_key,
+                        _FROST_UNAVAILABLE_DEDUP_TTL,
+                        send_unavailable,
                     )
                     continue
                 for event in risk["alerts"]:
