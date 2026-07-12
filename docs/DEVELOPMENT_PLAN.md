@@ -32,14 +32,13 @@ infrastructure adapters
 10. Релиз принимается после CI, migration check и runtime smoke.
 11. Production разворачивается Bash/systemd без Docker.
 
-## Активный вертикальный срез — field-readiness
+## Завершённый вертикальный срез — field-readiness
 
-Приоритет: **P0**.
-
-### Выполнено в текущем срезе
+Статус: **слит в `main` через PR #21**.
 
 - [x] различить `insufficient_forecast_data` и подтверждённое `no_risk`;
 - [x] запретить зелёный frost-вывод при отсутствии валидной Tmin;
+- [x] отправлять fail-closed предупреждение о недоступной Tmin;
 - [x] фильтровать ГДД строго от локальной даты начала сезона;
 - [x] требовать строку на дату старта для заявления сезонной суммы;
 - [x] мониторить все поля с enabled notification flag;
@@ -47,17 +46,32 @@ infrastructure adapters
 - [x] сделать создание пользователя dialect-aware upsert;
 - [x] сериализовать первичное создание поля row lock;
 - [x] добавить model/retrieval/cache provenance;
-- [x] расширить unit и PostgreSQL integration tests;
+- [x] расширить unit и PostgreSQL/Redis integration tests;
+- [x] Ruff, compileall, Bash, unit, integration и Alembic checks;
 - [x] актуализировать README, status и capability matrix.
 
-### Definition of Done среза
+Остаётся эксплуатационная проверка текущего release через live Open-Meteo smoke на сервере.
 
-- [x] Ruff, compileall, unit и integration tests зелёные;
-- [x] PostgreSQL concurrent onboarding test зелёный;
-- [x] все enabled fields присутствуют в scheduler targets;
-- [x] report test запрещает false no-risk;
-- [ ] live Open-Meteo smoke подтверждает provenance текущего release;
-- [ ] PR слит после зелёного CI.
+## Активный вертикальный срез — Telegram/FSM и отказные сценарии
+
+Приоритет: **P0**.
+
+1. Полный Dispatcher test `field → crop → season → report`.
+2. Restart каждой FSM-ветки с реальным RedisStorage.
+3. PostgreSQL outage до и во время пользовательской операции.
+4. Redis outage во время callback/FSM.
+5. Callback после удаления или редактирования исходного сообщения.
+6. Worker crash и потеря scheduler lease.
+7. Clean-host `deploy → update → forced failure → rollback → restore`.
+8. Реальный Telegram smoke для двух полей.
+
+Definition of Done:
+
+- flow достижим из `/start` и переживает restart;
+- outage даёт контролируемую ошибку без потери согласованности;
+- аварийный scheduler допускает retry и не создаёт дубль;
+- clean-host сценарий воспроизводим документированными командами;
+- Telegram smoke подтверждает работу реального пользовательского пути.
 
 ## Этап 0 — runtime
 
@@ -128,6 +142,7 @@ infrastructure adapters
 - [x] forecast rows only;
 - [x] air 2 m vs plant/surface distinction;
 - [x] explicit insufficient-data state;
+- [x] fail-closed unavailable-data notification;
 - [x] no fake probability or exact event hour;
 - [ ] normative crop/phase damage thresholds;
 - [ ] surface temperature provider;
@@ -153,7 +168,7 @@ infrastructure adapters
 
 ## Этап 4 — Telegram/FSM failure scenarios
 
-Приоритет: **P0**.
+Приоритет: **P0, активный**.
 
 - [ ] полный Dispatcher test `field → crop → season → report`;
 - [ ] restart каждой FSM-ветки;
@@ -191,7 +206,7 @@ infrastructure adapters
 - [x] Bash/systemd releases;
 - [x] PostgreSQL backup перед update;
 - [x] atomic activation и code rollback;
-- [x] verification script и live provider smoke;
+- [x] verification script и live provider smoke command;
 - [x] real PostgreSQL/Redis CI без Docker;
 - [ ] `uv.lock` на целевых ОС;
 - [ ] clean-host Debian 12 test;
@@ -204,7 +219,7 @@ infrastructure adapters
 
 ## Definition of Done полевого пилота
 
-- [ ] текущий field-readiness PR слит с зелёным CI;
+- [x] field-readiness PR слит с зелёным CI;
 - [ ] clean-host deploy/update/rollback пройден;
 - [ ] реальный Telegram smoke для двух полей пройден;
 - [ ] Open-Meteo live smoke пройден на контрольных точках;

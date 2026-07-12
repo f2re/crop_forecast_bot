@@ -2,12 +2,13 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
-## Unreleased — field-readiness correctness
+## 2026-07-12 — field-readiness correctness
 
 ### Added
 
 - explicit frost states: `risk_detected`, `no_risk_in_valid_forecast`, `insufficient_forecast_data`;
-- provider model configuration, retrieval timestamp and cache policy metadata;
+- fail-closed, per-field/day warning when forecast Tmin cannot be evaluated;
+- provider model selection, retrieval timestamp and cache policy metadata;
 - all-field background notification target query;
 - local-morning digest scheduling by field timezone;
 - PostgreSQL concurrent onboarding test;
@@ -23,6 +24,7 @@
 - user creation uses PostgreSQL/SQLite upsert semantics;
 - first field creation is serialized with a user row lock;
 - daily digest runs hourly and sends only within the field local morning window;
+- Open-Meteo model selection uses documented `auto` semantics;
 - README, status, capability matrix and plan reflect verified behavior.
 
 ## 2026-07-11 — callback idempotency and scheduler workers

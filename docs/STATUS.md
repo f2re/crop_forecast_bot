@@ -2,6 +2,8 @@
 
 Дата актуализации: **2026-07-12**.
 
+Текущий `main`: field-readiness срез слит через PR #21.
+
 ## Текущий production-контур
 
 ```text
@@ -48,6 +50,7 @@ systemd + Bash release scripts
 - [x] P−ET₀ без подстановки нулей;
 - [x] frost screening только по прогнозным строкам;
 - [x] `insufficient_forecast_data` отделён от `no_risk`;
+- [x] fail-closed предупреждение при недоступной Tmin;
 - [x] модельная конфигурация, время получения и cache policy в metadata;
 - [x] неподдерживаемые научные функции выключены.
 
@@ -58,16 +61,21 @@ systemd + Bash release scripts
 - [x] два worker не дублируют alert/digest;
 - [x] retry после неуспешной Telegram-отправки;
 - [x] фоновые задания охватывают все включённые поля;
-- [x] ежедневный отчёт проверяется в локальном утреннем окне поля.
+- [x] ежедневный отчёт проверяется в локальном утреннем окне поля;
+- [x] предупреждение о недоступной Tmin дедуплицируется по полю и дате.
 
-## Текущий этап
-
-### P0 — верификация field-readiness среза
+### Field-readiness verification
 
 - [x] Ruff, compileall, unit и integration CI;
 - [x] concurrent PostgreSQL onboarding;
 - [x] all-field scheduler targets;
 - [x] regression test против false no-risk;
+- [x] PR #21 слит в `main` после зелёного CI.
+
+## Текущий этап
+
+### P0 — полный Telegram/FSM flow и отказные сценарии
+
 - [ ] полный Router/FSM test `field → crop → season → report`;
 - [ ] restart test каждой FSM-ветки;
 - [ ] outage PostgreSQL/Redis во время пользовательской операции;
