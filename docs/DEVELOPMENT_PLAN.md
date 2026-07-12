@@ -33,6 +33,8 @@ infrastructure adapters
 11. Worker не продолжает side effects после потери lease ownership.
 12. Релиз принимается после CI, migration check и runtime smoke.
 13. Production разворачивается Bash/systemd без Docker.
+14. Накопления строятся только по завершённым локальным суткам и сохраняют provenance.
+15. Разность двух величин вычисляется по одному и тому же набору парных наблюдений.
 
 ## Завершённый срез — field-readiness
 
@@ -75,6 +77,25 @@ infrastructure adapters
 - [x] caller cancellation не оставляет защищённую coroutine работающей в фоне.
 
 Ограничение: per-notification Redis reservation снижает риск дубля, но Telegram `sendMessage` не имеет idempotency key. Если процесс погиб после принятия сообщения Telegram и до фиксации dedup lease, результат внешней отправки остаётся неопределённым. Это должно учитываться в эксплуатационном регламенте.
+
+## Завершённый срез — накопленные осадки и атмосферная испаряемость
+
+Статус: **реализован в production agro-report и покрыт unit/application tests**.
+
+- [x] накопленная сумма осадков по завершённым локальным суткам;
+- [x] накопленная provider ET₀ с независимым контролем полноты;
+- [x] `ΣP−ΣET₀` только по парным валидным суткам;
+- [x] сезонная граница по локальной дате посева/начала сезона;
+- [x] прогнозные строки исключены из накоплений;
+- [x] отрицательные значения не превращаются в ноль;
+- [x] сухой день `P < 1 мм/сут` и влажный день `P ≥ 1 мм/сут` по ETCCDI/Climdex;
+- [x] текущая и максимальная сухая серия только на непрерывном ряду;
+- [x] максимум осадков за 1 и 5 последовательных суток;
+- [x] overlap forecast/completed одной даты не скрывает завершённую строку;
+- [x] источник, период, число валидных суток и ограничения отображаются в отчёте;
+- [x] показатели не называются влагозапасом, фактической ET культуры или дозой полива.
+
+Методическая спецификация: `docs/SCIENTIFIC_WATER_INDICATORS.md`.
 
 ## Активный вертикальный срез — clean-host release gate
 
@@ -164,14 +185,21 @@ Definition of Done:
 - [ ] vegetation-period continuity rules;
 - [ ] regional interpretation sources.
 
-### ET₀ и водный статус
+### ET₀, осадки и водный статус
 
 - [x] ET₀ обозначен как provider variable;
 - [x] paired-data validation;
 - [x] no irrigation-dose claim;
+- [x] накопленные `P` и provider `ET₀` по завершённым локальным суткам;
+- [x] сезонная `ΣP−ΣET₀` только по парным валидным суткам;
+- [x] ETCCDI-compatible dry/wet threshold и bounded-period spell metrics;
+- [x] Rx1day/Rx5day operation с continuity guard;
+- [x] отрицательные значения и пропуски fail-closed;
+- [ ] полевая валидация осадков и ET₀ по станции/лизиметру;
 - [ ] local FAO-56 Penman–Monteith с полным набором входов;
 - [ ] soil/root-zone storage model;
-- [ ] Kc только с валидированной фазой.
+- [ ] Kc только с валидированной фазой;
+- [ ] SPI/SPEI только на длинном однородном ряду и климатической норме.
 
 ### Заморозки
 
@@ -254,6 +282,7 @@ Definition of Done:
 
 - [x] field-readiness и Telegram/FSM reliability слиты с зелёным CI;
 - [x] scheduler heartbeat/loss и transaction rollback проверены реальными сервисами;
+- [x] накопленные показатели осадков/ET₀ имеют источники, единицы, QC и Telegram tests;
 - [ ] clean-host deploy/update/rollback пройден;
 - [ ] реальный Telegram smoke для двух полей пройден;
 - [ ] Open-Meteo live smoke пройден на контрольных точках;
