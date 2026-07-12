@@ -52,11 +52,11 @@ infrastructure adapters
 
 ### Definition of Done среза
 
-- [ ] Ruff, compileall, unit и integration tests зелёные;
-- [ ] PostgreSQL concurrent onboarding test зелёный;
-- [ ] все enabled fields присутствуют в scheduler targets;
-- [ ] report test запрещает false no-risk;
-- [ ] live Open-Meteo smoke подтверждает provenance;
+- [x] Ruff, compileall, unit и integration tests зелёные;
+- [x] PostgreSQL concurrent onboarding test зелёный;
+- [x] все enabled fields присутствуют в scheduler targets;
+- [x] report test запрещает false no-risk;
+- [ ] live Open-Meteo smoke подтверждает provenance текущего release;
 - [ ] PR слит после зелёного CI.
 
 ## Этап 0 — runtime
