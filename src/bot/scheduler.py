@@ -10,11 +10,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
-from src.agro.indices import calc_frost_risk
+from src.agro.indices import FROST_STATUS_INSUFFICIENT, calc_frost_risk
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
 from src.application.agro_report import generate_agro_report
 from src.bot.alerts import format_frost_alert
-from src.database.crud import NotificationTarget, list_notification_targets
+from src.database.crud import NotificationTarget
+from src.database.notification_targets import list_enabled_notification_targets
 from src.infrastructure.coordination import CoordinationBackend, Lease
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ async def _targets(
     frost_alerts_only: bool = False,
 ) -> list[NotificationTarget]:
     async with session_factory() as session:
-        return await list_notification_targets(
+        return await list_enabled_notification_targets(
             session,
             daily_digest_only=daily_digest_only,
             frost_alerts_only=frost_alerts_only,
@@ -166,6 +167,14 @@ async def check_frost_alerts(
                     phase=target.phenological_phase,
                     elevation_m=weather.meta.elevation_m,
                 )
+                if risk["status"] == FROST_STATUS_INSUFFICIENT:
+                    logger.warning(
+                        "Frost screening unavailable for user %s field %s: %s",
+                        target.telegram_id,
+                        target.field_id,
+                        risk["status_note"],
+                    )
+                    continue
                 for event in risk["alerts"]:
                     alert_key = (
                         f"notification:frost:{target.telegram_id}:{target.field_id}:"
