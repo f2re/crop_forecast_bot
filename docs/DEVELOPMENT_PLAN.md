@@ -54,7 +54,7 @@ infrastructure adapters
 
 ## Завершённый вертикальный срез — Telegram/FSM reliability
 
-Статус: **реализован в PR #24; принимается только после полного зелёного CI**.
+Статус: **реализован и подтверждён полным зелёным CI в PR #24**.
 
 - [x] production Router graph выделен в testable `build_dispatcher`;
 - [x] полный Dispatcher test `field → crop → season → phase → report`;
