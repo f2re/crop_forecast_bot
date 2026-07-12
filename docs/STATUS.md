@@ -2,7 +2,7 @@
 
 Дата актуализации: **2026-07-12**.
 
-Текущий `main`: Telegram/FSM reliability срез подготовлен в PR #24 после field-readiness PR #21.
+Telegram/FSM reliability срез реализован и подтверждён полным CI в PR #24 после field-readiness PR #21.
 
 ## Текущий production-контур
 
@@ -43,7 +43,8 @@ systemd + Bash release scripts
 - [x] выбор ручной фазы использует единый каталог фаз;
 - [x] основные FSM-ветки продолжаются после повторного открытия RedisStorage;
 - [x] ошибки PostgreSQL/Redis преобразуются в контролируемые сообщения;
-- [x] удалённое Telegram-сообщение открывает актуальное меню.
+- [x] удалённое Telegram-сообщение открывает актуальное меню;
+- [x] PR #24 проходит unit, PostgreSQL/Redis integration и Alembic CI.
 
 ### Источники и расчёты
 
