@@ -65,6 +65,7 @@ def test_reference_uses_same_length_windows_and_empirical_percentiles() -> None:
     assert temperature["reference_mean"] == 15.5
     assert temperature["current"] == 20.0
     assert temperature["anomaly_from_mean"] == 4.5
+    assert temperature["percent_of_mean"] is None
     assert temperature["empirical_percentile"] == 65.0
     precipitation = result["metrics"]["precip_sum_mm"]
     assert precipitation["current"] == 20.0
@@ -119,7 +120,7 @@ def test_missing_season_start_fails_closed() -> None:
     assert "не достигает" in result["status"]
 
 
-def test_dry_spell_is_not_compared_across_missing_precipitation() -> None:
+def test_incomplete_precipitation_is_not_treated_as_zero() -> None:
     current = _current(days=10, precipitation=0.0)
     current.loc[4, "precip_sum"] = float("nan")
     result = calc_season_climate_reference(
@@ -129,7 +130,8 @@ def test_dry_spell_is_not_compared_across_missing_precipitation() -> None:
         season_start=date(2026, 4, 1),
     )
 
-    assert result["metrics"]["precip_sum_mm"]["available"] is True
+    assert result["metrics"]["mean_temperature_c"]["available"] is True
+    assert result["metrics"]["precip_sum_mm"]["available"] is False
     assert result["metrics"]["dry_days"]["available"] is False
     assert result["metrics"]["max_dry_spell_days"]["available"] is False
 
