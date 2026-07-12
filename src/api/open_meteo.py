@@ -33,7 +33,9 @@ ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _MAX_CONCURRENT_REQUESTS = 4
 _REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
 _CACHE_TTL_SECONDS = 60 * 60
-_FORECAST_MODEL = "best_match"
+# Open-Meteo API documents `auto` as the default model selection. In the UI
+# this is described as Best Match: suitable models are combined automatically.
+_FORECAST_MODEL = "auto"
 _HISTORY_SOURCE = "Open-Meteo Historical Weather API (reanalysis Best Match)"
 
 
