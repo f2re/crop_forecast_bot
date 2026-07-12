@@ -8,7 +8,10 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 
 from src.agro.crop_catalog import get_crop_name
-from src.agro.indices import compute_all_indices
+from src.agro.indices import (
+    FROST_STATUS_INSUFFICIENT,
+    compute_all_indices,
+)
 from src.api.open_meteo import OpenMeteoProvider
 from src.application.ports.weather import WeatherProvider
 from src.domain.weather import AgroWeatherData, WeatherCoverage
@@ -49,7 +52,7 @@ async def generate_agro_report(
             tzinfo=ZoneInfo(weather.meta.timezone),
         )
         # Preserve the local calendar date for coverage checks. The calculation
-        # layer converts this timestamp to UTC only for timestamp filtering.
+        # layer filters by this local date rather than a widened UTC interval.
         season_start_timestamp = pd.Timestamp(local_start)
 
     indices = compute_all_indices(
@@ -136,7 +139,15 @@ def format_agro_report(
         lines.append("🌿 Фаза: не указана; автоматически не определяется")
     lines.append("")
 
-    if frost["alerts"]:
+    if frost["status"] == FROST_STATUS_INSUFFICIENT:
+        lines.append("⚠️ <b>Температурный риск не оценён:</b> недостаточно данных")
+        lines.append(f"• {html.escape(frost['status_note'])}")
+        lines.append(
+            "<b>Что делать:</b> повторить запрос после обновления прогноза и "
+            "проверить независимый локальный источник. Отсутствие данных не "
+            "означает отсутствие заморозка."
+        )
+    elif frost["alerts"]:
         lines.append("🌡 <b>Что происходит:</b> есть температурный риск")
         for alert in frost["alerts"][:3]:
             lead = (
@@ -154,8 +165,11 @@ def format_agro_report(
         )
     else:
         lines.append(
-            "✅ <b>Что происходит:</b> в доступном прогнозе общий температурный "
-            "риск по заданной политике не выявлен"
+            "✅ <b>Что происходит:</b> в валидной прогнозной Tmin общий "
+            "температурный риск по заданной политике не выявлен"
+        )
+        lines.append(
+            f"• Проверено прогнозных суток: {frost['valid_forecast_days']}"
         )
 
     lines.extend(["", "💧 <b>Влагообеспеченность</b>"])
@@ -222,6 +236,7 @@ def format_agro_report(
             f"• ГДД: {_format_source_counts(gdd.get('source_counts', {}))}",
             f"• ГТК: {_format_source_counts(htc.get('source_counts', {}))}",
             f"• Осадки − ET₀: {_format_source_counts(water.get('source_counts', {}))}",
+            f"• Tmin-прогноз: {_format_source_counts(frost.get('source_counts', {}))}",
         ]
     )
     if weather.coverage.history_source:
