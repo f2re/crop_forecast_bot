@@ -21,14 +21,30 @@ class FakeClimateProvider:
     def __init__(self, data: ClimateReferenceData) -> None:
         self.data = data
         self.requested_timezone: str | None = None
+        self.requested_season_start: date | None = None
 
-    async def fetch_reference(self, latitude, longitude, *, timezone):
+    async def fetch_reference(
+        self,
+        latitude,
+        longitude,
+        *,
+        timezone,
+        season_start,
+    ):
         self.requested_timezone = timezone
+        self.requested_season_start = season_start
         return self.data
 
 
 class FailingClimateProvider:
-    async def fetch_reference(self, latitude, longitude, *, timezone):
+    async def fetch_reference(
+        self,
+        latitude,
+        longitude,
+        *,
+        timezone,
+        season_start,
+    ):
         raise ClimateProviderError("provider unavailable")
 
 
@@ -52,9 +68,11 @@ def _weather() -> AgroWeatherData:
             {
                 "date": dates,
                 "local_date": list(dates.date),
-                "t_max": [25.0] * 10 + [26.0] * 3,
-                "t_min": [15.0] * 10 + [16.0] * 3,
-                "t_mean": [20.0] * 10 + [21.0] * 3,
+                # Operational values intentionally differ from ERA5-Land. The
+                # climate section must use the homogeneous climate provider.
+                "t_max": [35.0] * 10 + [36.0] * 3,
+                "t_min": [25.0] * 10 + [26.0] * 3,
+                "t_mean": [30.0] * 10 + [31.0] * 3,
                 "precip_sum": [2.0] * 10 + [50.0] * 3,
                 "et0_sum": [3.0] * 13,
                 "wind_max": [8.0] * 13,
@@ -78,11 +96,11 @@ def _weather() -> AgroWeatherData:
 
 
 def _climate() -> ClimateReferenceData:
-    frames: list[pd.DataFrame] = []
+    reference_frames: list[pd.DataFrame] = []
     for year in range(1991, 2021):
         dates = pd.date_range(f"{year}-04-01", periods=10, freq="D", tz="UTC")
         offset = year - 1991
-        frames.append(
+        reference_frames.append(
             pd.DataFrame(
                 {
                     "date": dates,
@@ -98,6 +116,21 @@ def _climate() -> ClimateReferenceData:
                 }
             )
         )
+    current_dates = pd.date_range("2026-04-01", periods=10, freq="D", tz="UTC")
+    current = pd.DataFrame(
+        {
+            "date": current_dates,
+            "local_date": list(current_dates.date),
+            "t_max": [25.0] * 10,
+            "t_min": [15.0] * 10,
+            "t_mean": [20.0] * 10,
+            "precip_sum": [2.0] * 10,
+            "et0_sum": [3.0] * 10,
+            "wind_max": [7.0] * 10,
+            "data_kind": ["reanalysis"] * 10,
+            "data_source": ["ERA5-Land"] * 10,
+        }
+    )
     return ClimateReferenceData(
         meta=ClimateReferenceMeta(
             latitude=55.7,
@@ -108,16 +141,20 @@ def _climate() -> ClimateReferenceData:
             model="era5_land",
             reference_start=date(1991, 1, 1),
             reference_end=date(2020, 12, 31),
+            comparison_start=date(2026, 4, 1),
+            comparison_end=date(2026, 4, 10),
             retrieved_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
-            cache_ttl_seconds=30 * 24 * 60 * 60,
+            reference_cache_ttl_seconds=30 * 24 * 60 * 60,
+            current_cache_ttl_seconds=6 * 60 * 60,
             spatial_resolution_km=11.0,
         ),
-        daily=pd.concat(frames, ignore_index=True),
+        reference_daily=pd.concat(reference_frames, ignore_index=True),
+        current_daily=current,
     )
 
 
 @pytest.mark.asyncio
-async def test_report_contains_empirical_climate_reference() -> None:
+async def test_report_contains_homogeneous_empirical_climate_reference() -> None:
     climate_provider = FakeClimateProvider(_climate())
     report = await generate_agro_report(
         55.75,
@@ -129,13 +166,16 @@ async def test_report_contains_empirical_climate_reference() -> None:
     )
 
     assert climate_provider.requested_timezone == "UTC"
-    assert "Сезон относительно реанализной базы 1991–2020" in report.text
+    assert climate_provider.requested_season_start == date(2026, 4, 1)
+    assert "Сезон ERA5-Land относительно базы 1991–2020" in report.text
     assert "Средняя температура: 20.0°C" in report.text
+    assert "Средняя температура: 30.0°C" not in report.text
     assert "эмпирический процентиль" in report.text
     assert "осадки" in report.text
     assert "не вероятность" in report.text
-    assert "не станционная норма и не SPI/SPEI" in report.text
-    assert "ERA5-Land 1991–2020 через Open-Meteo" in report.text
+    assert "не полевая станция, не SPI/SPEI" in report.text
+    assert "01.04.2026 — 10.04.2026" in report.text
+    assert "текущий сезон и база 1991–2020 из одной модели ERA5-Land" in report.text
     assert "ERA5-Land via Open-Meteo Historical Weather API" in report.source
     assert len(report.text) <= 4096
 
@@ -152,7 +192,7 @@ async def test_climate_outage_degrades_report_without_losing_operational_data() 
     )
 
     assert "ГДД с начала сезона" in report.text
-    assert "реанализная база ERA5-Land временно недоступна" in report.text
+    assert "однородный ряд ERA5-Land временно недоступен" in report.text
     assert "ERA5-Land via Open-Meteo Historical Weather API" not in report.source
 
 
@@ -166,4 +206,4 @@ async def test_custom_weather_provider_does_not_trigger_default_climate_network(
         provider=FakeWeatherProvider(_weather()),
     )
 
-    assert "Сезон относительно реанализной базы" not in report.text
+    assert "Сезон ERA5-Land относительно базы" not in report.text
