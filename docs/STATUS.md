@@ -2,7 +2,7 @@
 
 Дата актуализации: **2026-07-12**.
 
-Текущий `main`: field-readiness срез слит через PR #21.
+Текущий `main`: Telegram/FSM reliability срез подготовлен в PR #24 после field-readiness PR #21.
 
 ## Текущий production-контур
 
@@ -38,7 +38,12 @@ systemd + Bash release scripts
 - [x] подавление rapid double-click;
 - [x] desired-state callback вместо toggle;
 - [x] race-safe создание пользователя через upsert;
-- [x] первичное создание поля под row lock.
+- [x] первичное создание поля под row lock;
+- [x] полный Dispatcher-flow `field → crop → season → phase → report`;
+- [x] выбор ручной фазы использует единый каталог фаз;
+- [x] основные FSM-ветки продолжаются после повторного открытия RedisStorage;
+- [x] ошибки PostgreSQL/Redis преобразуются в контролируемые сообщения;
+- [x] удалённое Telegram-сообщение открывает актуальное меню.
 
 ### Источники и расчёты
 
@@ -74,13 +79,17 @@ systemd + Bash release scripts
 
 ## Текущий этап
 
-### P0 — полный Telegram/FSM flow и отказные сценарии
+### P0 — process failure orchestration
 
-- [ ] полный Router/FSM test `field → crop → season → report`;
-- [ ] restart test каждой FSM-ветки;
-- [ ] outage PostgreSQL/Redis во время пользовательской операции;
+- [x] полный Dispatcher/FSM test `field → crop → season → phase → report`;
+- [x] restart основных FSM-веток с реальным RedisStorage;
+- [x] fail-closed обработка недоступности PostgreSQL до handler;
+- [x] fail-closed обработка недоступности Redis до handler;
+- [x] callback после удаления исходного сообщения;
+- [ ] PostgreSQL disconnect между изменением и commit;
+- [ ] Redis loss после получения callback/job lease;
 - [ ] scheduler worker crash / lease-loss orchestration;
-- [ ] callback после удаления или редактирования исходного сообщения.
+- [ ] callback при конкурентном редактировании исходного сообщения.
 
 ### P0 — clean-host эксплуатация
 
