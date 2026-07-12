@@ -13,6 +13,7 @@ from aiogram.types import CallbackQuery, Chat, Message, User
 from redis.asyncio import Redis
 
 import src.bot.scheduler as scheduler_module
+from src.agro.indices import FROST_STATUS_RISK
 from src.bot.middlewares import CallbackIdempotencyMiddleware
 from src.bot.scheduler import _send_once, check_frost_alerts
 from src.database.crud import NotificationTarget
@@ -163,6 +164,8 @@ async def test_two_scheduler_workers_send_one_frost_alert(
         )
 
     risk = {
+        "status": FROST_STATUS_RISK,
+        "status_note": "в валидном прогнозе есть событие",
         "alerts": [
             {
                 "event_date": "2026-07-12",
@@ -172,7 +175,7 @@ async def test_two_scheduler_workers_send_one_frost_alert(
                 "lead_days": 1,
                 "elevation_m": 120.0,
             }
-        ]
+        ],
     }
 
     class FakeBot:

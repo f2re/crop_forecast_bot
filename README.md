@@ -1,31 +1,113 @@
 # 🌾 Crop Forecast Bot
 
-Telegram-бот для оперативной агрометеорологической оценки полей:
-**поле → культура → сезон → проверяемый отчёт → уведомления**.
+Telegram-бот для оперативной агрометеорологической оценки:
+
+```text
+поле → культура → сезон → проверяемый отчёт → фоновые предупреждения
+```
 
 [![CI](https://github.com/f2re/crop_forecast_bot/actions/workflows/ci.yml/badge.svg)](https://github.com/f2re/crop_forecast_bot/actions/workflows/ci.yml)
 
-**Production:** Python 3.11+, aiogram 3.x, PostgreSQL, Redis, Alembic и systemd. Docker не используется.
+**Стек:** Python 3.11+, aiogram 3.x, PostgreSQL, Redis, Alembic, APScheduler и systemd. Docker не используется.
 
 ## ✅ Что работает
 
 - 🗺 несколько полей в одном Telegram-профиле;
 - 📍 геолокация и ручной ввод координат;
 - ✏️ создание, переименование, переключение и изменение координат;
-- 🌱 отдельные культура, дата посева и фактическая фаза каждого поля;
-- 🌦 оперативный прогноз Open-Meteo;
+- 🌱 отдельные культура, дата посева и наблюдаемая фаза каждого поля;
+- 🌦 Open-Meteo Forecast API;
 - 🗓 сезонный реанализ Open-Meteo Historical Weather API;
-- 🌿 ГДД с crop-specific `Tbase`, контролем покрытия и пропусков;
-- 💧 ГТК Селянинова только для валидного завершённого тёплого окна;
-- 🚿 разность осадки − ET₀ без фиктивных нулей;
+- 🌿 ГДД с crop-specific `Tbase`, контролем периода и пропусков;
+- 💧 ГТК только для валидного завершённого тёплого окна;
+- 🚿 диагностическая разность осадки − ET₀ без фиктивных нулей;
 - 🌡 скрининг прогнозной Tmin воздуха на высоте 2 м;
-- 📨 отдельные ежедневные отчёты и температурные алерты для активного поля;
-- 🔒 Redis FSM, распределённые leases и дедупликация;
+- 📨 отдельные настройки дайджеста и температурных алертов каждого поля;
+- 🔒 Redis FSM, callback idempotency, distributed leases и дедупликация;
 - 🗃 обязательные Alembic-миграции;
 - ♻️ Bash-установка, обновление, диагностика и откат через systemd;
 - 📚 опциональная RAG-база знаний с отображением источников.
 
-> Отсутствующие данные не заменяются эвристикой. Показатель не рассчитывается либо явно помечается как ограниченный.
+> Отсутствующие данные не заменяются эвристикой. «Нет валидной прогнозной Tmin» и «риск не выявлен» — разные состояния.
+
+## 🧑‍🌾 Как пользоваться
+
+1. Отправьте `/start`.
+2. Откройте **«Мои поля»**.
+3. Добавьте поле или выберите активное.
+4. Выберите культуру.
+5. Укажите дату посева/начала сезона.
+6. При наличии наблюдения выберите фактическую фазу.
+7. Нажмите **«Агроотчёт»**.
+
+Активное поле используется для ручного отчёта и редактирования. **Фоновый scheduler контролирует каждое поле, для которого включён соответствующий тип уведомления**, независимо от того, активно оно сейчас в меню или нет.
+
+### Команды
+
+| Команда | Назначение |
+|---|---|
+| `/start` | главное меню |
+| `/help` | пользовательская справка |
+| `/cancel` | отмена ввода и очистка FSM |
+
+## 📊 Что содержит отчёт
+
+Отчёт отвечает на четыре вопроса:
+
+1. **Что происходит** — температурный риск, ГДД и влагообеспеченность.
+2. **Насколько надёжно** — источник, модельная конфигурация, период, покрытие и пропуски.
+3. **Что проверить сейчас** — локальный прогноз, фазу и микрорельеф.
+4. **Когда обновить оценку** — после нового прогноза или изменения состояния поля.
+
+Типы данных разделены:
+
+- `reanalysis` — прошлый ряд Historical Weather API;
+- `operational_past` — завершённые прошлые локальные сутки Forecast API;
+- `forecast` — текущие и будущие локальные сутки.
+
+Отчёт показывает время получения данных ботом и политику кэша. Точный model run и пространственное разрешение не придумываются, если endpoint их не сообщает.
+
+## 📐 Расчёты
+
+### ГДД
+
+```text
+GDDday = max(0, min(Tmean, Tupper) − Tbase)
+```
+
+- единицы: `°C·сут`;
+- строки до **локальной даты** посева исключаются;
+- прошлый период и прогнозный прирост считаются отдельно;
+- сезонная сумма заявляется только при наличии строки на дату начала и допустимой доле пропусков;
+- автоматическая фенофаза не определяется.
+
+Методическая основа: McMaster & Wilhelm, 1997, *Agricultural and Forest Meteorology*, 87(4), 291–300.
+
+### ГТК Селянинова
+
+```text
+ГТК = 10 × ΣP / ΣTср
+```
+
+Используются только завершённые сутки с `Tср > 10°C`. Прогнозные осадки не входят в расчёт. При коротком окне или недопустимой доле пропусков показатель не публикуется.
+
+### Осадки − ET₀
+
+Это диагностическая разность за завершённое окно, а не баланс корнеобитаемого слоя и не доза полива. ET₀ поступает от провайдера.
+
+### Температурный риск
+
+Используется прогнозная суточная Tmin воздуха на высоте 2 м.
+
+Состояния:
+
+```text
+risk_detected
+no_risk_in_valid_forecast
+insufficient_forecast_data
+```
+
+При отсутствии валидной Tmin бот не показывает зелёный вывод «риска нет».
 
 ## ⛔ Что не заявляется
 
@@ -39,77 +121,7 @@ Telegram-бот для оперативной агрометеорологиче
 - автоматической фенофазы по непроверенным GDD-порогам;
 - доз удобрений и препаратов без нормативного источника.
 
-Полная матрица: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md).
-
-## 🧑‍🌾 Работа в Telegram
-
-1. Отправьте `/start`.
-2. Откройте **«Мои поля»**.
-3. Добавьте поле или сделайте существующее активным.
-4. Выберите культуру.
-5. Укажите дату посева/начала сезона.
-6. При наличии наблюдения выберите фактическую фазу.
-7. Нажмите **«Агроотчёт»**.
-
-У каждого поля независимо сохраняются координаты, культура, сезон, фаза и настройки уведомлений. Ручной отчёт и scheduler используют активное поле.
-
-### Команды
-
-| Команда | Назначение |
-|---|---|
-| `/start` | главное меню и активное поле |
-| `/help` | пользовательская справка |
-| `/cancel` | отмена ввода и очистка FSM |
-
-## 📊 Структура отчёта
-
-Отчёт отвечает на четыре вопроса:
-
-1. **Что происходит** — температурный риск, ГДД и влагообеспеченность.
-2. **Насколько надёжно** — источник, период, покрытие и пропуски.
-3. **Что проверить сейчас** — локальный прогноз, фазу и микрорельеф.
-4. **Когда обновить оценку** — после нового прогноза или изменения состояния поля.
-
-Типы данных разделены:
-
-- `reanalysis` — прошлый ряд Historical Weather API;
-- `operational_past` — завершённые прошлые локальные сутки Forecast API;
-- `forecast` — текущие и будущие локальные сутки.
-
-Текущий локальный день не считается завершённым прошлым периодом.
-
-## 📐 Расчёты
-
-### ГДД
-
-```text
-GDDday = max(0, min(Tmean, Tupper) − Tbase)
-```
-
-- единицы: `°C·сут`;
-- `Tbase` берётся из единого каталога культур;
-- `Tupper` применяется только при явной настройке;
-- прошлый период и прогнозный прирост считаются отдельно;
-- сезонная сумма выводится только при покрытии даты начала сезона;
-- автоматическая фенофаза не определяется.
-
-Методическая основа: McMaster & Wilhelm, 1997, *Agricultural and Forest Meteorology*, 87(4), 291–300.
-
-### ГТК Селянинова
-
-```text
-ГТК = 10 × ΣP / ΣTср
-```
-
-Используются только завершённые сутки с `Tср > 10°C`. Расчёт блокируется при коротком тёплом окне или недопустимой доле пропусков.
-
-### Осадки − ET₀
-
-Это диагностическая разность за завершённое окно, не баланс корнеобитаемого слоя и не доза полива. ET₀ поступает от провайдера.
-
-### Температурный риск
-
-Используется прогнозная суточная Tmin воздуха на высоте 2 м. Скрининг не определяет точный час минимума, температуру растений, вероятность ущерба или crop-specific порог повреждения.
+Матрица: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md).
 
 ## 🚀 Установка без Docker
 
@@ -121,13 +133,13 @@ cd crop_forecast_bot
 sudo bash scripts/deploy.sh
 ```
 
-Первый запуск создаёт PostgreSQL, Redis, пользователя `cropbot` и конфигурацию:
+Первый запуск создаёт PostgreSQL, Redis, пользователя `cropbot` и файл:
 
 ```text
 /etc/crop-forecast-bot.env
 ```
 
-Задайте токен и повторите установку:
+Укажите Telegram-токен и повторите установку:
 
 ```bash
 sudo editor /etc/crop-forecast-bot.env
@@ -145,10 +157,10 @@ sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 ## 🛠 Команды администратора
 
 ```bash
-# Диагностика
+# Состояние, heartbeat, БД, Redis и журнал
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 
-# Проверка release
+# Полная проверка release
 sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh
 
@@ -172,18 +184,16 @@ sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
 |---|---|
 | `scripts/deploy.sh` | зависимости, БД, Redis, release и systemd |
 | `scripts/update.sh` | backup, новый release, миграции, preflight и auto-rollback |
-| `scripts/rollback.sh` | возврат предыдущего либо указанного release |
+| `scripts/rollback.sh` | возврат предыдущего или выбранного release |
 | `scripts/status.sh` | service, commit, heartbeat, PostgreSQL, Redis и журнал |
-| `scripts/verify-production.sh` | ruff, compileall, pytest, Alembic, Bash и optional live provider smoke |
+| `scripts/verify-production.sh` | Ruff, compileall, pytest, Alembic, Bash и live provider smoke |
 | `scripts/help.sh` | краткая справка по командам |
 
-## 🔄 Безопасное обновление
+## 🔄 Обновление
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
 ```
-
-Последовательность:
 
 ```text
 PostgreSQL dump
@@ -199,40 +209,7 @@ PostgreSQL dump
 
 Миграции БД автоматически назад не откатываются. Перед update создаётся backup.
 
-## ⚙️ Основная конфигурация
-
-| Переменная | Назначение |
-|---|---|
-| `APP_ENV` | `production` требует PostgreSQL и Redis |
-| `TELEGRAM_BOT_TOKEN` | токен BotFather |
-| `DATABASE_URL` | `postgresql+asyncpg://...` |
-| `REDIS_URL` | FSM, leases и дедупликация |
-| `COORDINATION_NAMESPACE` | префикс Redis-ключей |
-| `SCHEDULER_TIMEZONE` | timezone scheduler |
-| `HEARTBEAT_FILE` | heartbeat event loop |
-| `OPEN_METEO_CACHE_PATH` | writable cache Open-Meteo |
-| `RAG_ENABLED` | разрешить опциональный советник |
-| `INSTALL_RAG_PROFILE` | устанавливать `requirements-rag.txt` |
-
-Шаблон: [`.env.example`](.env.example).
-
-## 📚 Опциональный RAG
-
-```bash
-pip install -r requirements-rag.txt
-python -m src.knowledge.indexer --reset
-```
-
-```dotenv
-RAG_ENABLED=true
-INSTALL_RAG_PROFILE=1
-LLM_PROVIDER=groq
-GROQ_API_KEY=...
-```
-
-RAG работает только при наличии проиндексированных документов и не подменяет deterministic weather calculations. Подробнее: [`RAG_GUIDE.md`](RAG_GUIDE.md).
-
-## 🧪 Проверки и разработка
+## 🧪 Разработка и тесты
 
 ```bash
 python3 -m venv .venv
@@ -243,22 +220,13 @@ alembic upgrade head
 python -m src.bot.main
 ```
 
-Core-проверка:
-
 ```bash
 bash scripts/verify-production.sh
 ```
 
-CI дополнительно запускает реальные PostgreSQL и Redis системными сервисами, без Docker. Проверяются:
+CI запускает PostgreSQL и Redis системными сервисами, без Docker. Проверяются миграции, row locks, Redis FSM restart, callback idempotency, два scheduler worker, все включённые поля и конкурентное первичное создание пользователя/поля.
 
-- Alembic adoption/backfill на PostgreSQL;
-- partial unique indexes и row locking;
-- field-level scheduler targets;
-- атомарные Redis leases между независимыми клиентами;
-- межклиентская дедупликация уведомлений;
-- восстановление aiogram FSM после повторного открытия RedisStorage.
-
-Локальный запуск integration tests:
+Локальные integration tests:
 
 ```bash
 export TEST_DATABASE_URL='postgresql+asyncpg://cropbot_test:cropbot_test@127.0.0.1:5432/crop_forecast_bot_test'
@@ -266,19 +234,17 @@ export TEST_REDIS_URL='redis://127.0.0.1:6379/15'
 python -m pytest -q -m integration
 ```
 
-Без этих переменных integration tests пропускаются.
-
 ## 🏗 Архитектура
 
 ```text
-Telegram handlers / persistent FSM
+Telegram handlers / Redis FSM
         ↓
-application services + ports
+application services + typed ports
         ↓
-domain / agro calculations
+domain / bounded agro calculations
         ↓
 infrastructure adapters
-  ├─ Open-Meteo forecast + historical reanalysis
+  ├─ Open-Meteo forecast + reanalysis
   ├─ PostgreSQL / Alembic
   ├─ Redis coordination
   └─ optional RAG
@@ -290,11 +256,11 @@ infrastructure adapters
 python -m src.bot.main
 ```
 
-## 📍 Документация и этапы
+## 📍 Документация
 
-- статус: [`docs/STATUS.md`](docs/STATUS.md);
-- возможности: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md);
-- план: [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md);
-- аудит: [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md);
-- история: [`CHANGELOG.md`](CHANGELOG.md);
-- runbook: [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md).
+- [`docs/STATUS.md`](docs/STATUS.md) — выполнено и текущий этап;
+- [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) — фактические возможности;
+- [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) — план модернизации;
+- [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md) — базовый аудит;
+- [`CHANGELOG.md`](CHANGELOG.md) — история изменений;
+- [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md) — эксплуатационный runbook.

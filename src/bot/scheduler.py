@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
@@ -10,11 +10,12 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
-from src.agro.indices import calc_frost_risk
+from src.agro.indices import FROST_STATUS_INSUFFICIENT, calc_frost_risk
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
 from src.application.agro_report import generate_agro_report
-from src.bot.alerts import format_frost_alert
-from src.database.crud import NotificationTarget, list_notification_targets
+from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
+from src.database.crud import NotificationTarget
+from src.database.notification_targets import list_enabled_notification_targets
 from src.infrastructure.coordination import CoordinationBackend, Lease
 
 logger = logging.getLogger(__name__)
@@ -23,9 +24,12 @@ _scheduler: AsyncIOScheduler | None = None
 
 _NOTIFICATION_RESERVATION_TTL = 5 * 60
 _FROST_DEDUP_TTL = 20 * 60 * 60
+_FROST_UNAVAILABLE_DEDUP_TTL = 20 * 60 * 60
 _DAILY_DIGEST_DEDUP_TTL = 36 * 60 * 60
 _FROST_JOB_LOCK_TTL = 5 * 60 * 60
 _DAILY_JOB_LOCK_TTL = 6 * 60 * 60
+_DAILY_DIGEST_LOCAL_START_HOUR = 7
+_DAILY_DIGEST_LOCAL_END_HOUR = 11
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -35,13 +39,34 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
-def _local_date(timezone_name: str) -> str:
+def _field_timezone(timezone_name: str) -> ZoneInfo:
     try:
-        timezone = ZoneInfo(timezone_name)
+        return ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
         logger.warning("Unknown field timezone %r; using UTC", timezone_name)
-        timezone = ZoneInfo("UTC")
-    return datetime.now(timezone).date().isoformat()
+        return ZoneInfo("UTC")
+
+
+def _local_datetime(
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> datetime:
+    current = now_utc or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(_field_timezone(timezone_name))
+
+
+def _local_date(timezone_name: str, now_utc: datetime | None = None) -> str:
+    return _local_datetime(timezone_name, now_utc).date().isoformat()
+
+
+def _daily_digest_is_due(
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> bool:
+    local_hour = _local_datetime(timezone_name, now_utc).hour
+    return _DAILY_DIGEST_LOCAL_START_HOUR <= local_hour < _DAILY_DIGEST_LOCAL_END_HOUR
 
 
 async def start_scheduler(
@@ -67,9 +92,9 @@ async def start_scheduler(
     scheduler.add_job(
         send_daily_digest,
         trigger="cron",
-        hour=7,
-        minute=0,
-        args=[bot, session_factory, coordination],
+        hour="*",
+        minute=5,
+        args=[bot, session_factory, coordination, True],
         id="daily_digest",
         replace_existing=True,
         max_instances=1,
@@ -94,7 +119,7 @@ async def _targets(
     frost_alerts_only: bool = False,
 ) -> list[NotificationTarget]:
     async with session_factory() as session:
-        return await list_notification_targets(
+        return await list_enabled_notification_targets(
             session,
             daily_digest_only=daily_digest_only,
             frost_alerts_only=frost_alerts_only,
@@ -166,6 +191,38 @@ async def check_frost_alerts(
                     phase=target.phenological_phase,
                     elevation_m=weather.meta.elevation_m,
                 )
+                if risk["status"] == FROST_STATUS_INSUFFICIENT:
+                    logger.warning(
+                        "Frost screening unavailable for user %s field %s: %s",
+                        target.telegram_id,
+                        target.field_id,
+                        risk["status_note"],
+                    )
+                    unavailable_key = (
+                        "notification:frost-data-unavailable:"
+                        f"{target.telegram_id}:{target.field_id}:"
+                        f"{_local_date(target.timezone)}"
+                    )
+
+                    async def send_unavailable(
+                        target: NotificationTarget = target,
+                        reason: str = str(risk["status_note"]),
+                    ) -> object:
+                        return await bot.send_message(
+                            target.telegram_id,
+                            format_frost_data_unavailable(
+                                target.field_name,
+                                reason,
+                            ),
+                        )
+
+                    await _send_once(
+                        coordination,
+                        unavailable_key,
+                        _FROST_UNAVAILABLE_DEDUP_TTL,
+                        send_unavailable,
+                    )
+                    continue
                 for event in risk["alerts"]:
                     alert_key = (
                         f"notification:frost:{target.telegram_id}:{target.field_id}:"
@@ -213,6 +270,7 @@ async def send_daily_digest(
     bot: Bot,
     session_factory: SessionFactory,
     coordination: CoordinationBackend,
+    due_only: bool = False,
 ) -> None:
     job_lease = await coordination.acquire("job:daily-digest", _DAILY_JOB_LOCK_TTL)
     if job_lease is None:
@@ -221,6 +279,8 @@ async def send_daily_digest(
 
     try:
         for target in await _targets(session_factory, daily_digest_only=True):
+            if due_only and not _daily_digest_is_due(target.timezone):
+                continue
             if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
                 logger.error("Daily digest lost its distributed lock; aborting")
                 return

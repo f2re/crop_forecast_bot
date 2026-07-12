@@ -2,69 +2,83 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
-## Unreleased — callback idempotency and scheduler workers
+## Unreleased — field-readiness correctness
+
+### Added
+
+- explicit frost states: `risk_detected`, `no_risk_in_valid_forecast`, `insufficient_forecast_data`;
+- provider model configuration, retrieval timestamp and cache policy metadata;
+- all-field background notification target query;
+- local-morning digest scheduling by field timezone;
+- PostgreSQL concurrent onboarding test;
+- unit tests for strict local-date GDD boundary and missing forecast Tmin.
+
+### Changed
+
+- missing forecast Tmin no longer produces a green no-risk message;
+- GDD excludes every local day before the configured season start;
+- a seasonal GDD total requires a valid row on the start date;
+- scheduler monitors every field with the relevant notification flag enabled;
+- active field remains a manual Telegram navigation concept only;
+- user creation uses PostgreSQL/SQLite upsert semantics;
+- first field creation is serialized with a user row lock;
+- daily digest runs hourly and sends only within the field local morning window;
+- README, status, capability matrix and plan reflect verified behavior.
+
+## 2026-07-11 — callback idempotency and scheduler workers
 
 ### Added
 
 - Redis-backed callback delivery idempotency by `CallbackQuery.id`;
 - short semantic anti-double-click lease by user, message and callback data;
 - field-aware desired-state notification callbacks;
-- fail-closed handling of legacy `toggle_digest` and `toggle_frost` buttons;
-- unit tests for callback replay, concurrent presses and retry after handler failure;
-- real Redis competition test for two callback runtime workers;
-- real Redis two-worker frost scheduler test;
-- verification that notification deduplication persists after job lock release.
+- fail-closed handling of legacy toggle buttons;
+- real Redis callback and two-worker scheduler tests;
+- retry verification after Telegram send failure.
 
 ### Changed
 
-- settings callbacks now encode the final `enabled/disabled` state instead of inverting current state;
-- callback for an inactive or different field is rejected as stale;
-- runtime shares one coordination backend between scheduler and callback middleware;
-- status and development plan move the next P0 focus to full FSM and outage scenarios.
+- settings callbacks encode final enabled/disabled state;
+- stale-field callbacks are rejected;
+- scheduler and callback middleware share one coordination backend.
 
 ## 2026-07-11 — real PostgreSQL and Redis verification
 
 ### Added
 
-- PostgreSQL integration tests для Alembic adoption/backfill;
-- PostgreSQL row-lock и partial unique index tests;
-- scheduler target tests на реальной PostgreSQL schema;
+- PostgreSQL Alembic adoption/backfill tests;
+- PostgreSQL row-lock and partial unique index tests;
+- scheduler target tests on PostgreSQL;
 - multi-client Redis lease/deduplication tests;
 - aiogram RedisStorage restart test;
-- отдельный `integration` pytest marker;
-- CI с локальными PostgreSQL и Redis системными сервисами без Docker.
-
-### Changed
-
-- unit/contract и service integration tests выполняются отдельными CI-шагами;
-- development status и план этапов разделяют выполненную service integration и следующий process-level slice.
+- `integration` pytest marker;
+- CI with PostgreSQL and Redis system services, without Docker.
 
 ## 2026-07-10 — scientific integrity and repository cleanup
 
 ### Added
 
-- read-only Open-Meteo contract smoke `python -m src.ops.provider_smoke`;
-- production verification `scripts/verify-production.sh`;
-- capability matrix and current status documents;
-- explicit source/coverage metadata in calculations and reports;
-- optional RAG dependency profile and runtime feature flag.
+- read-only Open-Meteo contract smoke;
+- production verification script;
+- capability and status documents;
+- explicit source/coverage metadata;
+- optional RAG dependency profile.
 
 ### Changed
 
-- current local day is treated as forecast, not completed past;
+- current local day is forecast, not completed past;
 - GDD, HTC, P−ET₀ and frost use explicit data partitions;
 - unavailable P−ET₀/GDD values no longer become zero;
-- frost messages no longer claim an exact event hour from daily data;
-- README and runbooks describe only reachable production capabilities;
-- Open-Meteo cached HTTP resources close during application shutdown.
+- frost messages do not claim an exact event hour;
+- Open-Meteo cached resources close during shutdown.
 
 ### Removed
 
 - synthetic Random Forest training and model claims;
-- legacy `run_bot.py` launcher and Docker-only scripts/docs;
+- legacy launcher and Docker-only scripts/docs;
 - unreachable heuristic recommender;
-- unconnected ERA5, soil, satellite and legacy storage prototypes;
-- stale generated marketing documentation with unsupported claims.
+- unconnected ERA5, soil, satellite and storage prototypes;
+- generated documentation with unsupported claims.
 
 ## 2026-07-10 — multi-field production flow
 

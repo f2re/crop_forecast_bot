@@ -1,4 +1,4 @@
-from src.bot.alerts import format_frost_alert
+from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
 
 
 def test_frost_alert_uses_daily_date_and_escapes_user_values() -> None:
@@ -20,3 +20,15 @@ def test_frost_alert_uses_daily_date_and_escapes_user_values() -> None:
     assert "&lt;Северное&gt;" in text
     assert "&lt;Кущение&gt;" in text
     assert "критический" in text
+
+
+def test_frost_unavailable_warning_is_fail_closed_and_escaped() -> None:
+    text = format_frost_data_unavailable(
+        "<Северное>",
+        "Tmin <не получена>",
+    )
+
+    assert "Температурный риск не оценён" in text
+    assert "Отсутствие данных не означает отсутствие заморозка" in text
+    assert "&lt;Северное&gt;" in text
+    assert "Tmin &lt;не получена&gt;" in text

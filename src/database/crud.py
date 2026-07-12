@@ -5,6 +5,8 @@ from datetime import date, datetime
 from typing import AsyncIterator
 
 from sqlalchemy import and_, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,27 +69,57 @@ class NotificationTarget:
     frost_alerts_enabled: bool
 
 
+async def _insert_user_if_missing(
+    session: AsyncSession,
+    telegram_id: int,
+    username: str | None,
+    first_name: str | None,
+) -> None:
+    values = {
+        "telegram_id": telegram_id,
+        "username": username,
+        "first_name": first_name,
+    }
+    bind = session.get_bind()
+    dialect = bind.dialect.name
+    if dialect == "postgresql":
+        statement = postgresql_insert(User).values(**values).on_conflict_do_nothing(
+            index_elements=[User.telegram_id]
+        )
+        await session.execute(statement)
+        return
+    if dialect == "sqlite":
+        statement = sqlite_insert(User).values(**values).on_conflict_do_nothing(
+            index_elements=[User.telegram_id]
+        )
+        await session.execute(statement)
+        return
+
+    result = await session.execute(select(User.id).where(User.telegram_id == telegram_id))
+    if result.scalar_one_or_none() is not None:
+        return
+    session.add(User(**values))
+    try:
+        await session.flush()
+    except IntegrityError:
+        await session.rollback()
+
+
 async def get_or_create_user(
     session: AsyncSession,
     telegram_id: int,
     username: str | None = None,
     first_name: str | None = None,
 ) -> User:
+    """Create a Telegram identity idempotently across concurrent workers."""
+    await _insert_user_if_missing(session, telegram_id, username, first_name)
     result = await session.execute(select(User).where(User.telegram_id == telegram_id))
-    user = result.scalar_one_or_none()
-    if user is None:
-        user = User(
-            telegram_id=telegram_id,
-            username=username,
-            first_name=first_name,
-        )
-        session.add(user)
-    else:
-        if username is not None:
-            user.username = username
-        if first_name is not None:
-            user.first_name = first_name
-        user.updated_at = datetime.utcnow()
+    user = result.scalar_one()
+    if username is not None:
+        user.username = username
+    if first_name is not None:
+        user.first_name = first_name
+    user.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(user)
     return user
@@ -98,8 +130,13 @@ async def get_user(session: AsyncSession, telegram_id: int) -> User | None:
     return result.scalar_one_or_none()
 
 
-async def _lock_user(session: AsyncSession, telegram_id: int) -> User:
-    await get_or_create_user(session, telegram_id)
+async def _lock_user(
+    session: AsyncSession,
+    telegram_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> User:
+    await get_or_create_user(session, telegram_id, username, first_name)
     result = await session.execute(
         select(User).where(User.telegram_id == telegram_id).with_for_update()
     )
@@ -192,7 +229,7 @@ async def save_coordinates(
     first_name: str | None = None,
 ) -> User:
     """Create the first field or update coordinates of the active field."""
-    user = await get_or_create_user(session, telegram_id, username, first_name)
+    user = await _lock_user(session, telegram_id, username, first_name)
     field = await get_active_field(session, user.id)
     if field is None:
         result = await session.execute(
@@ -618,6 +655,11 @@ async def list_notification_targets(
     daily_digest_only: bool = False,
     frost_alerts_only: bool = False,
 ) -> list[NotificationTarget]:
+    """Compatibility query for the active field only.
+
+    Background jobs use ``list_enabled_notification_targets`` so every enabled
+    field remains monitored. This function is retained for transitional callers.
+    """
     statement = (
         select(
             User.telegram_id,
