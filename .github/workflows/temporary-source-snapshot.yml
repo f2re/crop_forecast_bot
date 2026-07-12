@@ -1,6 +1,7 @@
 name: Temporary source snapshot
 
 on:
+  pull_request:
   push:
     branches: [agent/telegram-fsm-reliability-20260712]
 
