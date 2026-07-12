@@ -28,6 +28,9 @@ _FORECAST_KINDS = frozenset({"current_forecast", "forecast"})
 # Operational policy thresholds. They are not crop-damage thresholds.
 FROST_WATCH_T_C = 2.0
 FROST_FREEZE_T_C = 0.0
+FROST_STATUS_RISK = "risk_detected"
+FROST_STATUS_NO_RISK = "no_risk_in_valid_forecast"
+FROST_STATUS_INSUFFICIENT = "insufficient_forecast_data"
 
 GDD_BASE: dict[str, float] = {
     crop_key: float(crop["t_base"]) for crop_key, crop in CROPS.items()
@@ -219,7 +222,12 @@ def calc_gdd(
     max_missing_fraction: float = 0.10,
     as_of: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
-    """Calculate completed-period and forecast GDD without phase inference."""
+    """Calculate completed-period and forecast GDD without phase inference.
+
+    When a season start is supplied, rows are filtered by the local calendar
+    day stored in ``local_date``. This prevents UTC offsets from pulling one or
+    more pre-sowing days into the seasonal sum.
+    """
     if not 0 <= max_missing_fraction <= 1:
         raise ValueError("max_missing_fraction must be between 0 and 1")
 
@@ -232,13 +240,10 @@ def calc_gdd(
         subset=["t_max", "t_min"]
     )
 
-    normalized_start: pd.Timestamp | None = None
     season_start_day: pd.Timestamp | None = None
     if season_start is not None:
-        raw_start = pd.Timestamp(season_start)
-        season_start_day = pd.Timestamp(raw_start.date())
-        normalized_start = _as_utc(raw_start)
-        frame = frame[frame["date"] >= normalized_start - pd.Timedelta(hours=36)]
+        season_start_day = pd.Timestamp(pd.Timestamp(season_start).date())
+        frame = frame[frame["_day"] >= season_start_day].copy()
 
     daily_mean = (frame["t_max"] + frame["t_min"]) / 2.0
     if t_upper is not None:
@@ -257,9 +262,9 @@ def calc_gdd(
     start_reached = bool(
         season_start_day is not None
         and period_start is not None
-        and period_start <= season_start_day + pd.Timedelta(days=1)
+        and period_start <= season_start_day
     )
-    expected_start = season_start_day if start_reached else period_start
+    expected_start = season_start_day if season_start_day is not None else period_start
     if expected_start is None or period_end is None:
         expected_days = 0
     else:
@@ -285,7 +290,10 @@ def calc_gdd(
     if season_start_day is None:
         period_note = "дата начала сезона не задана; сумма относится к доступному периоду"
     elif not start_reached:
-        period_note = "ряд не достигает даты начала сезона; сезонная сумма не заявляется"
+        period_note = (
+            "нет валидной строки на локальную дату начала сезона; "
+            "сезонная сумма не заявляется"
+        )
     elif not period_is_season:
         period_note = (
             "ряд достигает даты сезона, но доля пропусков превышает допустимый "
@@ -344,13 +352,18 @@ def calc_frost_risk(
     freeze_threshold_c: float = FROST_FREEZE_T_C,
     as_of: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
-    """Screen forecast daily 2 m air Tmin; do not infer crop damage."""
+    """Screen forecast daily 2 m air Tmin; do not infer crop damage.
+
+    A missing forecast or missing forecast Tmin is represented as an explicit
+    insufficient-data status. It is never interpreted as a frost-free result.
+    """
     if freeze_threshold_c > watch_threshold_c:
         raise ValueError("freeze threshold cannot exceed watch threshold")
 
     now = _as_utc(as_of or _now_utc())
-    frame = _prepare_daily(df_daily, {"date", "t_min"}).dropna(subset=["t_min"])
-    future = _forecast(frame, now).sort_values("_day")
+    frame = _prepare_daily(df_daily, {"date", "t_min"})
+    future_all = _forecast(frame, now).sort_values("_day")
+    future = future_all.dropna(subset=["t_min"]).copy()
     offset = timedelta(seconds=utc_offset_seconds)
     local_today = pd.Timestamp((now + offset).date())
     alerts: list[dict[str, Any]] = []
@@ -384,15 +397,43 @@ def calc_frost_risk(
             }
         )
 
-    horizon_days = int(future["_day"].nunique())
+    forecast_days = int(future_all["_day"].nunique())
+    valid_forecast_days = int(future["_day"].nunique())
+    missing_forecast_days = max(0, forecast_days - valid_forecast_days)
+    missing_fraction = (
+        round(missing_forecast_days / forecast_days, 3)
+        if forecast_days > 0
+        else None
+    )
+    if valid_forecast_days == 0:
+        status = FROST_STATUS_INSUFFICIENT
+        status_note = (
+            "прогнозные строки отсутствуют"
+            if forecast_days == 0
+            else "в прогнозных строках отсутствует Tmin воздуха"
+        )
+    elif alerts:
+        status = FROST_STATUS_RISK
+        status_note = "в валидном прогнозе есть события ниже порога внимания"
+    else:
+        status = FROST_STATUS_NO_RISK
+        status_note = "в валидных прогнозных сутках события ниже порога не выявлены"
+
     return {
+        "available": valid_forecast_days > 0,
+        "status": status,
+        "status_note": status_note,
         "alerts": alerts,
-        "frost_free_days_7d": max(0, horizon_days - len(alerts)),
-        "forecast_contains_48h": horizon_days >= 2,
-        "forecast_days": horizon_days,
+        "frost_free_days_7d": max(0, valid_forecast_days - len(alerts)),
+        "forecast_contains_48h": valid_forecast_days >= 2,
+        "forecast_days": forecast_days,
+        "valid_forecast_days": valid_forecast_days,
+        "missing_forecast_days": missing_forecast_days,
+        "missing_fraction": missing_fraction,
         "watch_threshold_c": watch_threshold_c,
         "freeze_threshold_c": freeze_threshold_c,
         "source_counts": _source_counts(future),
+        "all_forecast_source_counts": _source_counts(future_all),
         "units": "°C (Tmin воздуха на высоте 2 м)",
         "method_reference": (
             "оперативный скрининг прогнозной суточной Tmin воздуха 2 м; "
@@ -559,15 +600,24 @@ def format_indices_for_rag(
             f"Tbase={gdd.get('t_base')}°C; {gdd.get('period_note', '')}"
         )
 
-    alerts = indices.get("frost", {}).get("alerts", [])
-    if alerts:
+    frost = indices.get("frost", {})
+    alerts = frost.get("alerts", [])
+    if frost.get("status") == FROST_STATUS_INSUFFICIENT:
+        lines.append(
+            "Температурный скрининг: не выполнен — "
+            f"{frost.get('status_note', 'недостаточно прогнозных данных')}"
+        )
+    elif alerts:
         first = alerts[0]
         lines.append(
             f"Температурный скрининг: Tmin 2 м {first['t_min']}°C, "
             f"дата {first['date_local']}"
         )
     else:
-        lines.append("Температурный скрининг: событий по заданной политике нет")
+        lines.append(
+            "Температурный скрининг: в валидных прогнозных сутках "
+            "событий по заданной политике нет"
+        )
 
     water = indices.get("et0_bal", {})
     if water.get("balance_mm") is None:
