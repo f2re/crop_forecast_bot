@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from redis.asyncio import Redis
+
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 _RENEW_SCRIPT = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -38,6 +43,153 @@ class CoordinationBackend(Protocol):
     async def release(self, lease: Lease) -> bool: ...
 
     async def close(self) -> None: ...
+
+
+class LeaseLostError(RuntimeError):
+    """Raised when a worker no longer owns a distributed lease."""
+
+
+class RenewingLease:
+    """Keep a token-checked lease alive and cancel work when ownership is lost.
+
+    The guard renews the lease independently of target iteration. This matters
+    for provider and Telegram calls that can take longer than one scheduler
+    checkpoint. ``run`` races the protected awaitable against the lease-loss
+    signal and cancels the awaitable before allowing further side effects.
+    """
+
+    def __init__(
+        self,
+        backend: CoordinationBackend,
+        lease: Lease,
+        *,
+        ttl_seconds: int,
+        renew_interval_seconds: float,
+    ) -> None:
+        _validate_ttl(ttl_seconds)
+        if renew_interval_seconds <= 0:
+            raise ValueError("Lease renew interval must be greater than zero")
+        if renew_interval_seconds >= ttl_seconds:
+            raise ValueError("Lease renew interval must be shorter than its TTL")
+        self._backend = backend
+        self.lease = lease
+        self._ttl_seconds = ttl_seconds
+        self._renew_interval_seconds = renew_interval_seconds
+        self._lost = asyncio.Event()
+        self._closed = False
+        self._renew_task: asyncio.Task[None] | None = None
+        self._loss_reason = "lease ownership was lost"
+
+    @classmethod
+    async def acquire(
+        cls,
+        backend: CoordinationBackend,
+        key: str,
+        *,
+        ttl_seconds: int,
+        renew_interval_seconds: float | None = None,
+    ) -> RenewingLease | None:
+        lease = await backend.acquire(key, ttl_seconds)
+        if lease is None:
+            return None
+        interval = renew_interval_seconds
+        if interval is None:
+            interval = max(0.1, min(float(ttl_seconds) / 3.0, 60.0))
+        return cls(
+            backend,
+            lease,
+            ttl_seconds=ttl_seconds,
+            renew_interval_seconds=interval,
+        )
+
+    @property
+    def lost(self) -> bool:
+        return self._lost.is_set()
+
+    @property
+    def loss_reason(self) -> str:
+        return self._loss_reason
+
+    async def __aenter__(self) -> RenewingLease:
+        if self._closed:
+            raise RuntimeError("Cannot restart a closed lease guard")
+        if self._renew_task is not None:
+            raise RuntimeError("Lease guard is already running")
+        self._renew_task = asyncio.create_task(
+            self._renew_loop(),
+            name=f"lease-renew:{self.lease.key}",
+        )
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        await self.close()
+
+    def ensure_owned(self) -> None:
+        if self._lost.is_set():
+            raise LeaseLostError(self._loss_reason)
+
+    async def run(self, operation: Awaitable[T]) -> T:
+        """Run one awaitable while ownership is valid.
+
+        If the renewal loop reports loss first, the operation is cancelled and
+        ``LeaseLostError`` is raised. If both complete together, loss wins so a
+        caller never continues to the next side effect under uncertain
+        ownership.
+        """
+
+        self.ensure_owned()
+        operation_task = asyncio.ensure_future(operation)
+        loss_task = asyncio.create_task(self._lost.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {operation_task, loss_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if loss_task in done and self._lost.is_set():
+                if not operation_task.done():
+                    operation_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await operation_task
+                raise LeaseLostError(self._loss_reason)
+            return await operation_task
+        finally:
+            loss_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await loss_task
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self._renew_task is not None:
+            self._renew_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._renew_task
+        try:
+            await self._backend.release(self.lease)
+        except Exception:
+            logger.exception("Failed to release lease %s", self.lease.key)
+
+    async def _renew_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._renew_interval_seconds)
+            try:
+                renewed = await self._backend.renew(
+                    self.lease,
+                    self._ttl_seconds,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._loss_reason = (
+                    f"lease renewal failed: {type(exc).__name__}: {exc}"
+                )
+                self._lost.set()
+                return
+            if not renewed:
+                self._loss_reason = "lease token no longer owns the coordination key"
+                self._lost.set()
+                return
 
 
 class RedisCoordination:
