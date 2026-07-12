@@ -2,7 +2,7 @@
 
 Дата актуализации: **2026-07-12**.
 
-Текущий `main` перед научным срезом: PR #25 с process-failure orchestration для scheduler leases и атомарных пользовательских операций. В текущем срезе production-отчёт дополнен накопленными осадками, provider ET₀ и проверяемыми показателями непрерывности осадков.
+Текущий `main` перед этим срезом: PR #26 с накопленными осадками, provider ET₀ и показателями непрерывности осадков. В текущем срезе production-отчёт дополнен сезонным сравнением с фиксированной реанализной базой ERA5-Land 1991–2020.
 
 ## Текущий production-контур
 
@@ -11,6 +11,7 @@ aiogram 3.x
 PostgreSQL + Alembic
 Redis FSM / callback idempotency / renewable leases / deduplication
 Open-Meteo Forecast + Historical Weather
+ERA5-Land 1991–2020 reference via Open-Meteo
 APScheduler
 systemd + Bash release scripts
 ```
@@ -56,6 +57,7 @@ systemd + Bash release scripts
 ### Источники и расчёты
 
 - [x] typed weather DTO и provider port;
+- [x] typed climate DTO и отдельный async climate provider port;
 - [x] раздельные `reanalysis / operational_past / forecast`;
 - [x] текущий локальный день не считается завершённым прошлым;
 - [x] ГДД строго от локальной даты начала сезона;
@@ -67,6 +69,14 @@ systemd + Bash release scripts
 - [x] текущая и максимальная сухая серия только на непрерывном ряду;
 - [x] максимум осадков за 1 и 5 последовательных суток;
 - [x] отрицательные значения и прогнозные строки не искажают накопления;
+- [x] фиксированная ERA5-Land база 1991–2020, а не смешанный `Best Match`;
+- [x] одинаковые по длине сезонные окна с той же календарной датой старта;
+- [x] минимум 20 валидных референсных лет;
+- [x] эмпирические процентили без normal/gamma distribution fit;
+- [x] аддитивная температурная аномалия без физически некорректного `% от °C`;
+- [x] накопленные климатические метрики fail-closed при любом пропуске;
+- [x] 29 февраля не сдвигается на соседнюю дату;
+- [x] climate-provider outage не блокирует основной агроотчёт;
 - [x] frost screening только по прогнозным строкам;
 - [x] `insufficient_forecast_data` отделён от `no_risk`;
 - [x] fail-closed предупреждение при недоступной Tmin;
@@ -99,6 +109,7 @@ systemd + Bash release scripts
 - [ ] `deploy → update → forced failure → rollback` на Debian 12;
 - [ ] восстановление PostgreSQL dump в отдельную БД;
 - [ ] реальный Telegram API smoke для двух полей;
+- [ ] live smoke полного 1991–2020 ERA5-Land запроса на контрольных точках;
 - [ ] smoke на поддерживаемом Astra Linux окружении.
 
 > Telegram Bot API не предоставляет idempotency key для `sendMessage`. Поэтому абсолютный exactly-once результат при гибели процесса между внешней отправкой и фиксацией Redis dedup недоказуем. Текущий контракт: lease до отправки, дедупликация после подтверждённого успеха и контролируемый retry при явной ошибке.
@@ -112,6 +123,7 @@ systemd + Bash release scripts
 - [ ] измеримый rate limit;
 - [ ] stale-cache fallback с возрастом данных;
 - [ ] provider latency/error/fallback metrics;
+- [ ] отдельная телеметрия больших climate-reference запросов;
 - [ ] model-run и grid metadata через provider, который их реально отдаёт.
 
 ### P1 — научная валидация
@@ -124,12 +136,13 @@ systemd + Bash release scripts
 - [ ] сезонный ряд и правила непрерывности для ГТК;
 - [ ] локальный FAO-56 только после полного набора входов;
 - [ ] сравнение осадков и provider ET₀ с полевой станцией/лизиметром;
-- [ ] SPI/SPEI только после длинного однородного ряда и климатической нормы.
+- [ ] bias assessment ERA5-Land по регионам и сезонам;
+- [ ] SPI/SPEI только после отдельного длинного однородного pipeline и distribution fit.
 
 ### P1/P2 — новые данные
 
 - [ ] SoilGrids adapter и ocean/no-data validation;
-- [ ] ERA5-Land queued job/cache pipeline;
+- [ ] прямая CDS/ERA5-Land queued job/object-cache pipeline;
 - [ ] Sentinel-2/MODIS provider с quality masks;
 - [ ] provenance/version/resolution для каждого показателя.
 
@@ -142,6 +155,7 @@ systemd + Bash release scripts
 - [x] scheduler lease heartbeat и crash recovery подтверждены реальным Redis;
 - [x] pre-commit rollback подтверждён реальным PostgreSQL;
 - [x] накопленные водные показатели имеют единицы, период, provenance и QC;
+- [x] реанализное сравнение имеет фиксированный период, одинаковые окна, QC и Telegram tests;
 - [ ] clean-host deployment;
 - [ ] реальный Telegram smoke;
 - [ ] параллельная проверка с локальной метеостанцией;
