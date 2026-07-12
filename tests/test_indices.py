@@ -1,6 +1,9 @@
 import pandas as pd
 
 from src.agro.indices import (
+    FROST_STATUS_INSUFFICIENT,
+    FROST_STATUS_NO_RISK,
+    FROST_STATUS_RISK,
     calc_et0_balance,
     calc_frost_risk,
     calc_gdd,
@@ -99,6 +102,58 @@ def test_gdd_uses_catalog_base_and_separates_forecast() -> None:
     assert result["current_phase"] is None
 
 
+def test_gdd_strictly_excludes_local_days_before_sowing() -> None:
+    as_of = pd.Timestamp("2026-06-14T12:00:00Z")
+    dates = pd.date_range("2026-06-09", periods=5, freq="D", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_max": [25.0] * 5,
+            "t_min": [15.0] * 5,
+            "data_kind": ["operational_past"] * 5,
+        }
+    )
+
+    result = calc_gdd(
+        frame,
+        crop="corn",
+        season_start=pd.Timestamp("2026-06-11T00:00:00", tz="Europe/Moscow"),
+        as_of=as_of,
+    )
+
+    assert result["period_start"] == "2026-06-11"
+    assert result["gdd_past"] == 30.0
+    assert result["valid_days"] == 3
+    assert result["period_is_season"] is True
+
+
+def test_gdd_does_not_claim_season_when_start_day_is_missing() -> None:
+    as_of = pd.Timestamp("2026-06-15T12:00:00Z")
+    dates = pd.date_range("2026-06-12", periods=3, freq="D", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_max": [25.0] * 3,
+            "t_min": [15.0] * 3,
+            "data_kind": ["operational_past"] * 3,
+        }
+    )
+
+    result = calc_gdd(
+        frame,
+        crop="corn",
+        season_start=pd.Timestamp("2026-06-11T00:00:00", tz="Europe/Moscow"),
+        as_of=as_of,
+    )
+
+    assert result["coverage_start_reached"] is False
+    assert result["period_is_season"] is False
+    assert result["expected_days"] == 4
+    assert result["missing_days"] == 1
+
+
 def test_gdd_returns_unavailable_instead_of_false_zero() -> None:
     frame = pd.DataFrame(
         {
@@ -142,6 +197,9 @@ def test_frost_result_matches_scheduler_contract() -> None:
         elevation_m=120.0,
         as_of=pd.Timestamp("2026-07-10T12:00:00Z"),
     )
+    assert result["status"] == FROST_STATUS_RISK
+    assert result["available"] is True
+    assert result["valid_forecast_days"] == 2
     assert len(result["alerts"]) == 1
     event = result["alerts"][0]
     assert event["event_date"] == "2026-07-11"
@@ -153,7 +211,7 @@ def test_frost_result_matches_scheduler_contract() -> None:
     assert event["elevation_m"] == 120.0
 
 
-def test_frost_screening_ignores_past_cold_rows() -> None:
+def test_frost_screening_reports_insufficient_data_without_forecast() -> None:
     frame = pd.DataFrame(
         {
             "date": [pd.Timestamp("2026-07-09T00:00:00Z")],
@@ -167,7 +225,48 @@ def test_frost_screening_ignores_past_cold_rows() -> None:
         as_of=pd.Timestamp("2026-07-10T12:00:00Z"),
     )
     assert result["alerts"] == []
+    assert result["available"] is False
+    assert result["status"] == FROST_STATUS_INSUFFICIENT
     assert result["forecast_days"] == 0
+
+
+def test_frost_screening_reports_missing_forecast_tmin() -> None:
+    dates = pd.date_range("2026-07-11", periods=2, freq="D", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_min": [float("nan"), float("nan")],
+            "data_kind": ["forecast", "forecast"],
+        }
+    )
+    result = calc_frost_risk(
+        frame,
+        as_of=pd.Timestamp("2026-07-10T12:00:00Z"),
+    )
+    assert result["status"] == FROST_STATUS_INSUFFICIENT
+    assert result["forecast_days"] == 2
+    assert result["valid_forecast_days"] == 0
+    assert result["missing_forecast_days"] == 2
+
+
+def test_frost_screening_distinguishes_valid_no_risk() -> None:
+    dates = pd.date_range("2026-07-11", periods=2, freq="D", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_min": [5.0, 6.0],
+            "data_kind": ["forecast", "forecast"],
+        }
+    )
+    result = calc_frost_risk(
+        frame,
+        as_of=pd.Timestamp("2026-07-10T12:00:00Z"),
+    )
+    assert result["available"] is True
+    assert result["status"] == FROST_STATUS_NO_RISK
+    assert result["alerts"] == []
 
 
 def test_et0_balance_does_not_turn_missing_data_into_zero() -> None:
