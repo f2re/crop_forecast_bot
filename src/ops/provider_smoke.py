@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
@@ -43,6 +43,11 @@ class ProviderSmokeResult:
     longitude: float
     timezone: str
     elevation_m: float
+    model: str
+    model_run: str | None
+    retrieved_at: str
+    cache_ttl_seconds: int | None
+    spatial_resolution_km: float | None
     actual_start: str | None
     actual_end: str | None
     requested_season_start: str | None
@@ -68,6 +73,13 @@ def validate_weather_data(data: AgroWeatherData) -> ProviderSmokeResult:
         ZoneInfo(data.meta.timezone)
     except ZoneInfoNotFoundError as exc:
         raise ValueError(f"Provider timezone is invalid: {data.meta.timezone}") from exc
+
+    if not data.meta.model:
+        raise ValueError("Provider model provenance is missing")
+    if data.meta.retrieved_at is None or data.meta.retrieved_at.utcoffset() is None:
+        raise ValueError("Provider retrieval timestamp is missing or timezone-naive")
+    if data.meta.cache_ttl_seconds is not None and data.meta.cache_ttl_seconds <= 0:
+        raise ValueError("Provider cache TTL must be positive")
 
     frame = data.daily.copy()
     frame["date"] = pd.to_datetime(frame["date"], utc=True, errors="coerce")
@@ -96,11 +108,21 @@ def validate_weather_data(data: AgroWeatherData) -> ProviderSmokeResult:
     )
 
     coverage = data.coverage
+    model_run = (
+        data.meta.model_run.astimezone(timezone.utc).isoformat()
+        if data.meta.model_run is not None
+        else None
+    )
     return ProviderSmokeResult(
         latitude=data.meta.latitude,
         longitude=data.meta.longitude,
         timezone=data.meta.timezone,
         elevation_m=data.meta.elevation_m,
+        model=data.meta.model,
+        model_run=model_run,
+        retrieved_at=data.meta.retrieved_at.astimezone(timezone.utc).isoformat(),
+        cache_ttl_seconds=data.meta.cache_ttl_seconds,
+        spatial_resolution_km=data.meta.spatial_resolution_km,
         actual_start=(coverage.actual_start.isoformat() if coverage.actual_start else None),
         actual_end=coverage.actual_end.isoformat() if coverage.actual_end else None,
         requested_season_start=(
