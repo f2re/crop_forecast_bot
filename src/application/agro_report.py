@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import html
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from src.agro.climate_reference import calc_season_climate_reference
 from src.agro.crop_catalog import get_crop_name
 from src.agro.indices import (
     FROST_STATUS_INSUFFICIENT,
@@ -14,8 +16,13 @@ from src.agro.indices import (
 )
 from src.agro.water import calc_water_accumulation
 from src.api.open_meteo import OpenMeteoProvider
+from src.api.open_meteo_climate import OpenMeteoClimateProvider
+from src.application.ports.climate import ClimateProvider, ClimateProviderError
 from src.application.ports.weather import WeatherProvider
+from src.domain.climate import ClimateReferenceData
 from src.domain.weather import AgroWeatherData, WeatherCoverage
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +50,7 @@ async def generate_agro_report(
     phenological_phase: str | None = None,
     field_name: str = "Основное поле",
     provider: WeatherProvider | None = None,
+    climate_provider: ClimateProvider | None = None,
 ) -> AgroReport:
     weather_provider = provider or OpenMeteoProvider()
     weather = await weather_provider.fetch(
@@ -73,6 +81,68 @@ async def generate_agro_report(
         weather.daily,
         season_start=season_start_timestamp,
     )
+
+    climate_data: ClimateReferenceData | None = None
+    indices["climate_reference"] = {
+        "available": False,
+        "requested": False,
+        "status": "для сравнения нужна дата начала сезона",
+    }
+    resolved_climate_provider = climate_provider
+    # Unit/application tests commonly inject only the operational weather
+    # provider. Do not start an unrelated network request in that case unless a
+    # climate provider was supplied explicitly.
+    if resolved_climate_provider is None and provider is None:
+        resolved_climate_provider = OpenMeteoClimateProvider()
+    if season_start_timestamp is not None and resolved_climate_provider is not None:
+        try:
+            assert season_start_date is not None
+            climate_data = await resolved_climate_provider.fetch_reference(
+                latitude,
+                longitude,
+                timezone=weather.meta.timezone,
+                season_start=season_start_date,
+            )
+            climate_reference = calc_season_climate_reference(
+                climate_data.current_daily,
+                climate_data.reference_daily,
+                crop=crop,
+                season_start=season_start_timestamp,
+                reference_start=climate_data.meta.reference_start,
+                reference_end=climate_data.meta.reference_end,
+            )
+            climate_reference["requested"] = True
+            climate_reference["provider"] = {
+                "source": climate_data.meta.source,
+                "model": climate_data.meta.model,
+                "reference_start": climate_data.meta.reference_start.isoformat(),
+                "reference_end": climate_data.meta.reference_end.isoformat(),
+                "comparison_start": climate_data.meta.comparison_start.isoformat(),
+                "comparison_end": climate_data.meta.comparison_end.isoformat(),
+                "retrieved_at": climate_data.meta.retrieved_at,
+                "reference_cache_ttl_seconds": (
+                    climate_data.meta.reference_cache_ttl_seconds
+                ),
+                "current_cache_ttl_seconds": (
+                    climate_data.meta.current_cache_ttl_seconds
+                ),
+                "spatial_resolution_km": climate_data.meta.spatial_resolution_km,
+            }
+            indices["climate_reference"] = climate_reference
+        except (ClimateProviderError, ValueError) as exc:
+            climate_data = None
+            logger.warning(
+                "Climate reference unavailable for %.5f, %.5f: %s",
+                latitude,
+                longitude,
+                exc,
+            )
+            indices["climate_reference"] = {
+                "available": False,
+                "requested": True,
+                "status": "однородный ряд ERA5-Land временно недоступен",
+            }
+
     text = format_agro_report(
         weather,
         indices,
@@ -84,10 +154,12 @@ async def generate_agro_report(
     sources = [weather.meta.source]
     if weather.coverage.history_source:
         sources.insert(0, weather.coverage.history_source)
+    if climate_data is not None:
+        sources.insert(0, climate_data.meta.source)
     return AgroReport(
         text=text,
         generated_at=datetime.now(timezone.utc),
-        source=" + ".join(sources),
+        source=" + ".join(dict.fromkeys(sources)),
         metadata_source=weather.meta.source,
         timezone=weather.meta.timezone,
         elevation_m=weather.meta.elevation_m,
@@ -150,6 +222,103 @@ def _format_provider_metadata(weather: AgroWeatherData) -> list[str]:
     return lines
 
 
+def _percentile_text(metric: dict) -> str:
+    percentile = metric.get("empirical_percentile")
+    if percentile is None:
+        return "процентиль не определён"
+    return f"{percentile:.0f}-й эмпирический процентиль"
+
+
+def _format_climate_reference(climate: dict) -> list[str]:
+    if not climate.get("requested"):
+        return []
+
+    lines = ["", "📈 <b>Сезон ERA5-Land относительно базы 1991–2020</b>"]
+    if not climate.get("available"):
+        lines.append(f"• Не рассчитано: {html.escape(climate.get('status', 'нет данных'))}.")
+        return lines
+
+    metrics = climate["metrics"]
+    temperature = metrics["mean_temperature_c"]
+    if temperature["available"]:
+        lines.append(
+            f"• Средняя температура: {temperature['current']:.1f}°C; "
+            f"{temperature['anomaly_from_mean']:+.1f}°C к среднему; "
+            f"{_percentile_text(temperature)}."
+        )
+
+    precipitation = metrics["precip_sum_mm"]
+    et0 = metrics["et0_sum_mm"]
+    water_parts: list[str] = []
+    if precipitation["available"]:
+        precip_percent = precipitation.get("percent_of_mean")
+        if precip_percent is None:
+            water_parts.append(
+                f"осадки {precipitation['current']:.1f} мм; "
+                f"среднее близко к нулю, {_percentile_text(precipitation)}"
+            )
+        else:
+            water_parts.append(
+                f"осадки {precip_percent:.0f}% от среднего, "
+                f"{_percentile_text(precipitation)}"
+            )
+    if et0["available"]:
+        et0_percent = et0.get("percent_of_mean")
+        if et0_percent is None:
+            water_parts.append(
+                f"ET₀ {et0['current']:.1f} мм; "
+                f"среднее близко к нулю, {_percentile_text(et0)}"
+            )
+        else:
+            water_parts.append(
+                f"ET₀ {et0_percent:.0f}% от среднего, "
+                f"{_percentile_text(et0)}"
+            )
+    if water_parts:
+        lines.append("• " + "; ".join(water_parts) + ".")
+
+    gdd = metrics["gdd_c_day"]
+    if gdd["available"]:
+        lines.append(
+            f"• ГДД: {gdd['current']:.1f}°C·сут; "
+            f"{gdd['anomaly_from_mean']:+.1f}°C·сут к среднему; "
+            f"{_percentile_text(gdd)}."
+        )
+
+    dry_spell = metrics["max_dry_spell_days"]
+    if dry_spell["available"]:
+        lines.append(
+            f"• Максимальная сухая серия: {dry_spell['current']:.0f} сут.; "
+            f"{_percentile_text(dry_spell)}."
+        )
+
+    available_counts = [
+        int(metric["reference_years"])
+        for metric in metrics.values()
+        if metric.get("available")
+    ]
+    min_years = min(available_counts) if available_counts else 0
+    provider = climate.get("provider", {})
+    resolution = provider.get("spatial_resolution_km")
+    resolution_note = (
+        f", номинальная сетка около {resolution:g} км"
+        if resolution is not None
+        else ""
+    )
+    period_start = _format_iso_day(climate.get("period_start"))
+    period_end = _format_iso_day(climate.get("period_end"))
+    lines.append(
+        f"• Однородный ряд ERA5-Land: {period_start} — {period_end}; "
+        f"{climate['window_days']} сут.; не менее {min_years} сопоставимых лет"
+        f"{resolution_note}."
+    )
+    lines.append(
+        "• Процентиль — положение среди реанализных лет, не вероятность. "
+        "Это не полевая станция, не SPI/SPEI и не оперативный прогноз."
+    )
+    return lines
+
+
 def format_agro_report(
     weather: AgroWeatherData,
     indices: dict,
@@ -164,6 +333,7 @@ def format_agro_report(
     frost = indices["frost"]
     water = indices["et0_bal"]
     accumulated_water = indices.get("water_accumulation", {})
+    climate_reference = indices.get("climate_reference", {})
     crop_name = get_crop_name(crop)
     safe_field_name = html.escape(field_name)
     safe_phase = html.escape(phenological_phase) if phenological_phase else None
@@ -342,6 +512,8 @@ def format_agro_report(
         )
     lines.append(f"• {html.escape(gdd['phenology_note'])}")
 
+    lines.extend(_format_climate_reference(climate_reference))
+
     lines.extend(
         [
             "",
@@ -365,6 +537,19 @@ def format_agro_report(
         )
     else:
         lines.append("• Сезонный реанализ в этот отчёт не включён.")
+    if climate_reference.get("available"):
+        provider_meta = climate_reference.get("provider", {})
+        reference_cache_days = int(
+            provider_meta.get("reference_cache_ttl_seconds", 0)
+        ) // (24 * 60 * 60)
+        current_cache_hours = int(
+            provider_meta.get("current_cache_ttl_seconds", 0)
+        ) // (60 * 60)
+        lines.append(
+            "• Климатическое сравнение: текущий сезон и база 1991–2020 "
+            f"из одной модели ERA5-Land; кэш {current_cache_hours} ч./"
+            f"{reference_cache_days} сут."
+        )
     lines.append("• Текущие и будущие дни: Open-Meteo Forecast API.")
     for note in weather.coverage.notes:
         lines.append(f"⚠️ {html.escape(note)}")
@@ -373,7 +558,13 @@ def format_agro_report(
             "",
             "🔄 <b>Когда проверить снова:</b> после обновления прогноза, "
             "изменения фактической фазы или корректировки даты посева.",
-            "ℹ️ Это не климатическая норма и не прогноз урожайности.",
         ]
     )
+    if climate_reference.get("requested"):
+        lines.append(
+            "ℹ️ ERA5-Land публикуется с задержкой: климатический блок может "
+            "заканчиваться раньше оперативного ряда; это не прогноз урожайности."
+        )
+    else:
+        lines.append("ℹ️ Это не климатическая норма и не прогноз урожайности.")
     return "\n".join(lines)

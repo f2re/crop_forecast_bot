@@ -2,6 +2,38 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
+## 2026-07-12 — ERA5-Land season reference and empirical anomalies
+
+### Added
+
+- typed climate reference DTO and asynchronous provider port;
+- fixed `era5_land` adapter for the 1991–2020 reference period through Open-Meteo;
+- 30-day climate cache, bounded shared concurrency and exact coverage validation;
+- same-length season-to-date windows anchored to the same local month/day;
+- empirical mean, median, P10/P25/P75/P90 and mid-rank percentile summaries;
+- reference comparisons for mean temperature, precipitation, provider ET₀, crop-specific GDD, dry days and maximum dry spell;
+- Telegram report section with period, valid-year count, nominal grid resolution, provenance and limitations;
+- `docs/SCIENTIFIC_CLIMATE_REFERENCE.md`;
+- unit, provider-contract, fallback and Telegram message-length tests.
+
+### Scientific guards
+
+- the default mixed Open-Meteo `Best Match` model is not used for the multi-decadal reference;
+- forecast rows are excluded before local-date de-duplication;
+- accumulated precipitation, ET₀ and GDD are withheld if any daily value is missing;
+- Celsius values use additive anomalies only; a percent-of-mean temperature is not calculated;
+- 29 February is not silently shifted to another date;
+- at least 20 valid historical windows are required;
+- empirical percentile is not presented as probability, station climatological normal, SPI or SPEI;
+- climate-provider failure degrades only the climate section and does not block the operational report.
+
+### Known limitations
+
+- ERA5-Land is a gridded reanalysis, not a field station;
+- regional/seasonal bias has not yet been validated against local stations;
+- direct CDS job/object-cache infrastructure is not implemented;
+- live full-period control-point smoke remains part of the release gate.
+
 ## 2026-07-12 — accumulated precipitation and reference ET₀
 
 ### Added

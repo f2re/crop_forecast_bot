@@ -18,6 +18,7 @@ Telegram-бот для оперативной агрометеорологиче
 - 🌱 отдельные культура, дата посева и наблюдаемая фаза каждого поля;
 - 🌦 Open-Meteo Forecast API;
 - 🗓 сезонный реанализ Open-Meteo Historical Weather API;
+- 📈 сравнение завершённой части сезона с фиксированной ERA5-Land базой 1991–2020;
 - 🌿 ГДД с crop-specific `Tbase`, контролем периода и пропусков;
 - 💧 ГТК только для валидного завершённого тёплого окна;
 - 🚿 диагностическая разность осадки − ET₀ без фиктивных нулей;
@@ -109,6 +110,20 @@ GDDday = max(0, min(Tmean, Tupper) − Tbase)
 
 Прогнозные строки не входят в накопления. Сухие серии и 5-суточный максимум не публикуются при календарном разрыве или пропуске осадков. ET₀ остаётся характеристикой атмосферной испаряемости эталонной поверхности, а не фактической ET культуры. Методика и ограничения: [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md).
 
+### Сезон относительно ERA5-Land 1991–2020
+
+При заданной дате сезона бот отдельно запрашивает фиксированную модель `era5_land` и сравнивает завершённый текущий период с окнами той же длины и той же календарной даты старта в 1991–2020 годах.
+
+Показываются при достаточном качестве:
+
+- аномалия средней температуры, °C;
+- сумма осадков и ET₀ в процентах от реанализного среднего;
+- аномалия ГДД, °C·сут;
+- положение максимальной сухой серии;
+- эмпирические процентили и фактическое число сопоставимых лет.
+
+Требуется не менее 20 валидных исторических окон. Накопленные метрики не публикуются при пропуске хотя бы одного дня. Процент температуры от среднего не вычисляется, потому что отношение значений в °C физически некорректно. Процентиль не является вероятностью, а реанализная сетка не называется станционной климатической нормой. Методика: [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md).
+
 ### Температурный риск
 
 Используется прогнозная суточная Tmin воздуха на высоте 2 м.
@@ -128,10 +143,11 @@ insufficient_forecast_data
 В production пока нет:
 
 - прогноза урожайности или валидированной ML-модели;
-- SPI/SPEI без длинного однородного ряда и климатической нормы;
+- SPI/SPEI без отдельного длинного однородного pipeline и distribution fit;
 - локального FAO-56 Penman–Monteith;
 - фактической ET культуры, `Kc/Ks`, влагозапаса корнеобитаемого слоя или дозы полива;
-- production-интеграции SoilGrids, Sentinel-2, MODIS или ERA5-Land;
+- прямого CDS job/object-cache pipeline для ERA5-Land;
+- production-интеграции SoilGrids, Sentinel-2 или MODIS;
 - crop/phase-specific вероятности повреждения заморозком;
 - автоматической фенофазы по непроверенным GDD-порогам;
 - доз удобрений и препаратов без нормативного источника.
@@ -245,7 +261,7 @@ python -m src.bot.main
 bash scripts/verify-production.sh
 ```
 
-CI запускает PostgreSQL и Redis системными сервисами, без Docker. Проверяются миграции, row locks, Redis FSM restart, callback idempotency, два scheduler worker, продление job lease во время долгого I/O, восстановление после аварийного выхода процесса, атомарный rollback пользовательской операции и научные контракты накопленных показателей.
+CI запускает PostgreSQL и Redis системными сервисами, без Docker. Проверяются миграции, row locks, Redis FSM restart, callback idempotency, два scheduler worker, продление job lease во время долгого I/O, восстановление после аварийного выхода процесса, атомарный rollback пользовательской операции, накопленные показатели и ERA5-Land reference contracts.
 
 Локальные integration tests:
 
@@ -265,7 +281,7 @@ application services + typed ports
 domain / bounded agro calculations
         ↓
 infrastructure adapters
-  ├─ Open-Meteo forecast + reanalysis
+  ├─ Open-Meteo forecast + seasonal history + ERA5-Land reference
   ├─ PostgreSQL / Alembic
   ├─ Redis coordination
   └─ optional RAG
@@ -283,6 +299,7 @@ python -m src.bot.main
 - [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) — фактические возможности;
 - [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) — план модернизации;
 - [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md) — накопленные осадки, ET₀, сухие серии и ограничения;
+- [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md) — ERA5-Land 1991–2020, аномалии, процентили и ограничения;
 - [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md) — базовый аудит;
 - [`CHANGELOG.md`](CHANGELOG.md) — история изменений;
 - [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md) — эксплуатационный runbook.
