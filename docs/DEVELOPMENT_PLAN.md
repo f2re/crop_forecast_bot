@@ -52,26 +52,37 @@ infrastructure adapters
 
 Остаётся эксплуатационная проверка текущего release через live Open-Meteo smoke на сервере.
 
-## Активный вертикальный срез — Telegram/FSM и отказные сценарии
+## Завершённый вертикальный срез — Telegram/FSM reliability
+
+Статус: **реализован в PR #24; принимается только после полного зелёного CI**.
+
+- [x] production Router graph выделен в testable `build_dispatcher`;
+- [x] полный Dispatcher test `field → crop → season → phase → report`;
+- [x] исправлено сохранение ручной фазы из единого каталога;
+- [x] `waiting_for_name`, `waiting_for_coordinates`, `waiting_for_rename` и `waiting_for_start_date` продолжаются после повторного открытия RedisStorage;
+- [x] PostgreSQL/Redis outage до handler даёт контролируемое сообщение с correlation code;
+- [x] callback по удалённому сообщению восстанавливает актуальное меню;
+- [x] UX явно разделяет активное поле и all-field background monitoring;
+- [x] regression test закрывает issue #23.
+
+## Активный вертикальный срез — process failure и clean-host
 
 Приоритет: **P0**.
 
-1. Полный Dispatcher test `field → crop → season → report`.
-2. Restart каждой FSM-ветки с реальным RedisStorage.
-3. PostgreSQL outage до и во время пользовательской операции.
-4. Redis outage во время callback/FSM.
-5. Callback после удаления или редактирования исходного сообщения.
-6. Worker crash и потеря scheduler lease.
-7. Clean-host `deploy → update → forced failure → rollback → restore`.
-8. Реальный Telegram smoke для двух полей.
+1. PostgreSQL disconnect после записи, но до commit/response.
+2. Redis loss после получения callback или scheduler lease.
+3. `SIGKILL` scheduler worker и retry после TTL.
+4. Конкурентное удаление/редактирование Telegram-сообщения.
+5. Clean-host `deploy → update → forced failure → rollback → restore`.
+6. Реальный Telegram smoke для двух полей.
 
 Definition of Done:
 
-- flow достижим из `/start` и переживает restart;
-- outage даёт контролируемую ошибку без потери согласованности;
-- аварийный scheduler допускает retry и не создаёт дубль;
+- частично выполненная операция не оставляет несогласованные данные;
+- retry после аварии не создаёт повторный side effect;
+- потеря lease останавливает worker до следующего безопасного запуска;
 - clean-host сценарий воспроизводим документированными командами;
-- Telegram smoke подтверждает работу реального пользовательского пути.
+- Telegram smoke подтверждает реальный пользовательский путь.
 
 ## Этап 0 — runtime
 
@@ -168,13 +179,14 @@ Definition of Done:
 
 ## Этап 4 — Telegram/FSM failure scenarios
 
-Приоритет: **P0, активный**.
+Приоритет: **P0**.
 
-- [ ] полный Dispatcher test `field → crop → season → report`;
-- [ ] restart каждой FSM-ветки;
-- [ ] PostgreSQL outage during operation;
-- [ ] Redis outage during callback/FSM;
-- [ ] callback после удаления/редактирования сообщения;
+- [x] полный Dispatcher test `field → crop → season → phase → report`;
+- [x] restart основных FSM-веток;
+- [x] PostgreSQL outage до handler;
+- [x] Redis outage до handler/FSM;
+- [x] callback после удаления сообщения;
+- [ ] PostgreSQL/Redis failure после начала state-changing operation;
 - [ ] worker crash и потеря scheduler lease;
 - [ ] field archive/delete flow;
 - [ ] quiet hours и configurable delivery window.
