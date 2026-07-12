@@ -64,7 +64,10 @@ systemd + Bash release scripts
 
 ### P0 — верификация field-readiness среза
 
-- [ ] зелёный CI текущей ветки;
+- [x] Ruff, compileall, unit и integration CI;
+- [x] concurrent PostgreSQL onboarding;
+- [x] all-field scheduler targets;
+- [x] regression test против false no-risk;
 - [ ] полный Router/FSM test `field → crop → season → report`;
 - [ ] restart test каждой FSM-ветки;
 - [ ] outage PostgreSQL/Redis во время пользовательской операции;
