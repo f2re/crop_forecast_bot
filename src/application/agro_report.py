@@ -120,7 +120,8 @@ async def generate_agro_report(
                 "spatial_resolution_km": climate_data.meta.spatial_resolution_km,
             }
             indices["climate_reference"] = climate_reference
-        except ClimateProviderError as exc:
+        except (ClimateProviderError, ValueError) as exc:
+            climate_data = None
             logger.warning(
                 "Climate reference unavailable for %.5f, %.5f: %s",
                 latitude,
@@ -241,15 +242,29 @@ def _format_climate_reference(climate: dict) -> list[str]:
     et0 = metrics["et0_sum_mm"]
     water_parts: list[str] = []
     if precipitation["available"]:
-        water_parts.append(
-            f"осадки {precipitation['percent_of_mean']:.0f}% от среднего, "
-            f"{_percentile_text(precipitation)}"
-        )
+        precip_percent = precipitation.get("percent_of_mean")
+        if precip_percent is None:
+            water_parts.append(
+                f"осадки {precipitation['current']:.1f} мм; "
+                f"среднее близко к нулю, {_percentile_text(precipitation)}"
+            )
+        else:
+            water_parts.append(
+                f"осадки {precip_percent:.0f}% от среднего, "
+                f"{_percentile_text(precipitation)}"
+            )
     if et0["available"]:
-        water_parts.append(
-            f"ET₀ {et0['percent_of_mean']:.0f}% от среднего, "
-            f"{_percentile_text(et0)}"
-        )
+        et0_percent = et0.get("percent_of_mean")
+        if et0_percent is None:
+            water_parts.append(
+                f"ET₀ {et0['current']:.1f} мм; "
+                f"среднее близко к нулю, {_percentile_text(et0)}"
+            )
+        else:
+            water_parts.append(
+                f"ET₀ {et0_percent:.0f}% от среднего, "
+                f"{_percentile_text(et0)}"
+            )
     if water_parts:
         lines.append("• " + "; ".join(water_parts) + ".")
 
@@ -525,8 +540,13 @@ def format_agro_report(
             "",
             "🔄 <b>Когда проверить снова:</b> после обновления прогноза, "
             "изменения фактической фазы или корректировки даты посева.",
-            "ℹ️ Сравнение 1991–2020 основано на реанализной сетке, а не на "
-            "полевой станции; это не прогноз урожайности.",
         ]
     )
+    if climate_reference.get("requested"):
+        lines.append(
+            "ℹ️ Сравнение 1991–2020 основано на реанализной сетке, а не на "
+            "полевой станции; это не прогноз урожайности."
+        )
+    else:
+        lines.append("ℹ️ Это не климатическая норма и не прогноз урожайности.")
     return "\n".join(lines)
