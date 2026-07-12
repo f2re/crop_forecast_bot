@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -32,6 +32,8 @@ FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _MAX_CONCURRENT_REQUESTS = 4
 _REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
+_CACHE_TTL_SECONDS = 60 * 60
+_FORECAST_MODEL = "best_match"
 _HISTORY_SOURCE = "Open-Meteo Historical Weather API (reanalysis Best Match)"
 
 
@@ -78,7 +80,7 @@ def _get_http_session():
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_session = _TimeoutCachedSession(
         str(cache_path),
-        expire_after=3600,
+        expire_after=_CACHE_TTL_SECONDS,
     )
     return retry(
         cache_session,
@@ -227,9 +229,11 @@ def _fetch_sync(
 
 
 def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
+    retrieved_at = datetime.now(timezone.utc)
     params = {
         "latitude": lat,
         "longitude": lon,
+        "models": _FORECAST_MODEL,
         "past_days": PAST_DAYS,
         "forecast_days": FORECAST_DAYS,
         "hourly": [
@@ -312,13 +316,19 @@ def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
         utc_offset_seconds=int(response.UtcOffsetSeconds()),
         timezone=timezone_name,
         source="Open-Meteo Forecast API",
+        model=_FORECAST_MODEL,
+        model_run=None,
+        retrieved_at=retrieved_at,
+        cache_ttl_seconds=_CACHE_TTL_SECONDS,
+        spatial_resolution_km=None,
     )
     logger.info(
-        "Open-Meteo forecast OK: %.3f %.3f, elevation %.0f m, %s",
+        "Open-Meteo forecast OK: %.3f %.3f, elevation %.0f m, %s, model %s",
         meta.latitude,
         meta.longitude,
         meta.elevation_m,
         meta.timezone,
+        meta.model,
     )
     coverage = WeatherCoverage(
         actual_start=min(df_daily["local_date"]),
