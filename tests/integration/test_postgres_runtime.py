@@ -24,6 +24,7 @@ from src.database.crud import (
     set_season_start,
     update_user_crop,
 )
+from src.database.notification_targets import list_enabled_notification_targets
 from src.database.schema import expected_schema_revision, require_current_schema
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -136,6 +137,60 @@ async def test_postgres_adopts_legacy_schema_and_backfills_field_context() -> No
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+async def test_concurrent_first_updates_create_one_user_and_field() -> None:
+    database_url = _test_database_url()
+    await _reset_database(database_url)
+    await asyncio.to_thread(_upgrade, database_url)
+
+    database = Database(database_url)
+    try:
+        async def save(latitude: float, longitude: float) -> int:
+            async with database.get_session() as session:
+                user = await save_coordinates(
+                    session,
+                    telegram_id=1500,
+                    latitude=latitude,
+                    longitude=longitude,
+                    username="concurrent_farmer",
+                    first_name="Farmer",
+                )
+                return user.id
+
+        user_ids = await asyncio.gather(
+            save(55.75, 37.62),
+            save(55.76, 37.63),
+        )
+        assert user_ids[0] == user_ids[1]
+
+        async with database.engine.connect() as connection:
+            user_count = await connection.scalar(
+                text("SELECT count(*) FROM users WHERE telegram_id = 1500")
+            )
+            field_count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM fields f "
+                    "JOIN users u ON u.id = f.user_id "
+                    "WHERE u.telegram_id = 1500"
+                )
+            )
+            season_count = await connection.scalar(
+                text(
+                    "SELECT count(*) FROM crop_seasons s "
+                    "JOIN fields f ON f.id = s.field_id "
+                    "JOIN users u ON u.id = f.user_id "
+                    "WHERE u.telegram_id = 1500"
+                )
+            )
+        assert user_count == 1
+        assert field_count == 1
+        assert season_count == 1
+    finally:
+        await database.dispose()
+        await _reset_database(database_url)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
 async def test_postgres_repository_serializes_concurrent_field_activation() -> None:
     database_url = _test_database_url()
     await _reset_database(database_url)
@@ -195,23 +250,26 @@ async def test_postgres_repository_serializes_concurrent_field_activation() -> N
             assert len(active) == 1
             active_field = active[0]
 
-            all_targets = await list_notification_targets(session)
-            assert [target.field_id for target in all_targets] == [active_field.field_id]
+            active_targets = await list_notification_targets(session)
+            assert [target.field_id for target in active_targets] == [
+                active_field.field_id
+            ]
 
-            digest_targets = await list_notification_targets(
+            all_background_targets = await list_enabled_notification_targets(session)
+            assert [target.field_id for target in all_background_targets] == [
+                north.field_id,
+                south.field_id,
+            ]
+            digest_targets = await list_enabled_notification_targets(
                 session,
                 daily_digest_only=True,
             )
-            frost_targets = await list_notification_targets(
+            frost_targets = await list_enabled_notification_targets(
                 session,
                 frost_alerts_only=True,
             )
-            if active_field.field_id == north.field_id:
-                assert [target.field_id for target in digest_targets] == [north.field_id]
-                assert frost_targets == []
-            else:
-                assert digest_targets == []
-                assert [target.field_id for target in frost_targets] == [south.field_id]
+            assert [target.field_id for target in digest_targets] == [north.field_id]
+            assert [target.field_id for target in frost_targets] == [south.field_id]
 
         async with database.engine.connect() as connection:
             index_names = set(
