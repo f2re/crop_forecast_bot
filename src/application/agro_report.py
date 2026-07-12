@@ -96,14 +96,16 @@ async def generate_agro_report(
         resolved_climate_provider = OpenMeteoClimateProvider()
     if season_start_timestamp is not None and resolved_climate_provider is not None:
         try:
+            assert season_start_date is not None
             climate_data = await resolved_climate_provider.fetch_reference(
                 latitude,
                 longitude,
                 timezone=weather.meta.timezone,
+                season_start=season_start_date,
             )
             climate_reference = calc_season_climate_reference(
-                weather.daily,
-                climate_data.daily,
+                climate_data.current_daily,
+                climate_data.reference_daily,
                 crop=crop,
                 season_start=season_start_timestamp,
                 reference_start=climate_data.meta.reference_start,
@@ -115,8 +117,15 @@ async def generate_agro_report(
                 "model": climate_data.meta.model,
                 "reference_start": climate_data.meta.reference_start.isoformat(),
                 "reference_end": climate_data.meta.reference_end.isoformat(),
+                "comparison_start": climate_data.meta.comparison_start.isoformat(),
+                "comparison_end": climate_data.meta.comparison_end.isoformat(),
                 "retrieved_at": climate_data.meta.retrieved_at,
-                "cache_ttl_seconds": climate_data.meta.cache_ttl_seconds,
+                "reference_cache_ttl_seconds": (
+                    climate_data.meta.reference_cache_ttl_seconds
+                ),
+                "current_cache_ttl_seconds": (
+                    climate_data.meta.current_cache_ttl_seconds
+                ),
                 "spatial_resolution_km": climate_data.meta.spatial_resolution_km,
             }
             indices["climate_reference"] = climate_reference
@@ -131,7 +140,7 @@ async def generate_agro_report(
             indices["climate_reference"] = {
                 "available": False,
                 "requested": True,
-                "status": "реанализная база ERA5-Land временно недоступна",
+                "status": "однородный ряд ERA5-Land временно недоступен",
             }
 
     text = format_agro_report(
@@ -224,7 +233,7 @@ def _format_climate_reference(climate: dict) -> list[str]:
     if not climate.get("requested"):
         return []
 
-    lines = ["", "📈 <b>Сезон относительно реанализной базы 1991–2020</b>"]
+    lines = ["", "📈 <b>Сезон ERA5-Land относительно базы 1991–2020</b>"]
     if not climate.get("available"):
         lines.append(f"• Не рассчитано: {html.escape(climate.get('status', 'нет данных'))}.")
         return lines
@@ -296,13 +305,16 @@ def _format_climate_reference(climate: dict) -> list[str]:
         if resolution is not None
         else ""
     )
+    period_start = _format_iso_day(climate.get("period_start"))
+    period_end = _format_iso_day(climate.get("period_end"))
     lines.append(
-        f"• Окно: {climate['window_days']} завершённых суток; "
-        f"не менее {min_years} сопоставимых лет{resolution_note}."
+        f"• Однородный ряд ERA5-Land: {period_start} — {period_end}; "
+        f"{climate['window_days']} сут.; не менее {min_years} сопоставимых лет"
+        f"{resolution_note}."
     )
     lines.append(
         "• Процентиль — положение среди реанализных лет, не вероятность. "
-        "Это не станционная норма и не SPI/SPEI."
+        "Это не полевая станция, не SPI/SPEI и не оперативный прогноз."
     )
     return lines
 
@@ -527,10 +539,16 @@ def format_agro_report(
         lines.append("• Сезонный реанализ в этот отчёт не включён.")
     if climate_reference.get("available"):
         provider_meta = climate_reference.get("provider", {})
-        cache_days = int(provider_meta.get("cache_ttl_seconds", 0)) // (24 * 60 * 60)
+        reference_cache_days = int(
+            provider_meta.get("reference_cache_ttl_seconds", 0)
+        ) // (24 * 60 * 60)
+        current_cache_hours = int(
+            provider_meta.get("current_cache_ttl_seconds", 0)
+        ) // (60 * 60)
         lines.append(
-            "• Климатическое сравнение: ERA5-Land 1991–2020 через Open-Meteo; "
-            f"кэш до {cache_days} сут."
+            "• Климатическое сравнение: текущий сезон и база 1991–2020 "
+            f"из одной модели ERA5-Land; кэш {current_cache_hours} ч./"
+            f"{reference_cache_days} сут."
         )
     lines.append("• Текущие и будущие дни: Open-Meteo Forecast API.")
     for note in weather.coverage.notes:
@@ -544,8 +562,8 @@ def format_agro_report(
     )
     if climate_reference.get("requested"):
         lines.append(
-            "ℹ️ Сравнение 1991–2020 основано на реанализной сетке, а не на "
-            "полевой станции; это не прогноз урожайности."
+            "ℹ️ ERA5-Land публикуется с задержкой: климатический блок может "
+            "заканчиваться раньше оперативного ряда; это не прогноз урожайности."
         )
     else:
         lines.append("ℹ️ Это не климатическая норма и не прогноз урожайности.")
