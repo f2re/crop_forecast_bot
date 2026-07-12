@@ -2,6 +2,12 @@
 
 Дата актуализации: **2026-07-12**.
 
+## Текущее состояние
+
+Основной научный и runtime-контур работает через единый aiogram-entrypoint. PostgreSQL является source of truth, Redis используется для FSM и координации, Open-Meteo — для оперативного прогноза и ограниченной истории, ERA5-Land — для однородного сезонного сравнения.
+
+Последний завершённый вертикальный срез: **ERA5-Land seasonal reference, слит через PR #27**.
+
 ## Целевая архитектура
 
 ```text
@@ -12,7 +18,8 @@ application services / typed ports
 domain / scientifically bounded calculations
         ↓
 infrastructure adapters
-  ├─ Open-Meteo forecast / historical reanalysis / ERA5-Land reference
+  ├─ Open-Meteo forecast / bounded season history
+  ├─ ERA5-Land current season + 1991–2020 reference
   ├─ PostgreSQL repositories / Alembic
   ├─ Redis callback/job leases / deduplication
   └─ optional source-attributed RAG
@@ -23,9 +30,9 @@ infrastructure adapters
 1. Один Telegram framework и один entrypoint.
 2. Handlers не выполняют расчёты, HTTP и блокирующий I/O.
 3. PostgreSQL — source of truth; Redis — FSM и coordination.
-4. Observation, reanalysis и forecast не смешиваются.
-5. Отсутствие данных не заменяется эвристикой или нулём.
-6. Формула имеет источник, единицы, период и тесты.
+4. Observation, reanalysis, forecast и reference period не смешиваются.
+5. Отсутствие данных не заменяется эвристикой, интерполяцией или нулём без отдельного валидированного метода.
+6. Формула имеет источник, единицы, период, допустимый диапазон и тесты.
 7. Неподдерживаемая функция явно выключена.
 8. State-changing callback задаёт конечное состояние, а не toggle.
 9. Background monitoring относится ко всем enabled fields.
@@ -34,14 +41,14 @@ infrastructure adapters
 12. Релиз принимается после CI, migration check и runtime smoke.
 13. Production разворачивается Bash/systemd без Docker.
 14. Накопления строятся только по завершённым локальным суткам и сохраняют provenance.
-15. Разность двух величин вычисляется по одному и тому же набору парных наблюдений.
-16. Многолетнее сравнение использует фиксированную модель и фиксированный reference period; `Best Match` запрещён.
-17. Сумма не сравнивается при пропуске; отношение температур в °C к среднему не вычисляется.
-18. Эмпирический процентиль не называется вероятностью, SPI/SPEI или климатической станционной нормой.
+15. Разность величин вычисляется по одному набору парных наблюдений.
+16. Многолетнее сравнение использует одну фиксированную модель для текущего и reference-периода.
+17. Сумма не сравнивается при пропуске; отношение температуры в °C к среднему не вычисляется.
+18. Эмпирический процентиль не называется вероятностью, SPI/SPEI или станционной нормой.
 
-## Завершённый срез — field-readiness
+## Завершённые вертикальные срезы
 
-Статус: **слит через PR #21**.
+### Runtime и field-readiness — PR #21
 
 - [x] `insufficient_forecast_data` отделён от подтверждённого `no_risk`;
 - [x] ГДД фильтруются строго от локальной даты начала сезона;
@@ -50,9 +57,7 @@ infrastructure adapters
 - [x] race-safe onboarding через upsert и row lock;
 - [x] provider provenance и regression tests.
 
-## Завершённый срез — Telegram/FSM reliability
-
-Статус: **слит через PR #24**.
+### Telegram/FSM reliability — PR #24
 
 - [x] testable production `build_dispatcher`;
 - [x] Dispatcher-flow `field → crop → season → phase → report`;
@@ -62,64 +67,58 @@ infrastructure adapters
 - [x] единый каталог ручных фаз;
 - [x] UX all-field monitoring синхронизирован с scheduler.
 
-## Завершённый срез — process failure orchestration
-
-Статус: **реализован и подтверждён полным CI в PR #25**.
+### Process failure orchestration — PR #25
 
 - [x] reusable `RenewingLease` с token-checked heartbeat;
 - [x] продление scheduler lock во время долгого provider/report I/O;
 - [x] отмена текущего read/report после потери ownership;
 - [x] запрет перехода к следующему полю после lease loss;
-- [x] реальный Redis test: job дольше исходного TTL не запускает второй worker;
-- [x] реальный Redis test: принудительное удаление lock отменяет job и разрешает retry другому worker;
-- [x] subprocess crash без release и восстановление lock после TTL;
-- [x] `_lock_user` больше не вызывает промежуточный commit;
-- [x] crop/season/phase mutations выполняются под user row lock;
+- [x] real Redis tests для long job, forced lock loss и crash/TTL recovery;
+- [x] `_lock_user` без промежуточного commit;
+- [x] crop/season/phase mutations под user row lock;
 - [x] real PostgreSQL failure-injection после `flush` и до `COMMIT`;
-- [x] rollback оставляет ноль частичных user/field/season записей;
-- [x] caller cancellation не оставляет защищённую coroutine работающей в фоне.
+- [x] rollback без частичных user/field/season записей;
+- [x] caller cancellation не оставляет защищённую coroutine в фоне.
 
-Ограничение: per-notification Redis reservation снижает риск дубля, но Telegram `sendMessage` не имеет idempotency key. Если процесс погиб после принятия сообщения Telegram и до фиксации dedup lease, результат внешней отправки остаётся неопределённым. Это должно учитываться в эксплуатационном регламенте.
+Ограничение: Telegram `sendMessage` не поддерживает application idempotency key. Абсолютный exactly-once результат между внешней отправкой и фиксацией dedup недоказуем.
 
-## Завершённый срез — накопленные осадки и атмосферная испаряемость
+### Накопленные осадки и атмосферная испаряемость — PR #26
 
-Статус: **слит через PR #26**.
-
-- [x] накопленная сумма осадков по завершённым локальным суткам;
-- [x] накопленная provider ET₀ с независимым контролем полноты;
+- [x] накопленные осадки по завершённым локальным суткам;
+- [x] накопленная provider ET₀ с независимым QC;
 - [x] `ΣP−ΣET₀` только по парным валидным суткам;
-- [x] сезонная граница по локальной дате посева/начала сезона;
-- [x] прогнозные строки исключены из накоплений;
+- [x] локальная граница сезона;
+- [x] прогноз исключён из накоплений;
 - [x] отрицательные значения не превращаются в ноль;
-- [x] сухой день `P < 1 мм/сут` и влажный день `P ≥ 1 мм/сут` по ETCCDI/Climdex;
+- [x] dry/wet threshold `1 мм/сут` по ETCCDI/Climdex;
 - [x] текущая и максимальная сухая серия только на непрерывном ряду;
 - [x] максимум осадков за 1 и 5 последовательных суток;
-- [x] overlap forecast/completed одной даты не скрывает завершённую строку;
-- [x] источник, период, число валидных суток и ограничения отображаются в отчёте;
 - [x] показатели не называются влагозапасом, фактической ET культуры или дозой полива.
 
-Методическая спецификация: `docs/SCIENTIFIC_WATER_INDICATORS.md`.
+Методика: `docs/SCIENTIFIC_WATER_INDICATORS.md`.
 
-## Завершённый срез — ERA5-Land seasonal reference
+### Однородное сезонное сравнение ERA5-Land — PR #27
 
-Статус: **реализован в production agro-report, ожидает CI/merge текущего PR**.
-
-- [x] отдельные typed climate DTO и async provider port;
-- [x] фиксированный `models=era5_land`, reference period 1991–2020;
-- [x] 30-суточный cache и bounded shared concurrency;
-- [x] точная проверка покрытия reference period;
+- [x] typed climate DTO и async provider port;
+- [x] раздельные `current_daily` и `reference_daily`;
+- [x] одна модель `models=era5_land` для обеих серий;
+- [x] reference period 1991–2020;
+- [x] текущий ряд cache 6 часов, reference cache 30 суток;
+- [x] полностью пустой хвост задержанного ERA5-Land удаляется без подмены прогнозом;
+- [x] фактическая дата окончания ряда показывается пользователю;
 - [x] same-length windows с одинаковой календарной датой старта;
 - [x] минимум 20 валидных референсных лет;
-- [x] эмпирический mid-rank percentile без distribution fit;
+- [x] empirical mid-rank percentile без distribution fit;
 - [x] средняя температура, осадки, provider ET₀, ГДД и сухие серии;
 - [x] накопленные метрики требуют полного ряда;
 - [x] отношение температуры в °C к среднему запрещено;
 - [x] 29 февраля не сдвигается эвристически;
 - [x] отказ climate provider не блокирует оперативный отчёт;
-- [x] Telegram-текст показывает источник, окно, число лет и ограничения;
-- [x] SPI/SPEI, station normal и вероятность не заявляются.
+- [x] Telegram-текст укладывается в 4096 символов;
+- [x] SPI/SPEI, station normal и вероятность не заявляются;
+- [x] полный CI: static/policy, unit/contract, PostgreSQL/Redis integration, Alembic graph.
 
-Методическая спецификация: `docs/SCIENTIFIC_CLIMATE_REFERENCE.md`.
+Методика: `docs/SCIENTIFIC_CLIMATE_REFERENCE.md`.
 
 ## Активный вертикальный срез — clean-host release gate
 
@@ -133,7 +132,7 @@ infrastructure adapters
 6. Автоматический возврат предыдущего кода и systemd unit.
 7. `pg_restore` последнего dump в отдельную test database.
 8. Сравнение пользователей, полей, сезонов и Alembic revision.
-9. Live smoke Forecast/Historical/ERA5-Land reference на контрольных точках.
+9. Live smoke Forecast/Historical/ERA5-Land на контрольных точках.
 10. Повторение smoke на поддерживаемом Astra Linux окружении.
 
 Definition of Done:
@@ -185,8 +184,6 @@ Definition of Done:
 
 ## Этап 2 — научная целостность
 
-Статус: **основной screening layer реализован**.
-
 ### ГДД
 
 - [x] crop-specific `Tbase` из одного каталога;
@@ -215,29 +212,29 @@ Definition of Done:
 - [x] ET₀ обозначен как provider variable;
 - [x] paired-data validation;
 - [x] no irrigation-dose claim;
-- [x] накопленные `P` и provider `ET₀` по завершённым локальным суткам;
-- [x] сезонная `ΣP−ΣET₀` только по парным валидным суткам;
-- [x] ETCCDI-compatible dry/wet threshold и bounded-period spell metrics;
-- [x] Rx1day/Rx5day operation с continuity guard;
+- [x] накопленные `P` и provider `ET₀`;
+- [x] сезонная `ΣP−ΣET₀` по парным суткам;
+- [x] dry/wet threshold и bounded-period spell metrics;
+- [x] Rx1day/Rx5day с continuity guard;
 - [x] отрицательные значения и пропуски fail-closed;
-- [ ] полевая валидация осадков и ET₀ по станции/лизиметру;
-- [ ] local FAO-56 Penman–Monteith с полным набором входов;
+- [ ] полевая валидация по станции/лизиметру;
+- [ ] local FAO-56 Penman–Monteith;
 - [ ] soil/root-zone storage model;
 - [ ] Kc только с валидированной фазой.
 
 ### Климатическая реанализная база
 
-- [x] фиксированный ERA5-Land 1991–2020;
+- [x] homogeneous ERA5-Land current/reference contract;
+- [x] fixed 1991–2020 reference;
 - [x] same-length season-to-date windows;
-- [x] empirical percentiles и mean/median/P10/P25/P75/P90;
-- [x] climate-provider provenance и 30-day cache;
-- [x] fail-soft operational report;
-- [x] leap-day и cross-year boundary tests;
+- [x] empirical percentiles и descriptive quantiles;
+- [x] provenance, cache policy и latency marker;
+- [x] leap-day/cross-year tests;
 - [x] no `Best Match`, no temperature ratio, no implicit zero;
-- [ ] live контрольные точки для полного 30-летнего запроса;
+- [ ] live full-period контрольные точки;
 - [ ] региональная bias-оценка по станциям;
 - [ ] прямой CDS job/object-cache pipeline;
-- [ ] SPI/SPEI только после отдельной валидации distribution fit и временных масштабов.
+- [ ] SPI/SPEI после отдельной валидации distribution fit и временных масштабов.
 
 ### Заморозки
 
@@ -274,6 +271,7 @@ Definition of Done:
 - [x] полный Dispatcher test;
 - [x] restart основных FSM-веток;
 - [x] fail-closed dependency error UX;
+- [ ] синхронизировать одну строку `/help`: дата сезона также нужна для водных накоплений и ERA5-Land;
 - [ ] field archive/delete flow;
 - [ ] user data export/delete;
 - [ ] quiet hours и configurable delivery window;
@@ -306,7 +304,7 @@ Definition of Done:
 - [x] Bash/systemd releases;
 - [x] PostgreSQL backup перед update;
 - [x] atomic activation и code rollback;
-- [x] verification script и live provider smoke command;
+- [x] verification script и live operational provider smoke command;
 - [x] real PostgreSQL/Redis CI без Docker;
 - [ ] `uv.lock` на целевых ОС;
 - [ ] clean-host Debian 12 test;
@@ -322,10 +320,10 @@ Definition of Done:
 - [x] field-readiness и Telegram/FSM reliability слиты с зелёным CI;
 - [x] scheduler heartbeat/loss и transaction rollback проверены реальными сервисами;
 - [x] накопленные показатели осадков/ET₀ имеют источники, единицы, QC и Telegram tests;
-- [x] seasonal ERA5-Land reference имеет фиксированный период, provenance, QC и Telegram tests;
+- [x] homogeneous ERA5-Land reference имеет фиксированный период, provenance, QC и Telegram tests;
 - [ ] clean-host deploy/update/rollback пройден;
 - [ ] реальный Telegram smoke для двух полей пройден;
-- [ ] Open-Meteo live smoke пройден на контрольных точках;
+- [ ] Open-Meteo/ERA5-Land live smoke пройден на контрольных точках;
 - [ ] параллельное сравнение с локальной станцией выполнено;
 - [ ] регламент эксплуатации утверждает screening-only статус;
 - [ ] критичные предупреждения имеют независимый резервный канал.
