@@ -97,6 +97,7 @@ async def test_redis_backend_uses_namespaced_token_checked_leases() -> None:
 class ScriptedCoordination:
     def __init__(self, renew_results: list[bool]) -> None:
         self.renew_results = renew_results
+        self.acquire_calls = 0
         self.renew_calls = 0
         self.release_calls = 0
         self.lease = Lease(key="test:job", token="owner-token")
@@ -104,6 +105,7 @@ class ScriptedCoordination:
     async def acquire(self, key: str, ttl_seconds: int) -> Lease | None:
         assert key == "job"
         assert ttl_seconds > 0
+        self.acquire_calls += 1
         return self.lease
 
     async def renew(self, lease: Lease, ttl_seconds: int) -> bool:
@@ -180,3 +182,34 @@ async def test_renewing_lease_rejects_interval_not_shorter_than_ttl() -> None:
             ttl_seconds=1,
             renew_interval_seconds=1,
         )
+    assert backend.acquire_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_renewing_lease_cancels_operation_when_caller_is_cancelled() -> None:
+    backend = ScriptedCoordination([True])
+    guard = await RenewingLease.acquire(
+        backend,
+        "job",
+        ttl_seconds=1,
+        renew_interval_seconds=0.2,
+    )
+    assert guard is not None
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def operation() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            cancelled.set()
+
+    async with guard:
+        task = asyncio.create_task(guard.run(operation()))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    assert cancelled.is_set()
