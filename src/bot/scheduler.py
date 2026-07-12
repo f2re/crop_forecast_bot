@@ -16,7 +16,11 @@ from src.application.agro_report import generate_agro_report
 from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
 from src.database.crud import NotificationTarget
 from src.database.notification_targets import list_enabled_notification_targets
-from src.infrastructure.coordination import CoordinationBackend, Lease
+from src.infrastructure.coordination import (
+    CoordinationBackend,
+    LeaseLostError,
+    RenewingLease,
+)
 
 logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], AsyncSession]
@@ -28,6 +32,7 @@ _FROST_UNAVAILABLE_DEDUP_TTL = 20 * 60 * 60
 _DAILY_DIGEST_DEDUP_TTL = 36 * 60 * 60
 _FROST_JOB_LOCK_TTL = 5 * 60 * 60
 _DAILY_JOB_LOCK_TTL = 6 * 60 * 60
+_JOB_LEASE_RENEW_INTERVAL_SECONDS = 60.0
 _DAILY_DIGEST_LOCAL_START_HOUR = 7
 _DAILY_DIGEST_LOCAL_END_HOUR = 11
 
@@ -152,24 +157,21 @@ async def _send_once(
     return True
 
 
-async def _release_job_lock(
-    coordination: CoordinationBackend,
-    lease: Lease,
-    job_name: str,
-) -> None:
-    try:
-        await coordination.release(lease)
-    except Exception:
-        logger.exception("Failed to release distributed lock for %s", job_name)
-
-
 async def check_frost_alerts(
     bot: Bot,
     session_factory: SessionFactory,
     coordination: CoordinationBackend,
+    *,
+    job_lock_ttl_seconds: int = _FROST_JOB_LOCK_TTL,
+    renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
-    job_lease = await coordination.acquire("job:frost-check", _FROST_JOB_LOCK_TTL)
-    if job_lease is None:
+    job_guard = await RenewingLease.acquire(
+        coordination,
+        "job:frost-check",
+        ttl_seconds=job_lock_ttl_seconds,
+        renew_interval_seconds=renew_interval_seconds,
+    )
+    if job_guard is None:
         logger.info("Frost screening skipped: another process owns the job lock")
         return
 
@@ -178,92 +180,106 @@ async def check_frost_alerts(
         datetime.now().isoformat(timespec="minutes"),
     )
     try:
-        for target in await _targets(session_factory, frost_alerts_only=True):
-            if not await coordination.renew(job_lease, _FROST_JOB_LOCK_TTL):
-                logger.error("Frost screening lost its distributed lock; aborting")
-                return
-            try:
-                weather = await fetch_agro_data(target.latitude, target.longitude)
-                risk = calc_frost_risk(
-                    weather.daily,
-                    utc_offset_seconds=weather.meta.utc_offset_seconds,
-                    crop=target.selected_crop,
-                    phase=target.phenological_phase,
-                    elevation_m=weather.meta.elevation_m,
-                )
-                if risk["status"] == FROST_STATUS_INSUFFICIENT:
+        async with job_guard:
+            targets = await job_guard.run(
+                _targets(session_factory, frost_alerts_only=True)
+            )
+            for target in targets:
+                job_guard.ensure_owned()
+                try:
+                    weather = await job_guard.run(
+                        fetch_agro_data(target.latitude, target.longitude)
+                    )
+                    job_guard.ensure_owned()
+                    risk = calc_frost_risk(
+                        weather.daily,
+                        utc_offset_seconds=weather.meta.utc_offset_seconds,
+                        crop=target.selected_crop,
+                        phase=target.phenological_phase,
+                        elevation_m=weather.meta.elevation_m,
+                    )
+                    if risk["status"] == FROST_STATUS_INSUFFICIENT:
+                        logger.warning(
+                            "Frost screening unavailable for user %s field %s: %s",
+                            target.telegram_id,
+                            target.field_id,
+                            risk["status_note"],
+                        )
+                        unavailable_key = (
+                            "notification:frost-data-unavailable:"
+                            f"{target.telegram_id}:{target.field_id}:"
+                            f"{_local_date(target.timezone)}"
+                        )
+
+                        async def send_unavailable(
+                            target: NotificationTarget = target,
+                            reason: str = str(risk["status_note"]),
+                        ) -> object:
+                            return await bot.send_message(
+                                target.telegram_id,
+                                format_frost_data_unavailable(
+                                    target.field_name,
+                                    reason,
+                                ),
+                            )
+
+                        # A notification has its own lease. Once acquired, let
+                        # the in-flight Telegram operation settle even if the
+                        # broader job lease is lost; another worker cannot send
+                        # the same field/day notification concurrently.
+                        job_guard.ensure_owned()
+                        await _send_once(
+                            coordination,
+                            unavailable_key,
+                            _FROST_UNAVAILABLE_DEDUP_TTL,
+                            send_unavailable,
+                        )
+                        continue
+                    for event in risk["alerts"]:
+                        alert_key = (
+                            f"notification:frost:{target.telegram_id}:{target.field_id}:"
+                            f"{event['event_date']}:{event['level']}"
+                        )
+
+                        async def send(
+                            event: dict = event,
+                            target: NotificationTarget = target,
+                        ) -> object:
+                            return await bot.send_message(
+                                target.telegram_id,
+                                format_frost_alert(
+                                    event,
+                                    target.selected_crop,
+                                    phase=target.phenological_phase,
+                                    field_name=target.field_name,
+                                ),
+                            )
+
+                        job_guard.ensure_owned()
+                        await _send_once(
+                            coordination,
+                            alert_key,
+                            _FROST_DEDUP_TTL,
+                            send,
+                        )
+                except LeaseLostError:
+                    raise
+                except OpenMeteoError as exc:
                     logger.warning(
-                        "Frost screening unavailable for user %s field %s: %s",
+                        "Open-Meteo unavailable for user %s field %s: %s",
                         target.telegram_id,
                         target.field_id,
-                        risk["status_note"],
+                        exc,
                     )
-                    unavailable_key = (
-                        "notification:frost-data-unavailable:"
-                        f"{target.telegram_id}:{target.field_id}:"
-                        f"{_local_date(target.timezone)}"
+                except Exception:
+                    logger.exception(
+                        "Frost alert failed for user %s field %s",
+                        target.telegram_id,
+                        target.field_id,
                     )
-
-                    async def send_unavailable(
-                        target: NotificationTarget = target,
-                        reason: str = str(risk["status_note"]),
-                    ) -> object:
-                        return await bot.send_message(
-                            target.telegram_id,
-                            format_frost_data_unavailable(
-                                target.field_name,
-                                reason,
-                            ),
-                        )
-
-                    await _send_once(
-                        coordination,
-                        unavailable_key,
-                        _FROST_UNAVAILABLE_DEDUP_TTL,
-                        send_unavailable,
-                    )
-                    continue
-                for event in risk["alerts"]:
-                    alert_key = (
-                        f"notification:frost:{target.telegram_id}:{target.field_id}:"
-                        f"{event['event_date']}:{event['level']}"
-                    )
-
-                    async def send(
-                        event: dict = event,
-                        target: NotificationTarget = target,
-                    ) -> object:
-                        return await bot.send_message(
-                            target.telegram_id,
-                            format_frost_alert(
-                                event,
-                                target.selected_crop,
-                                phase=target.phenological_phase,
-                                field_name=target.field_name,
-                            ),
-                        )
-
-                    await _send_once(
-                        coordination,
-                        alert_key,
-                        _FROST_DEDUP_TTL,
-                        send,
-                    )
-            except OpenMeteoError as exc:
-                logger.warning(
-                    "Open-Meteo unavailable for user %s field %s: %s",
-                    target.telegram_id,
-                    target.field_id,
-                    exc,
-                )
-            except Exception:
-                logger.exception(
-                    "Frost alert failed for user %s field %s",
-                    target.telegram_id,
-                    target.field_id,
-                )
-    finally:
-        await _release_job_lock(coordination, job_lease, "frost-check")
+    except LeaseLostError as exc:
+        logger.error("Frost screening lost its distributed lock; aborting: %s", exc)
+        return
 
 
 async def send_daily_digest(
@@ -271,50 +287,66 @@ async def send_daily_digest(
     session_factory: SessionFactory,
     coordination: CoordinationBackend,
     due_only: bool = False,
+    *,
+    job_lock_ttl_seconds: int = _DAILY_JOB_LOCK_TTL,
+    renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
-    job_lease = await coordination.acquire("job:daily-digest", _DAILY_JOB_LOCK_TTL)
-    if job_lease is None:
+    job_guard = await RenewingLease.acquire(
+        coordination,
+        "job:daily-digest",
+        ttl_seconds=job_lock_ttl_seconds,
+        renew_interval_seconds=renew_interval_seconds,
+    )
+    if job_guard is None:
         logger.info("Daily digest skipped: another process owns the job lock")
         return
 
     try:
-        for target in await _targets(session_factory, daily_digest_only=True):
-            if due_only and not _daily_digest_is_due(target.timezone):
-                continue
-            if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
-                logger.error("Daily digest lost its distributed lock; aborting")
-                return
-            digest_key = (
-                f"notification:digest:{target.telegram_id}:{target.field_id}:"
-                f"{_local_date(target.timezone)}"
+        async with job_guard:
+            targets = await job_guard.run(
+                _targets(session_factory, daily_digest_only=True)
             )
-            try:
-                report = await generate_agro_report(
-                    target.latitude,
-                    target.longitude,
-                    target.selected_crop,
-                    season_start_date=target.season_start_date,
-                    phenological_phase=target.phenological_phase,
-                    field_name=target.field_name,
+            for target in targets:
+                job_guard.ensure_owned()
+                if due_only and not _daily_digest_is_due(target.timezone):
+                    continue
+                digest_key = (
+                    f"notification:digest:{target.telegram_id}:{target.field_id}:"
+                    f"{_local_date(target.timezone)}"
                 )
+                try:
+                    report = await job_guard.run(
+                        generate_agro_report(
+                            target.latitude,
+                            target.longitude,
+                            target.selected_crop,
+                            season_start_date=target.season_start_date,
+                            phenological_phase=target.phenological_phase,
+                            field_name=target.field_name,
+                        )
+                    )
 
-                async def send(
-                    report_text: str = report.text,
-                    target: NotificationTarget = target,
-                ) -> object:
-                    return await bot.send_message(target.telegram_id, report_text)
+                    async def send(
+                        report_text: str = report.text,
+                        target: NotificationTarget = target,
+                    ) -> object:
+                        return await bot.send_message(target.telegram_id, report_text)
 
-                await _send_once(
-                    coordination,
-                    digest_key,
-                    _DAILY_DIGEST_DEDUP_TTL,
-                    send,
-                )
-            except Exception:
-                logger.exception(
-                    "Daily digest failed for user %s field %s",
-                    target.telegram_id,
-                    target.field_id,
-                )
-    finally:
-        await _release_job_lock(coordination, job_lease, "daily-digest")
+                    job_guard.ensure_owned()
+                    await _send_once(
+                        coordination,
+                        digest_key,
+                        _DAILY_DIGEST_DEDUP_TTL,
+                        send,
+                    )
+                except LeaseLostError:
+                    raise
+                except Exception:
+                    logger.exception(
+                        "Daily digest failed for user %s field %s",
+                        target.telegram_id,
+                        target.field_id,
+                    )
+    except LeaseLostError as exc:
+        logger.error("Daily digest lost its distributed lock; aborting: %s", exc)
+        return
