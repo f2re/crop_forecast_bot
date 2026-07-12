@@ -67,10 +67,7 @@ class RenewingLease:
         renew_interval_seconds: float,
     ) -> None:
         _validate_ttl(ttl_seconds)
-        if renew_interval_seconds <= 0:
-            raise ValueError("Lease renew interval must be greater than zero")
-        if renew_interval_seconds >= ttl_seconds:
-            raise ValueError("Lease renew interval must be shorter than its TTL")
+        _validate_renew_interval(ttl_seconds, renew_interval_seconds)
         self._backend = backend
         self.lease = lease
         self._ttl_seconds = ttl_seconds
@@ -89,12 +86,14 @@ class RenewingLease:
         ttl_seconds: int,
         renew_interval_seconds: float | None = None,
     ) -> RenewingLease | None:
-        lease = await backend.acquire(key, ttl_seconds)
-        if lease is None:
-            return None
+        _validate_ttl(ttl_seconds)
         interval = renew_interval_seconds
         if interval is None:
             interval = max(0.1, min(float(ttl_seconds) / 3.0, 60.0))
+        _validate_renew_interval(ttl_seconds, interval)
+        lease = await backend.acquire(key, ttl_seconds)
+        if lease is None:
+            return None
         return cls(
             backend,
             lease,
@@ -152,6 +151,12 @@ class RenewingLease:
                     await operation_task
                 raise LeaseLostError(self._loss_reason)
             return await operation_task
+        except BaseException:
+            if not operation_task.done():
+                operation_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await operation_task
+            raise
         finally:
             loss_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -302,6 +307,13 @@ class MemoryCoordination:
 def _validate_ttl(ttl_seconds: int) -> None:
     if ttl_seconds <= 0:
         raise ValueError("Lease TTL must be greater than zero")
+
+
+def _validate_renew_interval(ttl_seconds: int, interval_seconds: float) -> None:
+    if interval_seconds <= 0:
+        raise ValueError("Lease renew interval must be greater than zero")
+    if interval_seconds >= ttl_seconds:
+        raise ValueError("Lease renew interval must be shorter than its TTL")
 
 
 async def create_coordination(
