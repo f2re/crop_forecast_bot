@@ -1,0 +1,57 @@
+name: Temporary field monitoring copy patch
+
+on:
+  push:
+    branches: [agent/sync-field-monitoring-copy-20260712]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/sync-field-monitoring-copy-20260712
+
+      - name: Replace stale user-facing field monitoring text
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/bot/handlers/core.py")
+          text = path.read_text(encoding="utf-8")
+          replacements = {
+              '''    "У каждого поля свои координаты, сезон и настройки уведомлений. "
+              "Отчёты и алерты формируются только для активного поля.\\n\\n"''':
+              '''    "У каждого поля свои координаты, сезон и настройки уведомлений. "
+              "Ручной отчёт относится к активному полю, а фоновые уведомления — ко всем "
+              "полям, где они включены.\\n\\n"''',
+              '''        "✅ — активное поле. Отчёт, сезон и уведомления относятся к нему.\\n"
+              "Нажмите поле для просмотра или переключения.",''':
+              '''        "✅ — активное поле для ручного отчёта и редактирования.\\n"
+              "Фоновые уведомления продолжают работать для каждого поля, где они включены.\\n"
+              "Нажмите поле для просмотра или переключения.",''',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"Expected text not found: {old!r}")
+              text = text.replace(old, new)
+          path.write_text(text, encoding="utf-8")
+          PY
+          python -m py_compile src/bot/handlers/core.py
+          ! grep -F "Отчёты и алерты формируются только для активного поля" src/bot/handlers/core.py
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/bot/handlers/core.py
+          git commit -m "docs(bot): clarify all-field background monitoring"
+          git push origin HEAD:agent/sync-field-monitoring-copy-20260712
