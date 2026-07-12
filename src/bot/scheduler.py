@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
@@ -27,6 +27,8 @@ _FROST_DEDUP_TTL = 20 * 60 * 60
 _DAILY_DIGEST_DEDUP_TTL = 36 * 60 * 60
 _FROST_JOB_LOCK_TTL = 5 * 60 * 60
 _DAILY_JOB_LOCK_TTL = 6 * 60 * 60
+_DAILY_DIGEST_LOCAL_START_HOUR = 7
+_DAILY_DIGEST_LOCAL_END_HOUR = 11
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -36,13 +38,34 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
-def _local_date(timezone_name: str) -> str:
+def _field_timezone(timezone_name: str) -> ZoneInfo:
     try:
-        timezone = ZoneInfo(timezone_name)
+        return ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
         logger.warning("Unknown field timezone %r; using UTC", timezone_name)
-        timezone = ZoneInfo("UTC")
-    return datetime.now(timezone).date().isoformat()
+        return ZoneInfo("UTC")
+
+
+def _local_datetime(
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> datetime:
+    current = now_utc or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(_field_timezone(timezone_name))
+
+
+def _local_date(timezone_name: str, now_utc: datetime | None = None) -> str:
+    return _local_datetime(timezone_name, now_utc).date().isoformat()
+
+
+def _daily_digest_is_due(
+    timezone_name: str,
+    now_utc: datetime | None = None,
+) -> bool:
+    local_hour = _local_datetime(timezone_name, now_utc).hour
+    return _DAILY_DIGEST_LOCAL_START_HOUR <= local_hour < _DAILY_DIGEST_LOCAL_END_HOUR
 
 
 async def start_scheduler(
@@ -68,9 +91,9 @@ async def start_scheduler(
     scheduler.add_job(
         send_daily_digest,
         trigger="cron",
-        hour=7,
-        minute=0,
-        args=[bot, session_factory, coordination],
+        hour="*",
+        minute=5,
+        args=[bot, session_factory, coordination, True],
         id="daily_digest",
         replace_existing=True,
         max_instances=1,
@@ -222,6 +245,7 @@ async def send_daily_digest(
     bot: Bot,
     session_factory: SessionFactory,
     coordination: CoordinationBackend,
+    due_only: bool = False,
 ) -> None:
     job_lease = await coordination.acquire("job:daily-digest", _DAILY_JOB_LOCK_TTL)
     if job_lease is None:
@@ -230,6 +254,8 @@ async def send_daily_digest(
 
     try:
         for target in await _targets(session_factory, daily_digest_only=True):
+            if due_only and not _daily_digest_is_due(target.timezone):
+                continue
             if not await coordination.renew(job_lease, _DAILY_JOB_LOCK_TTL):
                 logger.error("Daily digest lost its distributed lock; aborting")
                 return
