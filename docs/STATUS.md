@@ -2,14 +2,14 @@
 
 Дата актуализации: **2026-07-12**.
 
-Telegram/FSM reliability срез реализован и подтверждён полным CI в PR #24 после field-readiness PR #21.
+Текущий `main` перед этим срезом: PR #24 с полным Telegram/FSM flow. В PR #25 реализован process-failure срез для scheduler leases и атомарных пользовательских операций.
 
 ## Текущий production-контур
 
 ```text
 aiogram 3.x
 PostgreSQL + Alembic
-Redis FSM / callback idempotency / leases / deduplication
+Redis FSM / callback idempotency / renewable leases / deduplication
 Open-Meteo Forecast + Historical Weather
 APScheduler
 systemd + Bash release scripts
@@ -43,8 +43,15 @@ systemd + Bash release scripts
 - [x] выбор ручной фазы использует единый каталог фаз;
 - [x] основные FSM-ветки продолжаются после повторного открытия RedisStorage;
 - [x] ошибки PostgreSQL/Redis преобразуются в контролируемые сообщения;
-- [x] удалённое Telegram-сообщение открывает актуальное меню;
-- [x] PR #24 проходит unit, PostgreSQL/Redis integration и Alembic CI.
+- [x] удалённое Telegram-сообщение открывает актуальное меню.
+
+### Транзакционная целостность PostgreSQL
+
+- [x] state-changing операции больше не выполняют промежуточный commit внутри `_lock_user`;
+- [x] пользователь, поле и сезон создаются в одной транзакции;
+- [x] изменение культуры, даты сезона и ручной фазы блокирует строку пользователя;
+- [x] failure-injection после `flush`, но до `COMMIT`, откатывает пользователя, поле и сезон целиком;
+- [x] конкурентный onboarding создаёт одного пользователя, одно поле и один сезон.
 
 ### Источники и расчёты
 
@@ -60,9 +67,14 @@ systemd + Bash release scripts
 - [x] модельная конфигурация, время получения и cache policy в metadata;
 - [x] неподдерживаемые научные функции выключены.
 
-### Scheduler
+### Scheduler и Redis coordination
 
 - [x] distributed job locks;
+- [x] автоматическое продление job lease независимо от итерации по полям;
+- [x] долгий provider/report вызов может превышать исходный TTL без запуска второго worker;
+- [x] потеря token ownership отменяет текущий read/report и запрещает новые side effects;
+- [x] worker, завершившийся без release, освобождает lock по TTL;
+- [x] следующий worker выполняет безопасный retry после восстановления ownership;
 - [x] field/day/event deduplication;
 - [x] два worker не дублируют alert/digest;
 - [x] retry после неуспешной Telegram-отправки;
@@ -70,34 +82,20 @@ systemd + Bash release scripts
 - [x] ежедневный отчёт проверяется в локальном утреннем окне поля;
 - [x] предупреждение о недоступной Tmin дедуплицируется по полю и дате.
 
-### Field-readiness verification
-
-- [x] Ruff, compileall, unit и integration CI;
-- [x] concurrent PostgreSQL onboarding;
-- [x] all-field scheduler targets;
-- [x] regression test против false no-risk;
-- [x] PR #21 слит в `main` после зелёного CI.
-
 ## Текущий этап
 
-### P0 — process failure orchestration
+### P0 — clean-host и остаточные аварийные сценарии
 
-- [x] полный Dispatcher/FSM test `field → crop → season → phase → report`;
-- [x] restart основных FSM-веток с реальным RedisStorage;
-- [x] fail-closed обработка недоступности PostgreSQL до handler;
-- [x] fail-closed обработка недоступности Redis до handler;
-- [x] callback после удаления исходного сообщения;
-- [ ] PostgreSQL disconnect между изменением и commit;
-- [ ] Redis loss после получения callback/job lease;
-- [ ] scheduler worker crash / lease-loss orchestration;
-- [ ] callback при конкурентном редактировании исходного сообщения.
-
-### P0 — clean-host эксплуатация
-
+- [ ] физический PostgreSQL disconnect во время `COMMIT` на отдельном процессе/сервере;
+- [ ] Redis loss после получения callback lease;
+- [ ] неопределённый результат: процесс погиб после принятия сообщения Telegram, но до фиксации dedup lease;
+- [ ] конкурентное редактирование исходного Telegram-сообщения;
 - [ ] `deploy → update → forced failure → rollback` на Debian 12;
 - [ ] восстановление PostgreSQL dump в отдельную БД;
 - [ ] реальный Telegram API smoke для двух полей;
 - [ ] smoke на поддерживаемом Astra Linux окружении.
+
+> Telegram Bot API не предоставляет idempotency key для `sendMessage`. Поэтому абсолютный exactly-once результат при гибели процесса между внешней отправкой и фиксацией Redis dedup недоказуем. Текущий контракт: lease до отправки, дедупликация после подтверждённого успеха и контролируемый retry при явной ошибке.
 
 ## Следующие этапы
 
@@ -133,6 +131,8 @@ systemd + Bash release scripts
 - [x] явная деградация качества;
 - [x] все включённые поля мониторятся;
 - [x] race-safe PostgreSQL/Redis contracts;
+- [x] scheduler lease heartbeat и crash recovery подтверждены реальным Redis;
+- [x] pre-commit rollback подтверждён реальным PostgreSQL;
 - [ ] clean-host deployment;
 - [ ] реальный Telegram smoke;
 - [ ] параллельная проверка с локальной метеостанцией;
