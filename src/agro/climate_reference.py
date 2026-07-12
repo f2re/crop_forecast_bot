@@ -134,6 +134,7 @@ def _summarise_metric(
     *,
     unit: str,
     min_reference_years: int,
+    allow_percent_of_mean: bool,
 ) -> dict[str, Any]:
     result = _empty_metric(unit, current)
     if current is None or len(samples) < min_reference_years:
@@ -162,7 +163,9 @@ def _summarise_metric(
             "anomaly_from_mean": round(current_value - mean, 2),
             "anomaly_from_median": round(current_value - median, 2),
             "percent_of_mean": (
-                None if abs(mean) < 1e-12 else round(current_value / mean * 100.0, 1)
+                round(current_value / mean * 100.0, 1)
+                if allow_percent_of_mean and abs(mean) >= 1e-12
+                else None
             ),
             "empirical_percentile": round(percentile, 1),
             "position": _position(percentile),
@@ -227,8 +230,9 @@ def calc_season_climate_reference(
     current = _prepare_daily(current_daily, completed_only=True)
     current = current[current["_day"] >= season_start_day].copy()
     reference = _prepare_daily(reference_daily, completed_only=False)
-    if "data_kind" in reference.columns:
-        reference = reference[reference["data_kind"] == "reanalysis"].copy()
+    if "data_kind" not in reference.columns:
+        raise ValueError("Reference climate series requires explicit data_kind")
+    reference = reference[reference["data_kind"] == "reanalysis"].copy()
     reference_start_day = pd.Timestamp(reference_start)
     reference_end_day = pd.Timestamp(reference_end)
     reference = reference[
@@ -323,19 +327,20 @@ def calc_season_climate_reference(
             if _metric_available(current_t, window_days, max_missing_fraction)
             else None
         ),
+        # Accumulations are never computed from an incomplete sequence: a
+        # missing precipitation, ET0 or temperature day cannot be interpreted
+        # as zero without introducing a dry/cool bias.
         "precip_sum_mm": (
-            float(current_p.sum())
-            if _metric_available(current_p, window_days, max_missing_fraction)
-            else None
+            float(current_p.sum()) if current_p.notna().sum() == window_days else None
         ),
         "et0_sum_mm": (
             float(current_et0.sum())
-            if _metric_available(current_et0, window_days, max_missing_fraction)
+            if current_et0.notna().sum() == window_days
             else None
         ),
         "gdd_c_day": (
-            _gdd_sum(current_t.dropna(), t_base=t_base, t_upper=t_upper)
-            if _metric_available(current_t, window_days, max_missing_fraction)
+            _gdd_sum(current_t, t_base=t_base, t_upper=t_upper)
+            if current_t.notna().sum() == window_days
             else None
         ),
         "dry_days": None,
@@ -374,12 +379,13 @@ def calc_season_climate_reference(
         et0_series = sample["et0_sum"]
         if _metric_available(t_series, window_days, max_missing_fraction):
             samples["mean_temperature_c"].append((year, float(t_series.mean())))
+        if t_series.notna().sum() == window_days:
             samples["gdd_c_day"].append(
-                (year, _gdd_sum(t_series.dropna(), t_base=t_base, t_upper=t_upper))
+                (year, _gdd_sum(t_series, t_base=t_base, t_upper=t_upper))
             )
-        if _metric_available(p_series, window_days, max_missing_fraction):
+        if p_series.notna().sum() == window_days:
             samples["precip_sum_mm"].append((year, float(p_series.sum())))
-        if _metric_available(et0_series, window_days, max_missing_fraction):
+        if et0_series.notna().sum() == window_days:
             samples["et0_sum_mm"].append((year, float(et0_series.sum())))
         if sample_calendar_missing == 0 and p_series.notna().sum() == window_days:
             dry_flags = (p_series < dry_day_threshold_mm).tolist()
@@ -396,12 +402,23 @@ def calc_season_climate_reference(
         "dry_days": "сут",
         "max_dry_spell_days": "сут",
     }
+    percent_of_mean_allowed = {
+        # Ratios of Celsius values are not physically meaningful because the
+        # Celsius zero is arbitrary. Additive anomalies are used instead.
+        "mean_temperature_c": False,
+        "precip_sum_mm": True,
+        "et0_sum_mm": True,
+        "gdd_c_day": True,
+        "dry_days": True,
+        "max_dry_spell_days": True,
+    }
     metrics = {
         key: _summarise_metric(
             current_values[key],
             samples[key],
             unit=units[key],
             min_reference_years=min_reference_years,
+            allow_percent_of_mean=percent_of_mean_allowed[key],
         )
         for key in current_values
     }
