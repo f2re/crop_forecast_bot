@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
@@ -16,11 +17,12 @@ from aiogram.types import BotCommand, TelegramObject
 
 from config.settings import Settings, get_settings
 from src.api.open_meteo import close_open_meteo_resources
+from src.bot.errors import handle_runtime_error
 from src.bot.middlewares import CallbackIdempotencyMiddleware
 from src.bot.scheduler import start_scheduler, stop_scheduler
 from src.database import Database, init_db
 from src.database.schema import require_current_schema
-from src.infrastructure.coordination import create_coordination
+from src.infrastructure.coordination import CoordinationBackend, create_coordination
 from src.ops.heartbeat import notify_ready, notify_stopping, run_heartbeat
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,33 @@ async def configure_bot_commands(bot: Bot) -> None:
     )
 
 
+def build_dispatcher(
+    *,
+    storage: BaseStorage,
+    session_factory: Callable[[], Any],
+    coordination: CoordinationBackend,
+) -> Dispatcher:
+    """Build the production router graph without starting external services."""
+
+    dispatcher = Dispatcher(storage=storage)
+    dispatcher.errors.register(handle_runtime_error)
+    dispatcher.update.middleware(DbSessionMiddleware(session_factory))
+    dispatcher.callback_query.outer_middleware(
+        CallbackIdempotencyMiddleware(coordination)
+    )
+
+    from src.bot.handlers.core import router as core_router
+    from src.bot.handlers.rag import router as rag_router
+    from src.bot.handlers.settings import router as settings_router
+
+    # Settings precede the legacy core handlers so old toggle callbacks are
+    # rejected rather than replayed as non-idempotent state inversions.
+    dispatcher.include_router(copy.deepcopy(settings_router))
+    dispatcher.include_router(copy.deepcopy(core_router))
+    dispatcher.include_router(copy.deepcopy(rag_router))
+    return dispatcher
+
+
 async def run() -> None:
     settings = get_settings()
     settings.validate()
@@ -97,21 +126,11 @@ async def run() -> None:
             "Redis" if settings.redis_url else "process-local memory",
         )
 
-        dispatcher = Dispatcher(storage=storage)
-        dispatcher.update.middleware(DbSessionMiddleware(database.get_session))
-        dispatcher.callback_query.outer_middleware(
-            CallbackIdempotencyMiddleware(coordination)
+        dispatcher = build_dispatcher(
+            storage=storage,
+            session_factory=database.get_session,
+            coordination=coordination,
         )
-
-        from src.bot.handlers.core import router as core_router
-        from src.bot.handlers.rag import router as rag_router
-        from src.bot.handlers.settings import router as settings_router
-
-        # Settings precede the legacy core handlers so old toggle callbacks are
-        # rejected rather than replayed as non-idempotent state inversions.
-        dispatcher.include_router(settings_router)
-        dispatcher.include_router(core_router)
-        dispatcher.include_router(rag_router)
         await configure_bot_commands(bot)
 
         heartbeat_task = asyncio.create_task(
