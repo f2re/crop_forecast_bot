@@ -26,6 +26,11 @@ class AgroReport:
     timezone: str
     elevation_m: float
     coverage: WeatherCoverage
+    model: str | None = None
+    model_run: datetime | None = None
+    retrieved_at: datetime | None = None
+    cache_ttl_seconds: int | None = None
+    spatial_resolution_km: float | None = None
 
 
 async def generate_agro_report(
@@ -82,6 +87,11 @@ async def generate_agro_report(
         timezone=weather.meta.timezone,
         elevation_m=weather.meta.elevation_m,
         coverage=weather.coverage,
+        model=weather.meta.model,
+        model_run=weather.meta.model_run,
+        retrieved_at=weather.meta.retrieved_at,
+        cache_ttl_seconds=weather.meta.cache_ttl_seconds,
+        spatial_resolution_km=weather.meta.spatial_resolution_km,
     )
 
 
@@ -102,6 +112,31 @@ def _format_source_counts(counts: dict[str, int]) -> str:
     }
     parts = [f"{labels.get(kind, kind)}: {days} сут." for kind, days in counts.items()]
     return ", ".join(parts) if parts else "источник по строкам не указан"
+
+
+def _format_provider_metadata(weather: AgroWeatherData) -> list[str]:
+    lines: list[str] = []
+    if weather.meta.model:
+        lines.append(f"• Конфигурация модели: {html.escape(weather.meta.model)}")
+    if weather.meta.model_run is not None:
+        model_run = weather.meta.model_run.astimezone(timezone.utc)
+        lines.append(f"• Запуск модели: {model_run:%d.%m.%Y %H:%M UTC}")
+    else:
+        lines.append("• Точный запуск модели: endpoint провайдера не сообщает")
+    if weather.meta.retrieved_at is not None:
+        retrieved = weather.meta.retrieved_at.astimezone(timezone.utc)
+        lines.append(f"• Получено ботом: {retrieved:%d.%m.%Y %H:%M UTC}")
+    if weather.meta.cache_ttl_seconds is not None:
+        cache_minutes = weather.meta.cache_ttl_seconds // 60
+        lines.append(f"• Политика кэша: до {cache_minutes} мин.")
+    if weather.meta.spatial_resolution_km is not None:
+        lines.append(
+            f"• Пространственное разрешение: около "
+            f"{weather.meta.spatial_resolution_km:g} км"
+        )
+    else:
+        lines.append("• Разрешение выбранной модельной сетки: endpoint не сообщает")
+    return lines
 
 
 def format_agro_report(
@@ -239,6 +274,7 @@ def format_agro_report(
             f"• Tmin-прогноз: {_format_source_counts(frost.get('source_counts', {}))}",
         ]
     )
+    lines.extend(_format_provider_metadata(weather))
     if weather.coverage.history_source:
         lines.append(
             "• Прошлый сезонный ряд: Open-Meteo Historical Weather API "
