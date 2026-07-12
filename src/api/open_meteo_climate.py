@@ -79,6 +79,11 @@ def _fetch_climate_reference_sync(
         "end_date": REFERENCE_END.isoformat(),
         "daily": ",".join(
             [
+                # The shared historical parser validates the complete daily
+                # temperature tuple, therefore Tmax/Tmin are requested even
+                # though the climate comparison uses Tmean.
+                "temperature_2m_max",
+                "temperature_2m_min",
                 "temperature_2m_mean",
                 "precipitation_sum",
                 "et0_fao_evapotranspiration",
@@ -108,12 +113,13 @@ def _fetch_climate_reference_sync(
 
     resolved_timezone = _timezone_name(payload.get("timezone") or timezone_name)
     raw_elevation = payload.get("elevation")
-    elevation_m = float(raw_elevation) if raw_elevation is not None else float("nan")
+    if raw_elevation is None:
+        raise OpenMeteoClimateError("ERA5-Land response does not contain elevation")
     return ClimateReferenceData(
         meta=ClimateReferenceMeta(
             latitude=float(payload.get("latitude", latitude)),
             longitude=float(payload.get("longitude", longitude)),
-            elevation_m=elevation_m,
+            elevation_m=float(raw_elevation),
             timezone=resolved_timezone,
             source=CLIMATE_SOURCE,
             model=CLIMATE_MODEL,
