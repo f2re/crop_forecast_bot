@@ -1,13 +1,13 @@
 # Статус разработки
 
-Дата актуализации: **2026-07-11**.
+Дата актуализации: **2026-07-12**.
 
 ## Текущий production-контур
 
 ```text
 aiogram 3.x
 PostgreSQL + Alembic
-Redis FSM / callback idempotency / scheduler leases / deduplication
+Redis FSM / callback idempotency / leases / deduplication
 Open-Meteo Forecast + Historical Weather
 APScheduler
 systemd + Bash release scripts
@@ -17,80 +17,65 @@ systemd + Bash release scripts
 
 ### Runtime и эксплуатация
 
-- [x] один aiogram-entrypoint `python -m src.bot.main`;
-- [x] удалён telebot runtime;
-- [x] нативные `deploy/update/rollback/status` без Docker;
+- [x] один entrypoint `python -m src.bot.main`;
+- [x] native deploy/update/rollback/status без Docker;
 - [x] systemd readiness, heartbeat и watchdog;
-- [x] atomic release directories и PostgreSQL backup;
+- [x] atomic releases и PostgreSQL backup;
 - [x] обязательный Alembic head на startup;
-- [x] production verification script;
-- [x] полный CI для `src/config/alembic/tests`.
+- [x] полный CI для `src/config/alembic/tests`;
+- [x] реальные PostgreSQL и Redis в CI.
 
-### Пользовательский flow
+### Telegram и состояние
 
 - [x] несколько полей;
 - [x] геолокация и ручные координаты;
 - [x] культура, дата сезона и ручная фаза;
-- [x] отдельные настройки уведомлений;
-- [x] отчёт из реального Telegram-сценария;
-- [x] `/start`, `/help`, `/cancel`;
-- [x] exact callback redelivery не выполняет handler повторно;
-- [x] быстрые повторные нажатия подавляются общим Redis coordination;
-- [x] уведомления используют desired-state callback вместо неидемпотентного toggle;
-- [x] callback старого или другого поля отклоняется без изменения данных.
+- [x] отдельные настройки уведомлений каждого поля;
+- [x] Redis FSM restart;
+- [x] callback delivery idempotency;
+- [x] подавление rapid double-click;
+- [x] desired-state callback вместо toggle;
+- [x] race-safe создание пользователя через upsert;
+- [x] первичное создание поля под row lock.
 
-### Данные и расчёты
+### Источники и расчёты
 
 - [x] typed weather DTO и provider port;
-- [x] раздельные reanalysis / operational past / forecast;
-- [x] локальный календарный день в классификации данных;
-- [x] ГДД с `Tbase`, покрытием и пропусками;
+- [x] раздельные `reanalysis / operational_past / forecast`;
+- [x] текущий локальный день не считается завершённым прошлым;
+- [x] ГДД строго от локальной даты начала сезона;
 - [x] ГТК без прогнозных осадков;
 - [x] P−ET₀ без подстановки нулей;
 - [x] frost screening только по прогнозным строкам;
-- [x] явные scientific limitations;
-- [x] read-only live provider smoke.
+- [x] `insufficient_forecast_data` отделён от `no_risk`;
+- [x] модельная конфигурация, время получения и cache policy в metadata;
+- [x] неподдерживаемые научные функции выключены.
 
-### PostgreSQL и Redis integration
+### Scheduler
 
-- [x] Alembic `upgrade head` на реальном PostgreSQL;
-- [x] adoption и backfill legacy `users` schema;
-- [x] PostgreSQL partial unique indexes active field/season;
-- [x] конкурентное переключение active field под row lock;
-- [x] field-level scheduler target filters на PostgreSQL;
-- [x] атомарные Redis leases между независимыми клиентами;
-- [x] token-checked renew/release на реальном Redis;
-- [x] межклиентская дедупликация `_send_once`;
-- [x] восстановление aiogram FSM state/data после повторного открытия RedisStorage;
-- [x] два runtime worker конкурируют за один callback action key;
-- [x] два scheduler worker с реальным Redis отправляют один frost alert;
-- [x] повтор scheduler job после освобождения job lock не дублирует alert;
-- [x] CI запускает PostgreSQL и Redis системными сервисами, без Docker.
+- [x] distributed job locks;
+- [x] field/day/event deduplication;
+- [x] два worker не дублируют alert/digest;
+- [x] retry после неуспешной Telegram-отправки;
+- [x] фоновые задания охватывают все включённые поля;
+- [x] ежедневный отчёт проверяется в локальном утреннем окне поля.
 
-### Очистка репозитория
+## Текущий этап
 
-- [x] удалена синтетическая Random Forest training pipeline;
-- [x] удалены недостижимые Docker/legacy entrypoints;
-- [x] удалены неподключённые эвристические climate/soil/satellite modules;
-- [x] core и RAG зависимости разделены;
-- [x] добавлена capability matrix.
+### P0 — верификация field-readiness среза
 
-## Выполняемый этап
-
-### P0 — полные Telegram/FSM и отказные сценарии
-
-- [ ] сценарный test полного field → crop → season → report flow;
-- [ ] повтор scheduler job после потери lease/аварийного завершения worker;
-- [ ] недоступность PostgreSQL во время активного FSM;
-- [ ] недоступность Redis во время callback/FSM;
-- [ ] реальный Telegram API smoke после deployment;
-- [ ] проверка callback после редактирования или удаления исходного сообщения.
+- [ ] зелёный CI текущей ветки;
+- [ ] полный Router/FSM test `field → crop → season → report`;
+- [ ] restart test каждой FSM-ветки;
+- [ ] outage PostgreSQL/Redis во время пользовательской операции;
+- [ ] scheduler worker crash / lease-loss orchestration;
+- [ ] callback после удаления или редактирования исходного сообщения.
 
 ### P0 — clean-host эксплуатация
 
-- [ ] deploy/update/rollback на чистой Debian 12 VM;
-- [ ] failed-start rollback test;
-- [ ] restore PostgreSQL dump в отдельную БД;
+- [ ] `deploy → update → forced failure → rollback` на Debian 12;
+- [ ] восстановление PostgreSQL dump в отдельную БД;
+- [ ] реальный Telegram API smoke для двух полей;
 - [ ] smoke на поддерживаемом Astra Linux окружении.
 
 ## Следующие этапы
@@ -98,36 +83,37 @@ systemd + Bash release scripts
 ### P1 — provider resilience
 
 - [ ] mocked full HTTP contract Open-Meteo;
-- [ ] общий lifecycle HTTP-клиентов;
-- [ ] circuit breaker и измеримый rate limit;
-- [ ] structured provider metadata и latency/error metrics;
-- [ ] контролируемый stale-cache fallback с возрастом данных.
+- [ ] jittered retry и circuit breaker;
+- [ ] измеримый rate limit;
+- [ ] stale-cache fallback с возрастом данных;
+- [ ] provider latency/error/fallback metrics;
+- [ ] model-run и grid metadata через provider, который их реально отдаёт.
 
-### P1 — научный слой
+### P1 — научная валидация
 
-- [ ] независимая валидация `Tbase/Tupper` по культуре и региону;
+- [ ] источники и версии `Tbase/Tupper`;
+- [ ] crop/region/cultivar validation;
 - [ ] региональная фенология с uncertainty;
-- [ ] frost thresholds по культуре/фазе с нормативными источниками;
-- [ ] surface-temperature/terrain/ensemble inputs;
-- [ ] сезонный ряд для ГТК с правилами непрерывности;
+- [ ] frost thresholds по культуре и фазе;
+- [ ] surface temperature, terrain и ensemble inputs;
+- [ ] сезонный ряд и правила непрерывности для ГТК;
 - [ ] локальный FAO-56 только после полного набора входов.
 
 ### P1/P2 — новые данные
 
-- [ ] SoilGrids adapter + ocean/no-data validation;
-- [ ] ERA5-Land asynchronous job/cache pipeline;
-- [ ] Sentinel-2/MODIS provider после проверки доступа и квот;
-- [ ] metadata provenance для каждого показателя.
+- [ ] SoilGrids adapter и ocean/no-data validation;
+- [ ] ERA5-Land queued job/cache pipeline;
+- [ ] Sentinel-2/MODIS provider с quality masks;
+- [ ] provenance/version/resolution для каждого показателя.
 
-## Критерий ближайшего релиза
+## Критерий полевого пилота
 
-- [x] зелёный CI полного дерева;
-- [x] live Open-Meteo smoke;
-- [x] реальные PostgreSQL/Redis integration tests;
-- [x] callback idempotency и desired-state notification controls;
-- [x] двухворкерная Redis-защита scheduler;
-- [x] отсутствие legacy/fake runtime;
-- [x] явное отключение неподдерживаемых возможностей;
-- [ ] clean-host systemd deployment;
-- [ ] проверенный Telegram flow для двух полей после deployment;
-- [ ] проверенный rollback и восстановление БД.
+- [x] реальные данные без синтетического fallback;
+- [x] явная деградация качества;
+- [x] все включённые поля мониторятся;
+- [x] race-safe PostgreSQL/Redis contracts;
+- [ ] clean-host deployment;
+- [ ] реальный Telegram smoke;
+- [ ] параллельная проверка с локальной метеостанцией;
+- [ ] журнал ошибок и метрики эксплуатации;
+- [ ] утверждённый регламент: бот — screening, не автономное решение.
