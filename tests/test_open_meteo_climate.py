@@ -34,6 +34,8 @@ def test_fixed_era5_land_contract_and_metadata(monkeypatch) -> None:
         "timezone": "Europe/Moscow",
         "daily": {
             "time": ["1991-01-01", "1991-01-02", "1991-01-03"],
+            "temperature_2m_max": [-2.0, -1.0, 0.0],
+            "temperature_2m_min": [-8.0, -7.0, -6.0],
             "temperature_2m_mean": [-5.0, -4.0, -3.0],
             "precipitation_sum": [0.0, 1.0, 2.0],
             "et0_fao_evapotranspiration": [0.1, 0.1, 0.2],
@@ -55,6 +57,9 @@ def test_fixed_era5_land_contract_and_metadata(monkeypatch) -> None:
     assert kwargs["params"]["start_date"] == "1991-01-01"
     assert kwargs["params"]["end_date"] == "1991-01-03"
     assert kwargs["params"]["cell_selection"] == "land"
+    assert "temperature_2m_max" in kwargs["params"]["daily"]
+    assert "temperature_2m_min" in kwargs["params"]["daily"]
+    assert "temperature_2m_mean" in kwargs["params"]["daily"]
     assert kwargs["expire_after"] == climate.CLIMATE_CACHE_TTL_SECONDS
     assert kwargs["timeout"] == (5, 90)
     assert data.meta.model == "era5_land"
