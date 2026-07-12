@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agro.crop_catalog import CROPS, get_crop, get_crop_name
+from src.agro.crop_catalog import CROPS, get_crop_name, get_crop_phases
 from src.api.open_meteo import OpenMeteoError
 from src.application.agro_report import generate_agro_report
 from src.bot.keyboards import (
@@ -59,7 +59,8 @@ _HELP_TEXT = (
     "фактическую фазу.\n"
     "4️⃣ Нажмите «Агроотчёт».\n\n"
     "У каждого поля свои координаты, сезон и настройки уведомлений. "
-    "Отчёты и алерты формируются только для активного поля.\n\n"
+    "Ручной отчёт относится к активному полю, а фоновые уведомления — ко всем "
+    "полям, где они включены.\n\n"
     "Дата сезона нужна для накопленных ГДД. Фаза не угадывается автоматически: "
     "её можно указать по наблюдению на поле.\n\n"
     "<b>Команды</b>\n"
@@ -145,7 +146,8 @@ async def _show_fields(
         return
     await callback.message.edit_text(
         "🗺 <b>Мои поля</b>\n\n"
-        "✅ — активное поле. Отчёт, сезон и уведомления относятся к нему.\n"
+        "✅ — активное поле для ручного отчёта и редактирования.\n"
+        "Фоновые уведомления работают для каждого поля, где они включены.\n"
         "Нажмите поле для просмотра или переключения.",
         reply_markup=get_fields_keyboard(fields),
     )
@@ -696,7 +698,7 @@ async def save_phase(callback: CallbackQuery, session: AsyncSession) -> None:
     if context is None:
         await callback.answer("Сначала добавьте поле", show_alert=True)
         return
-    phases = list(get_crop(context.crop_key).get("gdd_stages", {}).keys())
+    phases = list(get_crop_phases(context.crop_key))
     try:
         index = int(callback.data.split(":", 1)[1])
         phase = phases[index]
