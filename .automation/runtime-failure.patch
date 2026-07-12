@@ -1,0 +1,504 @@
+diff -ruN '--exclude=.git' '--exclude=temporary-runtime-snapshot.yml' '--exclude=coordination.py' '--exclude=scheduler.py' cropbot-base/src/database/crud.py cropbot-work/src/database/crud.py
+--- cropbot-base/src/database/crud.py	2026-07-12 12:12:07.000000000 +0000
++++ cropbot-work/src/database/crud.py	2026-07-12 12:14:38.574468037 +0000
+@@ -136,11 +136,21 @@
+     username: str | None = None,
+     first_name: str | None = None,
+ ) -> User:
+-    await get_or_create_user(session, telegram_id, username, first_name)
++    # Keep creation and the following state-changing operation in one
++    # transaction. Calling get_or_create_user here used to commit before the
++    # field/season mutation, leaving a partially applied operation when the
++    # second commit failed.
++    await _insert_user_if_missing(session, telegram_id, username, first_name)
+     result = await session.execute(
+         select(User).where(User.telegram_id == telegram_id).with_for_update()
+     )
+-    return result.scalar_one()
++    user = result.scalar_one()
++    if username is not None:
++        user.username = username
++    if first_name is not None:
++        user.first_name = first_name
++    user.updated_at = datetime.utcnow()
++    return user
+ 
+ 
+ async def get_active_field(session: AsyncSession, user_id: int) -> Field | None:
+@@ -518,7 +528,7 @@
+     telegram_id: int,
+     crop_key: str,
+ ) -> User:
+-    user = await get_or_create_user(session, telegram_id)
++    user = await _lock_user(session, telegram_id)
+     user.selected_crop = crop_key
+     user.updated_at = datetime.utcnow()
+     field = await get_active_field(session, user.id)
+@@ -540,7 +550,7 @@
+     telegram_id: int,
+     season_start: date,
+ ) -> CropSeason:
+-    user = await get_or_create_user(session, telegram_id)
++    user = await _lock_user(session, telegram_id)
+     field = await get_active_field(session, user.id)
+     if field is None:
+         raise ValueError("Сначала задайте координаты поля.")
+@@ -561,7 +571,7 @@
+     telegram_id: int,
+     phase: str,
+ ) -> CropSeason:
+-    user = await get_or_create_user(session, telegram_id)
++    user = await _lock_user(session, telegram_id)
+     field = await get_active_field(session, user.id)
+     if field is None:
+         raise ValueError("Сначала задайте координаты поля.")
+diff -ruN '--exclude=.git' '--exclude=temporary-runtime-snapshot.yml' '--exclude=coordination.py' '--exclude=scheduler.py' cropbot-base/tests/integration/test_postgres_runtime.py cropbot-work/tests/integration/test_postgres_runtime.py
+--- cropbot-base/tests/integration/test_postgres_runtime.py	2026-07-12 12:12:07.000000000 +0000
++++ cropbot-work/tests/integration/test_postgres_runtime.py	2026-07-12 12:16:38.491390942 +0000
+@@ -9,6 +9,7 @@
+ from alembic import command
+ from alembic.config import Config
+ from sqlalchemy import text
++from sqlalchemy.exc import OperationalError
+ from sqlalchemy.ext.asyncio import create_async_engine
+ 
+ from src.database import Database
+@@ -187,6 +188,86 @@
+     finally:
+         await database.dispose()
+         await _reset_database(database_url)
++
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_initial_field_operation_rolls_back_as_one_transaction(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    database_url = _test_database_url()
++    await _reset_database(database_url)
++    await asyncio.to_thread(_upgrade, database_url)
++
++    database = Database(database_url)
++    try:
++        async with database.get_session() as session:
++            async def fail_commit() -> None:
++                # Force all pending ORM objects to reach PostgreSQL, then fail
++                # before COMMIT. User, field and season must already coexist in
++                # this one transaction; an intermediate user commit would make
++                # these assertions fail.
++                await session.flush()
++                user_count = await session.scalar(
++                    text("SELECT count(*) FROM users WHERE telegram_id = 1600")
++                )
++                field_count = await session.scalar(
++                    text(
++                        "SELECT count(*) FROM fields f "
++                        "JOIN users u ON u.id = f.user_id "
++                        "WHERE u.telegram_id = 1600"
++                    )
++                )
++                season_count = await session.scalar(
++                    text(
++                        "SELECT count(*) FROM crop_seasons s "
++                        "JOIN fields f ON f.id = s.field_id "
++                        "JOIN users u ON u.id = f.user_id "
++                        "WHERE u.telegram_id = 1600"
++                    )
++                )
++                assert (user_count, field_count, season_count) == (1, 1, 1)
++                raise OperationalError(
++                    "COMMIT",
++                    {},
++                    RuntimeError("simulated connection loss before commit"),
++                )
++
++            monkeypatch.setattr(session, "commit", fail_commit)
++            with pytest.raises(OperationalError, match="simulated connection loss"):
++                await save_coordinates(
++                    session,
++                    telegram_id=1600,
++                    latitude=55.75,
++                    longitude=37.62,
++                    username="transaction_farmer",
++                    first_name="Farmer",
++                )
++            await session.rollback()
++
++        async with database.engine.connect() as connection:
++            user_count = await connection.scalar(
++                text("SELECT count(*) FROM users WHERE telegram_id = 1600")
++            )
++            field_count = await connection.scalar(
++                text(
++                    "SELECT count(*) FROM fields f "
++                    "JOIN users u ON u.id = f.user_id "
++                    "WHERE u.telegram_id = 1600"
++                )
++            )
++            season_count = await connection.scalar(
++                text(
++                    "SELECT count(*) FROM crop_seasons s "
++                    "JOIN fields f ON f.id = s.field_id "
++                    "JOIN users u ON u.id = f.user_id "
++                    "WHERE u.telegram_id = 1600"
++                )
++            )
++        assert (user_count, field_count, season_count) == (0, 0, 0)
++    finally:
++        await database.dispose()
++        await _reset_database(database_url)
+ 
+ 
+ @pytest.mark.integration
+diff -ruN '--exclude=.git' '--exclude=temporary-runtime-snapshot.yml' '--exclude=coordination.py' '--exclude=scheduler.py' cropbot-base/tests/integration/test_scheduler_lease_recovery.py cropbot-work/tests/integration/test_scheduler_lease_recovery.py
+--- cropbot-base/tests/integration/test_scheduler_lease_recovery.py	1970-01-01 00:00:00.000000000 +0000
++++ cropbot-work/tests/integration/test_scheduler_lease_recovery.py	2026-07-12 12:15:56.384286932 +0000
+@@ -0,0 +1,235 @@
++from __future__ import annotations
++
++import asyncio
++import os
++import sys
++from types import SimpleNamespace
++from uuid import uuid4
++
++import pytest
++from redis.asyncio import Redis
++
++import src.bot.scheduler as scheduler_module
++from src.bot.scheduler import send_daily_digest
++from src.database.crud import NotificationTarget
++from src.infrastructure.coordination import create_coordination
++
++
++def _test_redis_url() -> str:
++    value = os.getenv("TEST_REDIS_URL", "").strip()
++    if not value:
++        pytest.skip("TEST_REDIS_URL is not configured")
++    return value
++
++
++def _target() -> NotificationTarget:
++    return NotificationTarget(
++        telegram_id=1001,
++        field_id=42,
++        field_name="Северное",
++        latitude=55.75,
++        longitude=37.62,
++        timezone="Europe/Moscow",
++        elevation_m=120.0,
++        elevation_source="Open-Meteo Forecast API",
++        selected_crop="wheat",
++        season_start_date=None,
++        phenological_phase="Кущение",
++        daily_digest_enabled=True,
++        frost_alerts_enabled=True,
++    )
++
++
++async def _fake_targets(
++    session_factory,
++    *,
++    daily_digest_only: bool = False,
++    frost_alerts_only: bool = False,
++):
++    assert daily_digest_only is True
++    assert frost_alerts_only is False
++    return [_target()]
++
++
++class RecordingBot:
++    def __init__(self) -> None:
++        self.messages: list[tuple[int, str]] = []
++
++    async def send_message(self, chat_id: int, text: str) -> object:
++        self.messages.append((chat_id, text))
++        return object()
++
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_job_lease_is_renewed_during_long_provider_work(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    redis_url = _test_redis_url()
++    namespace = f"cropbot-job-heartbeat-{uuid4().hex}"
++    cleanup = Redis.from_url(redis_url, decode_responses=True)
++    await cleanup.flushdb()
++    first = await create_coordination(redis_url, namespace=namespace)
++    second = await create_coordination(redis_url, namespace=namespace)
++    report_started = asyncio.Event()
++    release_report = asyncio.Event()
++    report_calls = 0
++
++    async def slow_report(*args, **kwargs):
++        nonlocal report_calls
++        report_calls += 1
++        report_started.set()
++        await release_report.wait()
++        return SimpleNamespace(text="daily digest")
++
++    monkeypatch.setattr(scheduler_module, "_targets", _fake_targets)
++    monkeypatch.setattr(scheduler_module, "generate_agro_report", slow_report)
++    bot = RecordingBot()
++
++    try:
++        first_run = asyncio.create_task(
++            send_daily_digest(
++                bot,
++                object(),
++                first,
++                job_lock_ttl_seconds=1,
++                renew_interval_seconds=0.2,
++            )
++        )
++        await asyncio.wait_for(report_started.wait(), timeout=2)
++
++        # Wait longer than the original Redis TTL. The heartbeat must keep the
++        # first worker's token alive, so the second worker cannot enter.
++        await asyncio.sleep(1.2)
++        await send_daily_digest(
++            bot,
++            object(),
++            second,
++            job_lock_ttl_seconds=1,
++            renew_interval_seconds=0.2,
++        )
++        assert report_calls == 1
++        assert bot.messages == []
++
++        release_report.set()
++        await asyncio.wait_for(first_run, timeout=2)
++        assert bot.messages == [(1001, "daily digest")]
++    finally:
++        release_report.set()
++        await first.close()
++        await second.close()
++        await cleanup.flushdb()
++        await cleanup.aclose()
++
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_lost_job_lease_cancels_read_and_next_worker_retries(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    redis_url = _test_redis_url()
++    namespace = f"cropbot-job-loss-{uuid4().hex}"
++    cleanup = Redis.from_url(redis_url, decode_responses=True)
++    await cleanup.flushdb()
++    first = await create_coordination(redis_url, namespace=namespace)
++    second = await create_coordination(redis_url, namespace=namespace)
++    first_report_started = asyncio.Event()
++    first_report_cancelled = asyncio.Event()
++    report_calls = 0
++
++    async def report(*args, **kwargs):
++        nonlocal report_calls
++        report_calls += 1
++        if report_calls == 1:
++            first_report_started.set()
++            try:
++                await asyncio.sleep(10)
++            finally:
++                first_report_cancelled.set()
++        return SimpleNamespace(text="daily digest")
++
++    monkeypatch.setattr(scheduler_module, "_targets", _fake_targets)
++    monkeypatch.setattr(scheduler_module, "generate_agro_report", report)
++    bot = RecordingBot()
++
++    try:
++        first_run = asyncio.create_task(
++            send_daily_digest(
++                bot,
++                object(),
++                first,
++                job_lock_ttl_seconds=2,
++                renew_interval_seconds=0.1,
++            )
++        )
++        await asyncio.wait_for(first_report_started.wait(), timeout=2)
++
++        # Simulate Redis losing the owner's key while a provider read is in
++        # progress. The guard must cancel the read and stop before Telegram.
++        await cleanup.delete(f"{namespace}:job:daily-digest")
++        await asyncio.wait_for(first_run, timeout=2)
++        assert first_report_cancelled.is_set()
++        assert bot.messages == []
++
++        await send_daily_digest(
++            bot,
++            object(),
++            second,
++            job_lock_ttl_seconds=2,
++            renew_interval_seconds=0.1,
++        )
++        assert report_calls == 2
++        assert bot.messages == [(1001, "daily digest")]
++    finally:
++        await first.close()
++        await second.close()
++        await cleanup.flushdb()
++        await cleanup.aclose()
++
++
++@pytest.mark.integration
++@pytest.mark.asyncio
++async def test_crashed_worker_job_lease_recovers_after_ttl() -> None:
++    redis_url = _test_redis_url()
++    namespace = f"cropbot-job-crash-{uuid4().hex}"
++    cleanup = Redis.from_url(redis_url, decode_responses=True)
++    await cleanup.flushdb()
++
++    child_code = """
++import asyncio
++import os
++from src.infrastructure.coordination import create_coordination
++
++async def main():
++    backend = await create_coordination(os.environ['TEST_REDIS_URL'], namespace=os.environ['LEASE_NAMESPACE'])
++    lease = await backend.acquire('job:crash-test', ttl_seconds=1)
++    print('ACQUIRED' if lease is not None else 'FAILED', flush=True)
++    os._exit(0)
++
++asyncio.run(main())
++"""
++    env = os.environ.copy()
++    env["TEST_REDIS_URL"] = redis_url
++    env["LEASE_NAMESPACE"] = namespace
++    process = await asyncio.create_subprocess_exec(
++        sys.executable,
++        "-c",
++        child_code,
++        stdout=asyncio.subprocess.PIPE,
++        stderr=asyncio.subprocess.PIPE,
++        env=env,
++    )
++    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
++    assert process.returncode == 0, stderr.decode()
++    assert stdout.decode().strip() == "ACQUIRED"
++
++    replacement = await create_coordination(redis_url, namespace=namespace)
++    try:
++        assert await replacement.acquire("job:crash-test", ttl_seconds=1) is None
++        await asyncio.sleep(1.2)
++        recovered = await replacement.acquire("job:crash-test", ttl_seconds=1)
++        assert recovered is not None
++    finally:
++        await replacement.close()
++        await cleanup.flushdb()
++        await cleanup.aclose()
+diff -ruN '--exclude=.git' '--exclude=temporary-runtime-snapshot.yml' '--exclude=coordination.py' '--exclude=scheduler.py' cropbot-base/tests/test_coordination.py cropbot-work/tests/test_coordination.py
+--- cropbot-base/tests/test_coordination.py	2026-07-12 12:12:07.000000000 +0000
++++ cropbot-work/tests/test_coordination.py	2026-07-12 12:15:01.968409997 +0000
+@@ -1,8 +1,16 @@
+ from __future__ import annotations
+ 
++import asyncio
++
+ import pytest
+ 
+-from src.infrastructure.coordination import Lease, MemoryCoordination, RedisCoordination
++from src.infrastructure.coordination import (
++    Lease,
++    LeaseLostError,
++    MemoryCoordination,
++    RedisCoordination,
++    RenewingLease,
++)
+ 
+ 
+ @pytest.mark.asyncio
+@@ -84,3 +92,91 @@
+ 
+     await backend.close()
+     assert redis.closed
++
++
++class ScriptedCoordination:
++    def __init__(self, renew_results: list[bool]) -> None:
++        self.renew_results = renew_results
++        self.renew_calls = 0
++        self.release_calls = 0
++        self.lease = Lease(key="test:job", token="owner-token")
++
++    async def acquire(self, key: str, ttl_seconds: int) -> Lease | None:
++        assert key == "job"
++        assert ttl_seconds > 0
++        return self.lease
++
++    async def renew(self, lease: Lease, ttl_seconds: int) -> bool:
++        assert lease == self.lease
++        assert ttl_seconds > 0
++        self.renew_calls += 1
++        if self.renew_results:
++            return self.renew_results.pop(0)
++        return True
++
++    async def release(self, lease: Lease) -> bool:
++        assert lease == self.lease
++        self.release_calls += 1
++        return True
++
++    async def close(self) -> None:
++        return None
++
++
++@pytest.mark.asyncio
++async def test_renewing_lease_keeps_long_operation_owned() -> None:
++    backend = ScriptedCoordination([True, True, True])
++    guard = await RenewingLease.acquire(
++        backend,
++        "job",
++        ttl_seconds=1,
++        renew_interval_seconds=0.01,
++    )
++    assert guard is not None
++
++    async with guard:
++        result = await guard.run(asyncio.sleep(0.04, result="done"))
++        assert result == "done"
++        guard.ensure_owned()
++
++    assert backend.renew_calls >= 2
++    assert backend.release_calls == 1
++
++
++@pytest.mark.asyncio
++async def test_renewing_lease_cancels_operation_when_token_is_lost() -> None:
++    backend = ScriptedCoordination([False])
++    guard = await RenewingLease.acquire(
++        backend,
++        "job",
++        ttl_seconds=1,
++        renew_interval_seconds=0.01,
++    )
++    assert guard is not None
++    cancelled = asyncio.Event()
++
++    async def operation() -> None:
++        try:
++            await asyncio.sleep(10)
++        finally:
++            cancelled.set()
++
++    async with guard:
++        with pytest.raises(LeaseLostError, match="no longer owns"):
++            await guard.run(operation())
++        assert guard.lost is True
++
++    assert cancelled.is_set()
++    assert backend.release_calls == 1
++
++
++@pytest.mark.asyncio
++async def test_renewing_lease_rejects_interval_not_shorter_than_ttl() -> None:
++    backend = ScriptedCoordination([])
++    with pytest.raises(ValueError, match="shorter"):
++        await RenewingLease.acquire(
++            backend,
++            "job",
++            ttl_seconds=1,
++            renew_interval_seconds=1,
++        )
