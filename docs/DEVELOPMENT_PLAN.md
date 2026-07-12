@@ -29,72 +29,95 @@ infrastructure adapters
 7. Неподдерживаемая функция явно выключена.
 8. State-changing callback задаёт конечное состояние, а не toggle.
 9. Background monitoring относится ко всем enabled fields.
-10. Релиз принимается после CI, migration check и runtime smoke.
-11. Production разворачивается Bash/systemd без Docker.
+10. Пользовательская state-changing операция не имеет промежуточных commit.
+11. Worker не продолжает side effects после потери lease ownership.
+12. Релиз принимается после CI, migration check и runtime smoke.
+13. Production разворачивается Bash/systemd без Docker.
 
-## Завершённый вертикальный срез — field-readiness
+## Завершённый срез — field-readiness
 
-Статус: **слит в `main` через PR #21**.
+Статус: **слит через PR #21**.
 
-- [x] различить `insufficient_forecast_data` и подтверждённое `no_risk`;
-- [x] запретить зелёный frost-вывод при отсутствии валидной Tmin;
-- [x] отправлять fail-closed предупреждение о недоступной Tmin;
-- [x] фильтровать ГДД строго от локальной даты начала сезона;
-- [x] требовать строку на дату старта для заявления сезонной суммы;
-- [x] мониторить все поля с enabled notification flag;
-- [x] отправлять дайджест в локальном утреннем окне поля;
-- [x] сделать создание пользователя dialect-aware upsert;
-- [x] сериализовать первичное создание поля row lock;
-- [x] добавить model/retrieval/cache provenance;
-- [x] расширить unit и PostgreSQL/Redis integration tests;
-- [x] Ruff, compileall, Bash, unit, integration и Alembic checks;
-- [x] актуализировать README, status и capability matrix.
+- [x] `insufficient_forecast_data` отделён от подтверждённого `no_risk`;
+- [x] ГДД фильтруются строго от локальной даты начала сезона;
+- [x] все enabled fields мониторятся в фоне;
+- [x] daily digest использует локальное утреннее окно поля;
+- [x] race-safe onboarding через upsert и row lock;
+- [x] provider provenance и regression tests.
 
-Остаётся эксплуатационная проверка текущего release через live Open-Meteo smoke на сервере.
+## Завершённый срез — Telegram/FSM reliability
 
-## Завершённый вертикальный срез — Telegram/FSM reliability
+Статус: **слит через PR #24**.
 
-Статус: **реализован и подтверждён полным зелёным CI в PR #24**.
+- [x] testable production `build_dispatcher`;
+- [x] Dispatcher-flow `field → crop → season → phase → report`;
+- [x] RedisStorage reopen для основных FSM-веток;
+- [x] controlled PostgreSQL/Redis error UX;
+- [x] deleted-message callback recovery;
+- [x] единый каталог ручных фаз;
+- [x] UX all-field monitoring синхронизирован с scheduler.
 
-- [x] production Router graph выделен в testable `build_dispatcher`;
-- [x] полный Dispatcher test `field → crop → season → phase → report`;
-- [x] исправлено сохранение ручной фазы из единого каталога;
-- [x] `waiting_for_name`, `waiting_for_coordinates`, `waiting_for_rename` и `waiting_for_start_date` продолжаются после повторного открытия RedisStorage;
-- [x] PostgreSQL/Redis outage до handler даёт контролируемое сообщение с correlation code;
-- [x] callback по удалённому сообщению восстанавливает актуальное меню;
-- [x] UX явно разделяет активное поле и all-field background monitoring;
-- [x] regression test закрывает issue #23.
+## Завершённый срез — process failure orchestration
 
-## Активный вертикальный срез — process failure и clean-host
+Статус: **реализован и подтверждён полным CI в PR #25**.
+
+- [x] reusable `RenewingLease` с token-checked heartbeat;
+- [x] продление scheduler lock во время долгого provider/report I/O;
+- [x] отмена текущего read/report после потери ownership;
+- [x] запрет перехода к следующему полю после lease loss;
+- [x] реальный Redis test: job дольше исходного TTL не запускает второй worker;
+- [x] реальный Redis test: принудительное удаление lock отменяет job и разрешает retry другому worker;
+- [x] subprocess crash без release и восстановление lock после TTL;
+- [x] `_lock_user` больше не вызывает промежуточный commit;
+- [x] crop/season/phase mutations выполняются под user row lock;
+- [x] real PostgreSQL failure-injection после `flush` и до `COMMIT`;
+- [x] rollback оставляет ноль частичных user/field/season записей;
+- [x] caller cancellation не оставляет защищённую coroutine работающей в фоне.
+
+Ограничение: per-notification Redis reservation снижает риск дубля, но Telegram `sendMessage` не имеет idempotency key. Если процесс погиб после принятия сообщения Telegram и до фиксации dedup lease, результат внешней отправки остаётся неопределённым. Это должно учитываться в эксплуатационном регламенте.
+
+## Активный вертикальный срез — clean-host release gate
 
 Приоритет: **P0**.
 
-1. PostgreSQL disconnect после записи, но до commit/response.
-2. Redis loss после получения callback или scheduler lease.
-3. `SIGKILL` scheduler worker и retry после TTL.
-4. Конкурентное удаление/редактирование Telegram-сообщения.
-5. Clean-host `deploy → update → forced failure → rollback → restore`.
-6. Реальный Telegram smoke для двух полей.
+1. Чистая Debian 12 VM: `deploy.sh` без ручной правки кода.
+2. Reboot и подтверждение автоматического systemd startup.
+3. Реальный Telegram smoke для двух полей.
+4. `update.sh` на новый release.
+5. Намеренно повреждённый release и healthcheck failure.
+6. Автоматический возврат предыдущего кода и systemd unit.
+7. `pg_restore` последнего dump в отдельную test database.
+8. Сравнение пользователей, полей, сезонов и Alembic revision.
+9. Повторение smoke на поддерживаемом Astra Linux окружении.
 
 Definition of Done:
 
-- частично выполненная операция не оставляет несогласованные данные;
-- retry после аварии не создаёт повторный side effect;
-- потеря lease останавливает worker до следующего безопасного запуска;
-- clean-host сценарий воспроизводим документированными командами;
-- Telegram smoke подтверждает реальный пользовательский путь.
+- deploy/update/rollback воспроизводимы только документированными командами;
+- service восстанавливается после reboot;
+- failed release не остаётся активным;
+- backup реально восстанавливается;
+- Telegram flow работает до и после rollback;
+- status/doctor отражают фактическое состояние.
+
+## Остаточные P0 failure scenarios
+
+- [ ] физический разрыв PostgreSQL-соединения во время `COMMIT`;
+- [ ] Redis outage после получения callback lease;
+- [ ] crash после принятия Telegram-сообщения и до dedup commit;
+- [ ] конкурентное редактирование Telegram-сообщения;
+- [ ] operator runbook для неоднозначного внешнего результата.
 
 ## Этап 0 — runtime
 
 Статус: **выполнено**.
 
 - [x] aiogram 3.x и `python -m src.bot.main`;
-- [x] Router/FSM основного пользовательского пути;
+- [x] Router/FSM основного пути;
 - [x] graceful startup/shutdown;
 - [x] systemd readiness, heartbeat и watchdog;
 - [x] native deploy/update/rollback/status;
 - [x] callback idempotency;
-- [x] distributed scheduler locks.
+- [x] distributed renewable scheduler locks.
 
 ## Этап 1 — PostgreSQL и Redis
 
@@ -104,13 +127,15 @@ Definition of Done:
 - [x] adoption legacy schema;
 - [x] `Field` и `CropSeason`;
 - [x] несколько полей;
-- [x] Redis FSM restart test;
+- [x] Redis FSM restart;
 - [x] PostgreSQL partial unique indexes;
-- [x] row locking активного поля;
-- [x] multi-client Redis lease tests;
+- [x] row locking active field/user mutations;
+- [x] multi-client Redis leases;
 - [x] two-worker alert/digest tests;
-- [x] race-safe user onboarding;
-- [ ] cleanup migration legacy user coordinates/crop columns после production-проверки.
+- [x] race-safe onboarding;
+- [x] atomic pre-commit rollback test;
+- [x] crash/TTL lease recovery test;
+- [ ] cleanup migration legacy user coordinate/crop columns после production-проверки.
 
 ## Этап 2 — научная целостность
 
@@ -126,7 +151,7 @@ Definition of Done:
 - [x] no automatic phenology;
 - [ ] independent crop/region/cultivar validation;
 - [ ] versioned parameter sources;
-- [ ] leap year, DST и long-gap scenario suite.
+- [ ] leap year, DST и long-gap suite.
 
 ### ГТК
 
@@ -177,19 +202,15 @@ Definition of Done:
 - [ ] provider metrics;
 - [ ] actual model-run/grid metadata from supporting endpoints.
 
-## Этап 4 — Telegram/FSM failure scenarios
+## Этап 4 — UX и lifecycle данных
 
-Приоритет: **P0**.
-
-- [x] полный Dispatcher test `field → crop → season → phase → report`;
+- [x] полный Dispatcher test;
 - [x] restart основных FSM-веток;
-- [x] PostgreSQL outage до handler;
-- [x] Redis outage до handler/FSM;
-- [x] callback после удаления сообщения;
-- [ ] PostgreSQL/Redis failure после начала state-changing operation;
-- [ ] worker crash и потеря scheduler lease;
+- [x] fail-closed dependency error UX;
 - [ ] field archive/delete flow;
-- [ ] quiet hours и configurable delivery window.
+- [ ] user data export/delete;
+- [ ] quiet hours и configurable delivery window;
+- [ ] administrative provider status.
 
 ## Этап 5 — новые данные
 
@@ -223,15 +244,16 @@ Definition of Done:
 - [ ] `uv.lock` на целевых ОС;
 - [ ] clean-host Debian 12 test;
 - [ ] Astra Linux test;
-- [ ] automated failed-start rollback;
+- [ ] automated failed-start rollback test;
 - [ ] periodic restore verification;
-- [ ] JSON logs и correlation ID;
+- [ ] JSON logs и correlation ID во всех слоях;
 - [ ] provider/scheduler/Telegram metrics;
 - [ ] signed release source policy.
 
 ## Definition of Done полевого пилота
 
-- [x] field-readiness PR слит с зелёным CI;
+- [x] field-readiness и Telegram/FSM reliability слиты с зелёным CI;
+- [x] scheduler heartbeat/loss и transaction rollback проверены реальными сервисами;
 - [ ] clean-host deploy/update/rollback пройден;
 - [ ] реальный Telegram smoke для двух полей пройден;
 - [ ] Open-Meteo live smoke пройден на контрольных точках;
