@@ -1,0 +1,46 @@
+name: Apply verified Telegram FSM patch
+
+on:
+  push:
+    branches: [agent/telegram-fsm-reliability-20260712]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/telegram-fsm-reliability-20260712
+          fetch-depth: 0
+
+      - name: Apply locally verified patch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cat .github/patch/*.diff > /tmp/telegram-fsm.patch
+          git apply --check /tmp/telegram-fsm.patch
+          git apply /tmp/telegram-fsm.patch
+          python -m compileall -q src tests
+          test ! -e src/bot/simple_recommender.py
+
+      - name: Remove temporary transport files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          rm -rf .github/patch
+          rm -f .github/workflows/temporary-source-snapshot.yml
+          rm -f .github/workflows/apply-telegram-fsm-patch.yml
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'test(bot): verify FSM flow and dependency failures'
+          git push origin HEAD:agent/telegram-fsm-reliability-20260712
