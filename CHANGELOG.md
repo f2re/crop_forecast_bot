@@ -2,6 +2,34 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
+## 2026-07-12 — accumulated precipitation and reference ET₀
+
+### Added
+
+- completed-period and seasonal accumulated precipitation;
+- accumulated provider reference ET₀ with independent completeness checks;
+- paired-day `ΣP−ΣET₀` and `ΣET₀−ΣP` climatic differences;
+- dry/wet day counts with the ETCCDI/Climdex 1 mm threshold;
+- trailing and maximum dry/wet spells on a continuous daily series;
+- maximum 1-day and 5-consecutive-day precipitation within the selected period;
+- regression tests for forecast exclusion, missing/negative values, local season boundaries and overlapping local dates;
+- `docs/SCIENTIFIC_WATER_INDICATORS.md` with formulas, units, provenance and scientific limits.
+
+### Changed
+
+- the Telegram report now distinguishes short-window `P−ET₀` from accumulated seasonal quantities;
+- the water section is named “Осадки и атмосферная испаряемость” rather than implying measured root-zone water supply;
+- a forecast row cannot displace a completed row for the same local calendar date;
+- accumulated differences are calculated only from paired valid days;
+- spell duration and 5-day precipitation are withheld whenever a calendar/value gap can hide the true sequence.
+
+### Scientific limitations
+
+- provider ET₀ is not actual crop evapotranspiration;
+- `P−ET₀` is not root-zone storage, irrigation deficit or an irrigation dose;
+- bounded-period dry spells and precipitation maxima are not presented as annual climate-normal indices;
+- soil balance, `Kc/Ks`, SPI/SPEI and field validation remain future work.
+
 ## 2026-07-12 — scheduler lease and transaction failure orchestration
 
 ### Added
