@@ -12,6 +12,7 @@ from src.agro.indices import (
     FROST_STATUS_INSUFFICIENT,
     compute_all_indices,
 )
+from src.agro.water import calc_water_accumulation
 from src.api.open_meteo import OpenMeteoProvider
 from src.application.ports.weather import WeatherProvider
 from src.domain.weather import AgroWeatherData, WeatherCoverage
@@ -68,6 +69,10 @@ async def generate_agro_report(
         phase=phenological_phase,
         elevation_m=weather.meta.elevation_m,
     )
+    indices["water_accumulation"] = calc_water_accumulation(
+        weather.daily,
+        season_start=season_start_timestamp,
+    )
     text = format_agro_report(
         weather,
         indices,
@@ -114,6 +119,12 @@ def _format_source_counts(counts: dict[str, int]) -> str:
     return ", ".join(parts) if parts else "источник по строкам не указан"
 
 
+def _format_iso_day(value: str | None) -> str:
+    if not value:
+        return "дата не определена"
+    return date.fromisoformat(value).strftime("%d.%m.%Y")
+
+
 def _format_provider_metadata(weather: AgroWeatherData) -> list[str]:
     lines: list[str] = []
     if weather.meta.model:
@@ -152,6 +163,7 @@ def format_agro_report(
     gdd = indices["gdd"]
     frost = indices["frost"]
     water = indices["et0_bal"]
+    accumulated_water = indices.get("water_accumulation", {})
     crop_name = get_crop_name(crop)
     safe_field_name = html.escape(field_name)
     safe_phase = html.escape(phenological_phase) if phenological_phase else None
@@ -207,7 +219,7 @@ def format_agro_report(
             f"• Проверено прогнозных суток: {frost['valid_forecast_days']}"
         )
 
-    lines.extend(["", "💧 <b>Влагообеспеченность</b>"])
+    lines.extend(["", "💧 <b>Осадки и атмосферная испаряемость</b>"])
     if htc["htc"] is None:
         lines.append(f"• ГТК не рассчитан: {html.escape(htc['interpretation'])}")
     else:
@@ -225,7 +237,74 @@ def format_agro_report(
             f"• Осадки − ET₀ за {water['window_days']} завершённых суток: "
             f"{water['balance_mm']:+.1f} мм. {html.escape(water['status'])}"
         )
-    lines.append("• Разность осадки − ET₀ не является дозой полива.")
+
+    if accumulated_water:
+        scope = (
+            "с начала сезона"
+            if accumulated_water.get("period_is_season")
+            else "за доступный завершённый период"
+        )
+        if accumulated_water.get("precip_sum_mm") is None:
+            lines.append(
+                "• Накопленные осадки не рассчитаны: "
+                f"{html.escape(accumulated_water.get('status', 'нет данных'))}."
+            )
+        else:
+            lines.append(
+                f"• Накопленные осадки {scope}: "
+                f"{accumulated_water['precip_sum_mm']:.1f} мм "
+                f"по {accumulated_water['precip_valid_days']} валидным суткам."
+            )
+        if accumulated_water.get("et0_sum_mm") is None:
+            lines.append("• Накопленная ET₀ провайдера не рассчитана.")
+        else:
+            lines.append(
+                f"• Накопленная ET₀ провайдера {scope}: "
+                f"{accumulated_water['et0_sum_mm']:.1f} мм."
+            )
+        if accumulated_water.get("p_minus_et0_mm") is None:
+            lines.append(
+                "• Накопленная разность P−ET₀ не рассчитана: нет достаточно "
+                "полного парного ряда."
+            )
+        else:
+            lines.append(
+                f"• Климатическая разность P−ET₀ {scope}: "
+                f"{accumulated_water['p_minus_et0_mm']:+.1f} мм "
+                f"по {accumulated_water['paired_days']} парным суткам."
+            )
+        if accumulated_water.get("dry_spell_available"):
+            lines.append(
+                "• Сухая серия на конец ряда: "
+                f"{accumulated_water['trailing_dry_spell_days']} сут.; "
+                f"максимум {accumulated_water['max_dry_spell_days']} сут. "
+                f"при осадках <{accumulated_water['dry_day_threshold_mm']:g} мм/сут."
+            )
+        else:
+            lines.append(
+                f"• Сухие серии не рассчитаны: "
+                f"{html.escape(accumulated_water.get('dry_spell_status', 'нет данных'))}."
+            )
+        if accumulated_water.get("max_1day_precip_mm") is not None:
+            extremes = (
+                f"• Максимум осадков за сутки: "
+                f"{accumulated_water['max_1day_precip_mm']:.1f} мм "
+                f"({_format_iso_day(accumulated_water.get('max_1day_precip_date'))})"
+            )
+            if accumulated_water.get("max_5day_precip_mm") is not None:
+                extremes += (
+                    f"; за 5 последовательных суток: "
+                    f"{accumulated_water['max_5day_precip_mm']:.1f} мм"
+                )
+            lines.append(extremes + ".")
+        if not accumulated_water.get("period_is_season"):
+            lines.append(
+                f"• {html.escape(accumulated_water.get('scope_note', ''))}"
+            )
+    lines.append(
+        "• P−ET₀ и сухая серия — климатические индикаторы, а не запас влаги "
+        "в корнеобитаемом слое и не доза полива."
+    )
 
     lines.extend(["", "🌱 <b>Теплообеспеченность</b>"])
     if gdd["gdd_past"] is None:
@@ -271,6 +350,10 @@ def format_agro_report(
             f"• ГДД: {_format_source_counts(gdd.get('source_counts', {}))}",
             f"• ГТК: {_format_source_counts(htc.get('source_counts', {}))}",
             f"• Осадки − ET₀: {_format_source_counts(water.get('source_counts', {}))}",
+            (
+                "• Накопленные осадки/ET₀: "
+                + _format_source_counts(accumulated_water.get("source_counts", {}))
+            ),
             f"• Tmin-прогноз: {_format_source_counts(frost.get('source_counts', {}))}",
         ]
     )
