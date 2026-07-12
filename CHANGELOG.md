@@ -2,6 +2,23 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
+## 2026-07-12 — Telegram/FSM reliability
+
+### Added
+
+- testable production Dispatcher factory;
+- full `field → crop → season → phase → report` Dispatcher scenario;
+- real RedisStorage reopen test for the core FSM branches;
+- global controlled handling for PostgreSQL, Redis and stale Telegram-message failures;
+- correlation codes in user-safe dependency failure messages;
+- regression test for all-field monitoring copy.
+
+### Fixed
+
+- manual phase selection no longer reads the removed `gdd_stages` structure;
+- `/help` and field-list copy now distinguish the active manual field from all enabled background-monitored fields;
+- a deleted callback source message opens a fresh current menu instead of ending in an unhandled error.
+
 ## 2026-07-12 — field-readiness correctness
 
 ### Added
