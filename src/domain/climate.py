@@ -16,12 +16,16 @@ class ClimateReferenceMeta:
     model: str
     reference_start: date
     reference_end: date
+    comparison_start: date
+    comparison_end: date
     retrieved_at: datetime
-    cache_ttl_seconds: int
+    reference_cache_ttl_seconds: int
+    current_cache_ttl_seconds: int
     spatial_resolution_km: float | None = None
 
 
 @dataclass(slots=True)
 class ClimateReferenceData:
     meta: ClimateReferenceMeta
-    daily: pd.DataFrame
+    reference_daily: pd.DataFrame
+    current_daily: pd.DataFrame
