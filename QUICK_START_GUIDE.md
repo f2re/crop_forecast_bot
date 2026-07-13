@@ -21,6 +21,8 @@ sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 
 Скрипт создаёт пользователя `cropbot`, PostgreSQL/Redis, защищённый `/etc/crop-forecast-bot.env`, отдельный release и virtualenv, выполняет backup, Alembic migration, preflight и проверяет systemd heartbeat.
 
+Systemd-unit устанавливаются из того же release, который активируется. Если новый release не проходит healthcheck, предыдущие код и unit-файлы восстанавливаются вместе и повторно проверяются по `active + heartbeat`.
+
 ## 3. Проверка сервиса
 
 ```bash
@@ -42,15 +44,29 @@ sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh
 ```
 
-Read-only smoke реального Open-Meteo:
+Полный read-only smoke оперативного Open-Meteo и однородного ERA5-Land:
+
+```bash
+sudo -u cropbot bash \
+  /opt/crop-forecast-bot/current/scripts/verify-production.sh \
+  --live-all 55.75 37.62 2026-04-15 wheat
+```
+
+Раздельные варианты:
 
 ```bash
 sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh \
   --live-provider 55.75 37.62 2026-04-15
+
+sudo -u cropbot bash \
+  /opt/crop-forecast-bot/current/scripts/verify-production.sh \
+  --live-climate 55.75 37.62 2026-04-15 wheat
 ```
 
-Команда проверяет структуру ответа, локальные даты, completed/forecast partition, тесты, Alembic и Bash. Пользовательские данные не изменяются.
+Проверяются структура ответа, локальные даты, completed/forecast partition, однородность ERA5-Land current/reference, минимум валидных reference-лет, обязательные показатели, тесты, Alembic и Bash. Пользовательские данные не изменяются.
+
+В GitHub Actions также есть еженедельный и ручной workflow **Live provider smoke**. Его JSON-результаты сохраняются как artifact на 14 суток. Внешний provider workflow отделён от обычного PR CI, чтобы временная недоступность API не блокировала локально воспроизводимые изменения.
 
 ## 5. Telegram smoke для двух полей
 
@@ -66,9 +82,12 @@ sudo -u cropbot bash \
 
 - показывает активное поле;
 - разделяет реанализ, завершённое прошлое и прогноз;
+- использует отдельный однородный ERA5-Land-период для сравнения 1991–2020;
+- показывает фактическую последнюю дату ERA5-Land;
 - не заявляет сезонную сумму при неполном покрытии;
 - не выводит `0` вместо отсутствующих данных;
-- не называет frost screening вероятностью повреждения.
+- не называет frost screening вероятностью повреждения;
+- не называет эмпирический процентиль вероятностью, SPI/SPEI или станционной нормой.
 
 ## 6. Конфигурация
 
@@ -124,9 +143,28 @@ sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
 sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
 ```
 
-Перед обновлением сохраняется PostgreSQL dump. Код откатывается автоматически при неуспешном healthcheck, но миграции БД автоматически назад не отменяются.
+Перед обновлением сохраняется PostgreSQL dump. Код и systemd-unit откатываются вместе при неуспешном healthcheck. Миграции БД автоматически назад не отменяются.
 
-## 9. Диагностика
+## 9. Проверка восстановления backup
+
+Последний dump можно безопасно проверить без изменения production-БД:
+
+```bash
+sudo bash \
+  /opt/crop-forecast-bot/current/scripts/verify-backup-restore.sh
+```
+
+Либо указать конкретный custom-format dump:
+
+```bash
+sudo bash \
+  /opt/crop-forecast-bot/current/scripts/verify-backup-restore.sh \
+  /var/backups/crop-forecast-bot/database-YYYYMMDDTHHMMSSZ.dump
+```
+
+Скрипт создаёт временную локальную БД, выполняет `pg_restore --exit-on-error`, сравнивает schema fingerprint, Alembic revision и точные fingerprints таблиц `users`, `fields`, `crop_seasons`, затем всегда удаляет verification database. Удалённые PostgreSQL-инстансы намеренно не поддерживаются этим root-runbook.
+
+## 10. Диагностика
 
 ```bash
 sudo systemctl status crop-forecast-bot --no-pager -l
@@ -144,4 +182,4 @@ sudo -u cropbot .venv/bin/alembic upgrade head
 sudo systemctl restart crop-forecast-bot
 ```
 
-Если сезонный реанализ недоступен, в журнале будет `Season history unavailable`; бот продолжит работу с коротким окном и явно пометит ограничение.
+Если сезонный реанализ или ERA5-Land недоступны, основной оперативный отчёт продолжает работу и явно показывает деградацию качества. Отсутствующие данные не подменяются прогнозом другой модели.

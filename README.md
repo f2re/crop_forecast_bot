@@ -18,7 +18,7 @@ Telegram-бот для оперативной агрометеорологиче
 - 🌱 отдельные культура, дата посева и наблюдаемая фаза каждого поля;
 - 🌦 Open-Meteo Forecast API;
 - 🗓 сезонный реанализ Open-Meteo Historical Weather API;
-- 📈 сравнение завершённой части сезона с фиксированной ERA5-Land базой 1991–2020;
+- 📈 однородное сравнение текущего ERA5-Land-сезона с базой ERA5-Land 1991–2020;
 - 🌿 ГДД с crop-specific `Tbase`, контролем периода и пропусков;
 - 💧 ГТК только для валидного завершённого тёплого окна;
 - 🚿 диагностическая разность осадки − ET₀ без фиктивных нулей;
@@ -28,7 +28,9 @@ Telegram-бот для оперативной агрометеорологиче
 - 📨 отдельные настройки дайджеста и температурных алертов каждого поля;
 - 🔒 Redis FSM, callback idempotency, renewable job leases и дедупликация;
 - 🗃 обязательные Alembic-миграции;
-- ♻️ Bash-установка, обновление, диагностика и откат через systemd;
+- ♻️ versioned Bash/systemd releases с совместным откатом кода и unit-файлов;
+- 💾 проверяемый `pg_dump → pg_restore` для core-таблиц;
+- 🔎 раздельные live-smoke контракты Open-Meteo и ERA5-Land;
 - 📚 опциональная RAG-база знаний с отображением источников.
 
 > Отсутствующие данные не заменяются эвристикой. «Нет валидной прогнозной Tmin» и «риск не выявлен» — разные состояния.
@@ -66,7 +68,8 @@ Telegram-бот для оперативной агрометеорологиче
 
 - `reanalysis` — прошлый ряд Historical Weather API;
 - `operational_past` — завершённые прошлые локальные сутки Forecast API;
-- `forecast` — текущие и будущие локальные сутки.
+- `forecast` — текущие и будущие локальные сутки;
+- climate reference — отдельные ERA5-Land current/reference series одной модели.
 
 Отчёт показывает время получения данных ботом и политику кэша. Точный model run и пространственное разрешение не придумываются, если endpoint их не сообщает.
 
@@ -105,30 +108,33 @@ GDDday = max(0, min(Tmean, Tupper) − Tbase)
 - `ΣP` и `ΣET₀` по завершённым локальным суткам;
 - `ΣP−ΣET₀` только по парным валидным датам;
 - число сухих и влажных суток при пороге `1 мм/сут`;
-- текущая на конец ряда и максимальная сухая серия;
+- текущая и максимальная сухая серия;
 - максимальная сумма осадков за 1 и 5 последовательных суток.
 
-Прогнозные строки не входят в накопления. Сухие серии и 5-суточный максимум не публикуются при календарном разрыве или пропуске осадков. ET₀ остаётся характеристикой атмосферной испаряемости эталонной поверхности, а не фактической ET культуры. Методика и ограничения: [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md).
+Прогнозные строки не входят в накопления. Сухие серии и 5-суточный максимум не публикуются при календарном разрыве или пропуске осадков. ET₀ остаётся характеристикой атмосферной испаряемости эталонной поверхности, а не фактической ET культуры. Методика: [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md).
 
-### Сезон относительно ERA5-Land 1991–2020
+### Сезон ERA5-Land относительно базы 1991–2020
 
-При заданной дате сезона бот отдельно запрашивает фиксированную модель `era5_land` и сравнивает завершённый текущий период с окнами той же длины и той же календарной даты старта в 1991–2020 годах.
+При заданной дате сезона бот запрашивает две однородные серии одной модели `era5_land`:
 
-Показываются при достаточном качестве:
+```text
+ERA5-Land: текущий сезон
+ERA5-Land: 1991–2020 reference
+```
+
+Текущий период сравнивается с окнами той же длины и той же календарной даты старта. Показываются при достаточном качестве:
 
 - аномалия средней температуры, °C;
-- сумма осадков и ET₀ в процентах от реанализного среднего;
+- сумма осадков и ET₀ относительно реанализного среднего;
 - аномалия ГДД, °C·сут;
 - положение максимальной сухой серии;
 - эмпирические процентили и фактическое число сопоставимых лет.
 
-Требуется не менее 20 валидных исторических окон. Накопленные метрики не публикуются при пропуске хотя бы одного дня. Процент температуры от среднего не вычисляется, потому что отношение значений в °C физически некорректно. Процентиль не является вероятностью, а реанализная сетка не называется станционной климатической нормой. Методика: [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md).
+Требуется не менее 20 валидных исторических окон. Накопленные метрики не публикуются при пропуске хотя бы одного дня. Процент температуры от среднего не вычисляется. Процентиль не является вероятностью, а реанализная сетка не называется станционной климатической нормой. Методика: [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md).
 
 ### Температурный риск
 
 Используется прогнозная суточная Tmin воздуха на высоте 2 м.
-
-Состояния:
 
 ```text
 risk_detected
@@ -185,20 +191,26 @@ sudo editor /root/cropbot-token
 sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 ```
 
+`deploy.sh` устанавливает systemd-unit из того же release, который активирует. При failed healthcheck предыдущие код и unit-файлы восстанавливаются вместе и повторно проверяются по `active + heartbeat`.
+
 ## 🛠 Команды администратора
 
 ```bash
 # Состояние, heartbeat, БД, Redis и журнал
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 
-# Полная проверка release
+# Полная локальная проверка release
 sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh
 
-# Read-only smoke реального Open-Meteo
+# Open-Meteo Forecast/Historical + homogeneous ERA5-Land
 sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh \
-  --live-provider 55.75 37.62 2026-04-15
+  --live-all 55.75 37.62 2026-04-15 wheat
+
+# Проверка восстановления последнего PostgreSQL backup
+sudo bash \
+  /opt/crop-forecast-bot/current/scripts/verify-backup-restore.sh
 
 # Логи и перезапуск
 sudo journalctl -u crop-forecast-bot -f
@@ -213,14 +225,15 @@ sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
 
 | Скрипт | Назначение |
 |---|---|
-| `scripts/deploy.sh` | зависимости, БД, Redis, release и systemd |
-| `scripts/update.sh` | backup, новый release, миграции, preflight и auto-rollback |
-| `scripts/rollback.sh` | возврат предыдущего или выбранного release |
+| `scripts/deploy.sh` | зависимости, БД, Redis, versioned release и systemd |
+| `scripts/update.sh` | backup, новый release, миграции, preflight и verified rollback |
+| `scripts/rollback.sh` | возврат кода и unit-файлов выбранного release |
 | `scripts/status.sh` | service, commit, heartbeat, PostgreSQL, Redis и журнал |
-| `scripts/verify-production.sh` | Ruff, compileall, pytest, Alembic, Bash и live provider smoke |
+| `scripts/verify-production.sh` | Ruff, compileall, pytest, Alembic, Bash и live providers |
+| `scripts/verify-backup-restore.sh` | isolated restore, schema/Alembic/data fingerprints |
 | `scripts/help.sh` | краткая справка по командам |
 
-## 🔄 Обновление
+## 🔄 Обновление и recovery
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
@@ -233,18 +246,20 @@ PostgreSQL dump
 → pip check / compileall
 → alembic upgrade head
 → runtime preflight
+→ units из target release
 → atomic current switch
 → systemd + heartbeat check
-→ code rollback при ошибке
+→ code + unit rollback при ошибке
+→ повторный healthcheck предыдущего release
 ```
 
-Миграции БД автоматически назад не откатываются. Перед update создаётся backup.
+Миграции БД автоматически назад не откатываются. Перед update создаётся backup. Его восстановимость проверяется отдельным isolated restore без изменения production-БД.
 
 ### Гарантии фоновых заданий
 
 Scheduler продлевает Redis job lease независимо от длительности запроса к провайдеру. При потере token ownership текущий read/report отменяется, а новые поля не обрабатываются. После аварийного завершения процесса другой worker получает lock только после истечения TTL.
 
-Уведомление дополнительно резервируется отдельным ключом Redis. Однако Telegram `sendMessage` не поддерживает idempotency key: если процесс погиб после принятия сообщения Telegram, но до фиксации dedup lease, абсолютная гарантия exactly-once невозможна. Бот не скрывает эту границу и не должен быть единственным каналом критических предупреждений.
+Telegram `sendMessage` не поддерживает idempotency key: если процесс погиб после принятия сообщения Telegram, но до фиксации dedup lease, абсолютная гарантия exactly-once невозможна. Бот не должен быть единственным каналом критических предупреждений.
 
 ## 🧪 Разработка и тесты
 
@@ -261,7 +276,18 @@ python -m src.bot.main
 bash scripts/verify-production.sh
 ```
 
-CI запускает PostgreSQL и Redis системными сервисами, без Docker. Проверяются миграции, row locks, Redis FSM restart, callback idempotency, два scheduler worker, продление job lease во время долгого I/O, восстановление после аварийного выхода процесса, атомарный rollback пользовательской операции, накопленные показатели и ERA5-Land reference contracts.
+CI запускает реальные PostgreSQL и Redis системными сервисами. Проверяются:
+
+- Ruff, `compileall`, Bash и ShellCheck;
+- migration graph и current schema;
+- PostgreSQL row locks и Redis FSM/leases;
+- полный Telegram Dispatcher-flow;
+- scheduler crash/lease recovery;
+- научные контракты накоплений и ERA5-Land;
+- release/unit rollback state machine;
+- непустой `pg_dump → pg_restore` с schema, Alembic и data fingerprints.
+
+Отдельный weekly/manual workflow **Live provider smoke** проверяет реальные Open-Meteo и ERA5-Land endpoints и сохраняет JSON-artifacts. Временная внешняя недоступность API не блокирует обычный PR CI.
 
 Локальные integration tests:
 
@@ -281,10 +307,13 @@ application services + typed ports
 domain / bounded agro calculations
         ↓
 infrastructure adapters
-  ├─ Open-Meteo forecast + seasonal history + ERA5-Land reference
+  ├─ Open-Meteo forecast + seasonal history
+  ├─ homogeneous ERA5-Land current/reference
   ├─ PostgreSQL / Alembic
   ├─ Redis coordination
   └─ optional RAG
+        ↓
+versioned systemd release + recovery gates
 ```
 
 Единственная точка запуска:
@@ -298,8 +327,7 @@ python -m src.bot.main
 - [`docs/STATUS.md`](docs/STATUS.md) — выполнено и текущий этап;
 - [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) — фактические возможности;
 - [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) — план модернизации;
-- [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md) — накопленные осадки, ET₀, сухие серии и ограничения;
-- [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md) — ERA5-Land 1991–2020, аномалии, процентили и ограничения;
-- [`docs/AUDIT_2026-07-10.md`](docs/AUDIT_2026-07-10.md) — базовый аудит;
-- [`CHANGELOG.md`](CHANGELOG.md) — история изменений;
-- [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md) — эксплуатационный runbook.
+- [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md) — накопленные осадки, ET₀ и сухие серии;
+- [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md) — ERA5-Land 1991–2020;
+- [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md) — установка, live smoke, backup restore и rollback;
+- [`CHANGELOG.md`](CHANGELOG.md) — история изменений.

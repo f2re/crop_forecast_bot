@@ -25,6 +25,17 @@ UPDATE_TIMER_NAME="${UPDATE_TIMER_NAME:-crop-forecast-bot-update.timer}"
 LOCK_FILE="${LOCK_FILE:-/run/lock/crop-forecast-bot-deploy.lock}"
 KEEP_RELEASES="${KEEP_RELEASES:-4}"
 KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
+SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
+JOURNALCTL_BIN="${JOURNALCTL_BIN:-journalctl}"
+HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-45}"
+HEALTHCHECK_INTERVAL_SECONDS="${HEALTHCHECK_INTERVAL_SECONDS:-2}"
+
+readonly -a SYSTEMD_UNITS=(
+  crop-forecast-bot.service
+  crop-forecast-bot-update.service
+  crop-forecast-bot-update.timer
+)
 
 NEW_RELEASE=""
 NEW_RELEASE_SHA=""
@@ -58,6 +69,14 @@ require_debian_family() {
     *debian*|*ubuntu*) ;;
     *) fail "Automatic installation currently supports Debian/Ubuntu/Astra-compatible hosts" ;;
   esac
+}
+
+service_control() {
+  "${SYSTEMCTL_BIN}" "$@"
+}
+
+service_journal() {
+  "${JOURNALCTL_BIN}" "$@"
 }
 
 acquire_deploy_lock() {
@@ -218,6 +237,29 @@ activate_release() {
   replace_symlink "${CURRENT_LINK}" "${release}"
 }
 
+render_systemd_units_from_release() {
+  local release="$1"
+  local unit source target temporary
+  [[ -d "${release}" ]] || fail "Release is unavailable: ${release}"
+
+  for unit in "${SYSTEMD_UNITS[@]}"; do
+    source="${release}/deploy/systemd/${unit}"
+    [[ -f "${source}" ]] || fail "Release is missing systemd template: ${unit}"
+  done
+
+  install -d -m 0755 "${SYSTEMD_UNIT_DIR}"
+  for unit in "${SYSTEMD_UNITS[@]}"; do
+    source="${release}/deploy/systemd/${unit}"
+    target="${SYSTEMD_UNIT_DIR}/${unit}"
+    temporary="${target}.new.$$"
+    rm -f "${temporary}"
+    render_template "${source}" "${temporary}"
+    chmod 0644 "${temporary}"
+    mv -Tf "${temporary}" "${target}"
+  done
+  service_control daemon-reload
+}
+
 heartbeat_is_fresh() {
   local heartbeat_file="${HEARTBEAT_FILE:-/run/crop-forecast-bot/heartbeat}"
   [[ -x "${CURRENT_LINK}/.venv/bin/python" ]] || return 1
@@ -230,22 +272,55 @@ heartbeat_is_fresh() {
 
 restart_and_verify() {
   local attempt
+  [[ "${HEALTHCHECK_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || \
+    fail "HEALTHCHECK_ATTEMPTS must be a positive integer"
+  [[ "${HEALTHCHECK_INTERVAL_SECONDS}" =~ ^[0-9]+$ ]] || \
+    fail "HEALTHCHECK_INTERVAL_SECONDS must be a non-negative integer"
+
   load_runtime_env
   rm -f "${HEARTBEAT_FILE:-/run/crop-forecast-bot/heartbeat}" || true
-  systemctl restart "${SERVICE_NAME}"
+  service_control restart "${SERVICE_NAME}"
 
-  for ((attempt = 1; attempt <= 45; attempt++)); do
-    if systemctl is-active --quiet "${SERVICE_NAME}" && heartbeat_is_fresh; then
+  for ((attempt = 1; attempt <= HEALTHCHECK_ATTEMPTS; attempt++)); do
+    if service_control is-active --quiet "${SERVICE_NAME}" && heartbeat_is_fresh; then
       log "Service is active and heartbeat is current"
       return 0
     fi
-    if systemctl is-failed --quiet "${SERVICE_NAME}"; then
+    if service_control is-failed --quiet "${SERVICE_NAME}"; then
       break
     fi
-    sleep 2
+    if (( HEALTHCHECK_INTERVAL_SECONDS > 0 )); then
+      sleep "${HEALTHCHECK_INTERVAL_SECONDS}"
+    fi
   done
 
-  journalctl -u "${SERVICE_NAME}" -n 100 --no-pager >&2 || true
+  service_journal -u "${SERVICE_NAME}" -n 100 --no-pager >&2 || true
+  return 1
+}
+
+restore_release_after_failed_activation() {
+  local failed_release="$1"
+  local previous_release="$2"
+  local active_release=""
+
+  if [[ -n "${previous_release}" && -d "${previous_release}" ]]; then
+    warn "Release ${failed_release} failed health verification; restoring ${previous_release}"
+    replace_symlink "${CURRENT_LINK}" "${previous_release}"
+    render_systemd_units_from_release "${previous_release}" || return 1
+    if restart_and_verify; then
+      log "Previous release recovered successfully"
+      return 0
+    fi
+    warn "Previous release also failed health verification"
+    return 1
+  fi
+
+  warn "Release ${failed_release} failed and no previous release is available"
+  active_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
+  if [[ "${active_release}" == "${failed_release}" ]]; then
+    rm -f "${CURRENT_LINK}"
+  fi
+  service_control stop "${SERVICE_NAME}" >/dev/null 2>&1 || true
   return 1
 }
 
@@ -310,6 +385,9 @@ render_template() {
     -e "s|@APP_GROUP@|${APP_GROUP}|g" \
     -e "s|@APP_ROOT@|${APP_ROOT}|g" \
     -e "s|@CURRENT_LINK@|${CURRENT_LINK}|g" \
+    -e "s|@STATE_ROOT@|${STATE_ROOT}|g" \
+    -e "s|@CACHE_ROOT@|${CACHE_ROOT}|g" \
+    -e "s|@LOG_ROOT@|${LOG_ROOT}|g" \
     -e "s|@ENV_FILE@|${ENV_FILE}|g" \
     -e "s|@BRANCH@|${BRANCH}|g" \
     "${source}" > "${target}"

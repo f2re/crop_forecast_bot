@@ -11,7 +11,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     env:
       PYTHONPATH: ${{ github.workspace }}
       TEST_DATABASE_URL: postgresql+asyncpg://cropbot_test:cropbot_test@127.0.0.1:5432/crop_forecast_bot_test
@@ -82,7 +82,8 @@ jobs:
             scripts/status.sh \
             scripts/help.sh \
             scripts/install-systemd.sh \
-            scripts/verify-production.sh
+            scripts/verify-production.sh \
+            scripts/verify-backup-restore.sh
 
       - name: Repository legacy policy
         run: |
@@ -126,6 +127,71 @@ jobs:
 
       - name: PostgreSQL and Redis integration tests
         run: python -m pytest -q -m integration
+
+      - name: Backup and restore round trip
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          export DATABASE_URL="${TEST_DATABASE_URL}"
+          python -m alembic upgrade head
+
+          sudo -u postgres psql \
+            --set=ON_ERROR_STOP=1 \
+            --dbname=crop_forecast_bot_test <<'SQL'
+          INSERT INTO users (telegram_id, username, first_name)
+          VALUES (9876543210123, 'restore_smoke', 'Restore')
+          ON CONFLICT (telegram_id) DO UPDATE
+          SET username = EXCLUDED.username, first_name = EXCLUDED.first_name;
+
+          INSERT INTO fields (user_id, name, latitude, longitude, timezone, is_active)
+          SELECT id, 'Restore smoke field', 55.75, 37.62, 'Europe/Moscow', true
+          FROM users WHERE telegram_id = 9876543210123
+          ON CONFLICT (user_id, name) DO UPDATE
+          SET latitude = EXCLUDED.latitude,
+              longitude = EXCLUDED.longitude,
+              timezone = EXCLUDED.timezone,
+              is_active = EXCLUDED.is_active;
+
+          DELETE FROM crop_seasons
+          WHERE field_id = (
+            SELECT f.id
+            FROM fields AS f
+            JOIN users AS u ON u.id = f.user_id
+            WHERE u.telegram_id = 9876543210123
+              AND f.name = 'Restore smoke field'
+          );
+
+          INSERT INTO crop_seasons (
+            field_id, crop_key, sowing_date, season_start_date,
+            phenological_phase, phase_source, is_active
+          )
+          SELECT f.id, 'wheat', DATE '2026-04-15', DATE '2026-04-15',
+                 'Кущение', 'user', true
+          FROM fields AS f
+          JOIN users AS u ON u.id = f.user_id
+          WHERE u.telegram_id = 9876543210123
+            AND f.name = 'Restore smoke field';
+          SQL
+
+          env_file="${RUNNER_TEMP}/cropbot-restore.env"
+          backup_root="${RUNNER_TEMP}/cropbot-backups"
+          mkdir -p "${backup_root}"
+          cat > "${env_file}" <<EOF
+          TELEGRAM_BOT_TOKEN=123456:test-token
+          DATABASE_URL=${TEST_DATABASE_URL}
+          REDIS_URL=${TEST_REDIS_URL}
+          RAG_ENABLED=false
+          EOF
+
+          sudo env \
+            ENV_FILE="${env_file}" \
+            BACKUP_ROOT="${backup_root}" \
+            KEEP_BACKUPS=2 \
+            bash -c 'source scripts/common.sh; backup_database'
+          sudo env \
+            ENV_FILE="${env_file}" \
+            BACKUP_ROOT="${backup_root}" \
+            bash scripts/verify-backup-restore.sh
 
       - name: Alembic graph
         run: python -m alembic heads

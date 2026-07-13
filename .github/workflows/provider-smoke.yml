@@ -1,0 +1,86 @@
+name: Live provider smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/provider-smoke.yml"
+      - "requirements*.txt"
+      - "src/agro/climate_reference.py"
+      - "src/api/open_meteo.py"
+      - "src/api/open_meteo_climate.py"
+      - "src/ops/provider_smoke.py"
+      - "src/ops/climate_smoke.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/provider-smoke.yml"
+      - "requirements*.txt"
+      - "src/agro/climate_reference.py"
+      - "src/api/open_meteo.py"
+      - "src/api/open_meteo_climate.py"
+      - "src/ops/provider_smoke.py"
+      - "src/ops/climate_smoke.py"
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-provider-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      OPEN_METEO_CACHE_PATH: ${{ runner.temp }}/openmeteo-cache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install production dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+
+      - name: Operational Forecast/Historical contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          season_start="$(date -u -d '45 days ago' +%F)"
+          python -m src.ops.provider_smoke \
+            --latitude 55.75 \
+            --longitude 37.62 \
+            --season-start "${season_start}" | tee operational-smoke.json
+
+      - name: Homogeneous ERA5-Land current/reference contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          season_start="$(date -u -d '45 days ago' +%F)"
+          python -m src.ops.climate_smoke \
+            --latitude 55.75 \
+            --longitude 37.62 \
+            --season-start "${season_start}" \
+            --crop wheat | tee climate-smoke.json
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-provider-smoke-${{ github.run_id }}
+          path: |
+            operational-smoke.json
+            climate-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
