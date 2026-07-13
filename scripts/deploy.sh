@@ -87,32 +87,11 @@ EOF
   log "Runtime configuration created at ${ENV_FILE}"
 }
 
-install_systemd_units() {
-  local unit source
-  for unit in crop-forecast-bot.service crop-forecast-bot-update.service crop-forecast-bot-update.timer; do
-    source="${SOURCE_ROOT}/deploy/systemd/${unit}"
-    [[ -f "${source}" ]] || fail "Missing systemd template: ${source}"
-    render_template "${source}" "/etc/systemd/system/${unit}"
-    chmod 0644 "/etc/systemd/system/${unit}"
-  done
-  systemctl daemon-reload
-}
-
-rollback_after_failed_start() {
-  local previous
-  previous="$(readlink -f "${PREVIOUS_LINK}" 2>/dev/null || true)"
-  if [[ -n "${previous}" && -d "${previous}" ]]; then
-    warn "New release failed health verification; restoring ${previous}"
-    replace_symlink "${CURRENT_LINK}" "${previous}"
-    systemctl restart "${SERVICE_NAME}" || true
-  fi
-}
-
 install_system_packages
 acquire_deploy_lock
 ensure_service_account
 prepare_runtime_directories
-systemctl enable --now postgresql redis-server
+service_control enable --now postgresql redis-server
 
 if [[ ! -f "${ENV_FILE}" ]]; then create_runtime_config; fi
 if ! grep -Eq '^TELEGRAM_BOT_TOKEN=.+$' "${ENV_FILE}"; then
@@ -130,27 +109,33 @@ EOF
 fi
 
 validate_runtime_env
-install_systemd_units
+previous_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 create_release "${BRANCH}"
 build_release "${NEW_RELEASE}"
 backup_database
 run_migrations "${NEW_RELEASE}"
 preflight_release "${NEW_RELEASE}"
+
+# Units must come from the release that will actually be activated. Rendering
+# them from the bootstrap checkout can pair old unit semantics with new code.
+render_systemd_units_from_release "${NEW_RELEASE}"
+service_control enable "${SERVICE_NAME}"
 activate_release "${NEW_RELEASE}"
 
-systemctl enable "${SERVICE_NAME}"
 if ! restart_and_verify; then
-  rollback_after_failed_start
-  fail "Service failed after deployment; previous release was restored when available"
+  if restore_release_after_failed_activation "${NEW_RELEASE}" "${previous_release}"; then
+    fail "Service failed after deployment; previous release and its units were restored"
+  fi
+  fail "Service failed after deployment and no healthy previous release was available"
 fi
 
 if [[ "${ENABLE_AUTO_UPDATE:-0}" == "1" ]]; then
-  systemctl enable --now "${UPDATE_TIMER_NAME}"
+  service_control enable --now "${UPDATE_TIMER_NAME}"
   log "Automatic update timer enabled"
 else
-  systemctl disable --now "${UPDATE_TIMER_NAME}" >/dev/null 2>&1 || true
+  service_control disable --now "${UPDATE_TIMER_NAME}" >/dev/null 2>&1 || true
 fi
 
 prune_releases
 log "Native deployment completed: ${NEW_RELEASE_SHA}"
-systemctl --no-pager --full status "${SERVICE_NAME}"
+service_control --no-pager --full status "${SERVICE_NAME}"
