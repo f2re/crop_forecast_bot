@@ -33,17 +33,14 @@ fi
 unit_state="matches active release"
 for unit in "${SYSTEMD_UNITS[@]}"; do
   expected="$(mktemp)"
-  trap 'rm -f "${expected:-}"' RETURN
   render_template "${current_release}/deploy/systemd/${unit}" "${expected}"
   if [[ ! -f "${SYSTEMD_UNIT_DIR}/${unit}" ]] || \
      ! cmp -s "${expected}" "${SYSTEMD_UNIT_DIR}/${unit}"; then
     unit_state="MISMATCH: ${unit}"
     rm -f "${expected}"
-    trap - RETURN
     break
   fi
   rm -f "${expected}"
-  trap - RETURN
 done
 printf 'Unit files:    %s\n' "${unit_state}"
 
