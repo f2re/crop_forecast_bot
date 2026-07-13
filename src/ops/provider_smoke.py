@@ -77,8 +77,8 @@ def validate_weather_data(
     Besides the DTO shape, this verifies the most important temporal invariant:
     every completed row is before the current local calendar day and the
     current local day is present only in the forecast partition. When a season
-    start is requested, the live acceptance contract also requires complete
-    historical coverage back to that date.
+    start is requested, the live acceptance contract also requires complete,
+    gap-free historical coverage back to that date.
     """
     missing_columns = _REQUIRED_DAILY_COLUMNS.difference(data.daily.columns)
     if missing_columns:
@@ -118,6 +118,12 @@ def validate_weather_data(
             "Provider dataset contains duplicate local dates: " + ", ".join(duplicates)
         )
 
+    frame_start = min(frame["_local_date"])
+    frame_end = max(frame["_local_date"])
+    expected_row_count = (frame_end - frame_start).days + 1
+    if len(frame) != expected_row_count:
+        raise ValueError("Provider daily dataset contains a local-calendar gap")
+
     kinds = {str(value) for value in frame["data_kind"].dropna().unique()}
     unsupported = kinds.difference(_ALLOWED_KINDS)
     if unsupported:
@@ -155,6 +161,8 @@ def validate_weather_data(
         raise ValueError("Forecast partition contains a completed past local date")
 
     coverage = data.coverage
+    if coverage.actual_start != frame_start or coverage.actual_end != frame_end:
+        raise ValueError("Coverage metadata does not match the returned local-date range")
     if expected_season_start is not None:
         if coverage.requested_season_start != expected_season_start:
             raise ValueError(
@@ -162,7 +170,7 @@ def validate_weather_data(
             )
         if not coverage.season_coverage_complete:
             raise ValueError("Provider did not return complete requested season coverage")
-        if coverage.actual_start is None or coverage.actual_start > expected_season_start:
+        if frame_start > expected_season_start:
             raise ValueError("Provider series does not reach the requested season start")
         if not coverage.history_source:
             raise ValueError("Requested season coverage has no historical provenance")
@@ -185,8 +193,8 @@ def validate_weather_data(
         cache_ttl_seconds=data.meta.cache_ttl_seconds,
         spatial_resolution_km=data.meta.spatial_resolution_km,
         current_local_date=current_local_date.isoformat(),
-        actual_start=(coverage.actual_start.isoformat() if coverage.actual_start else None),
-        actual_end=coverage.actual_end.isoformat() if coverage.actual_end else None,
+        actual_start=frame_start.isoformat(),
+        actual_end=frame_end.isoformat(),
         requested_season_start=(
             coverage.requested_season_start.isoformat()
             if coverage.requested_season_start
