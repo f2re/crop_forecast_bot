@@ -1,3 +1,4 @@
+"""Read-only live acceptance contract for operational Open-Meteo data."""
 from __future__ import annotations
 
 import argparse
