@@ -47,6 +47,7 @@ restore_copy="$(mktemp /tmp/crop-forecast-restore-XXXXXX.dump)"
 
 cleanup() {
   local status=$?
+  trap - EXIT
   rm -f "${restore_copy}"
   runuser -u postgres -- dropdb --if-exists "${verification_database}" \
     >/dev/null 2>&1 || true
