@@ -14,21 +14,45 @@ fi
 
 log() { printf '[verify] %s\n' "$*"; }
 require_command() { command -v "$1" >/dev/null 2>&1 || { printf '[verify] ERROR: required command not found: %s\n' "$1" >&2; exit 1; }; }
+usage() {
+  cat >&2 <<EOF
+Usage:
+  $0
+  $0 --live-provider LATITUDE LONGITUDE [SEASON_START]
+  $0 --live-climate LATITUDE LONGITUDE SEASON_START [CROP]
+  $0 --live-all LATITUDE LONGITUDE SEASON_START [CROP]
+EOF
+}
 
-LIVE_PROVIDER=0
+LIVE_MODE="none"
 LATITUDE=""
 LONGITUDE=""
 SEASON_START=""
-if [[ "${1:-}" == "--live-provider" ]]; then
-  [[ $# -ge 3 && $# -le 4 ]] || { echo "Usage: $0 [--live-provider LATITUDE LONGITUDE [SEASON_START]]" >&2; exit 2; }
-  LIVE_PROVIDER=1
-  LATITUDE="$2"
-  LONGITUDE="$3"
-  SEASON_START="${4:-}"
-elif [[ $# -ne 0 ]]; then
-  echo "Usage: $0 [--live-provider LATITUDE LONGITUDE [SEASON_START]]" >&2
-  exit 2
-fi
+CROP="wheat"
+case "${1:-}" in
+  "")
+    [[ $# -eq 0 ]] || { usage; exit 2; }
+    ;;
+  --live-provider)
+    [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 2; }
+    LIVE_MODE="provider"
+    LATITUDE="$2"
+    LONGITUDE="$3"
+    SEASON_START="${4:-}"
+    ;;
+  --live-climate|--live-all)
+    [[ $# -ge 4 && $# -le 5 ]] || { usage; exit 2; }
+    LIVE_MODE="${1#--live-}"
+    LATITUDE="$2"
+    LONGITUDE="$3"
+    SEASON_START="$4"
+    CROP="${5:-wheat}"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
 
 require_command "${PYTHON_BIN}"
 
@@ -53,16 +77,30 @@ if command -v shellcheck >/dev/null 2>&1; then
   log "Running shellcheck"
   shellcheck -x scripts/common.sh scripts/deploy.sh scripts/update.sh \
     scripts/rollback.sh scripts/status.sh scripts/help.sh \
-    scripts/install-systemd.sh scripts/verify-production.sh
+    scripts/install-systemd.sh scripts/verify-production.sh \
+    scripts/verify-backup-restore.sh
 else
   log "shellcheck is not installed; Bash syntax was checked"
 fi
 
-if [[ "${LIVE_PROVIDER}" == "1" ]]; then
-  log "Running read-only Open-Meteo contract smoke"
-  command=("${PYTHON_BIN}" -m src.ops.provider_smoke --latitude "${LATITUDE}" --longitude "${LONGITUDE}")
+if [[ "${LIVE_MODE}" == "provider" || "${LIVE_MODE}" == "all" ]]; then
+  log "Running read-only Open-Meteo operational contract smoke"
+  command=(
+    "${PYTHON_BIN}" -m src.ops.provider_smoke
+    --latitude "${LATITUDE}"
+    --longitude "${LONGITUDE}"
+  )
   if [[ -n "${SEASON_START}" ]]; then command+=(--season-start "${SEASON_START}"); fi
   "${command[@]}"
+fi
+
+if [[ "${LIVE_MODE}" == "climate" || "${LIVE_MODE}" == "all" ]]; then
+  log "Running read-only homogeneous ERA5-Land contract smoke"
+  "${PYTHON_BIN}" -m src.ops.climate_smoke \
+    --latitude "${LATITUDE}" \
+    --longitude "${LONGITUDE}" \
+    --season-start "${SEASON_START}" \
+    --crop "${CROP}"
 fi
 
 log "All requested checks passed"
