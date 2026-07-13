@@ -136,7 +136,7 @@ def test_provider_smoke_rejects_current_day_in_completed_partition() -> None:
             "data_source": ["forecast-api"] * 3,
         }
     )
-    with pytest.raises(ValueError, match="current local calendar day"):
+    with pytest.raises(ValueError, match="Current local calendar day"):
         validate_weather_data(_data(frame), as_of=_AS_OF)
 
 
