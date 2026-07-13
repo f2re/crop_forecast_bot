@@ -11,6 +11,16 @@ on:
       - "src/api/open_meteo_climate.py"
       - "src/ops/provider_smoke.py"
       - "src/ops/climate_smoke.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/provider-smoke.yml"
+      - "requirements*.txt"
+      - "src/agro/climate_reference.py"
+      - "src/api/open_meteo.py"
+      - "src/api/open_meteo_climate.py"
+      - "src/ops/provider_smoke.py"
+      - "src/ops/climate_smoke.py"
   schedule:
     - cron: "17 4 * * 1"
 
