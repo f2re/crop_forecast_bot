@@ -27,7 +27,7 @@ Telegram:
 Полная проверка release:
   sudo -u cropbot bash ${CURRENT}/scripts/verify-production.sh
   sudo -u cropbot bash ${CURRENT}/scripts/verify-production.sh \
-    --live-provider 55.75 37.62 2026-04-15
+    --live-all 55.75 37.62 2026-04-15 wheat
 
 Обновление и откат:
   sudo bash ${CURRENT}/scripts/update.sh main
@@ -41,6 +41,7 @@ Telegram:
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic current'
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic heads'
   sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic upgrade head'
+  sudo bash ${CURRENT}/scripts/verify-backup-restore.sh
 
 Опциональный RAG:
   INSTALL_RAG_PROFILE=1
