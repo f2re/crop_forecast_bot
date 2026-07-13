@@ -1,3 +1,4 @@
+"""Read-only live acceptance contract for homogeneous ERA5-Land data."""
 from __future__ import annotations
 
 import argparse
