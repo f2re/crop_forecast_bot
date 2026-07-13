@@ -10,7 +10,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import pandas as pd
 
 from src.agro.climate_reference import calc_season_climate_reference
-from src.api.open_meteo import OpenMeteoProvider, close_open_meteo_resources
+from src.api.open_meteo import (
+    OpenMeteoError,
+    OpenMeteoProvider,
+    close_open_meteo_resources,
+)
 from src.api.open_meteo_climate import (
     CLIMATE_MODEL,
     OpenMeteoClimateError,
@@ -226,7 +230,7 @@ def main() -> int:
                 args.crop,
             )
         )
-    except (OpenMeteoClimateError, ValueError) as exc:
+    except (OpenMeteoError, OpenMeteoClimateError, ValueError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         return 1
 
