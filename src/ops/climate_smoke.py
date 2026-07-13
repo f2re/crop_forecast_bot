@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import pandas as pd
 
 from src.agro.climate_reference import calc_season_climate_reference
-from src.api.open_meteo import close_open_meteo_resources
+from src.api.open_meteo import OpenMeteoProvider, close_open_meteo_resources
 from src.api.open_meteo_climate import (
     CLIMATE_MODEL,
     OpenMeteoClimateError,
@@ -185,12 +185,17 @@ async def run_smoke(
     season_start: date,
     crop: str,
 ) -> ClimateSmokeResult:
-    provider = OpenMeteoClimateProvider()
+    weather_provider = OpenMeteoProvider()
+    climate_provider = OpenMeteoClimateProvider()
     try:
-        data = await provider.fetch_reference(
+        # Resolve the same IANA timezone that production obtains from the
+        # operational provider. The climate adapter intentionally rejects the
+        # ambiguous "auto" pseudo-timezone.
+        weather = await weather_provider.fetch(latitude, longitude, season_start=None)
+        data = await climate_provider.fetch_reference(
             latitude,
             longitude,
-            timezone="auto",
+            timezone=weather.meta.timezone,
             season_start=season_start,
         )
         return validate_climate_data(data, season_start=season_start, crop=crop)
