@@ -1,12 +1,12 @@
 # План модернизации Crop Forecast Bot
 
-Дата актуализации: **2026-07-12**.
+Дата актуализации: **2026-07-13**.
 
 ## Текущее состояние
 
-Основной научный и runtime-контур работает через единый aiogram-entrypoint. PostgreSQL является source of truth, Redis используется для FSM и координации, Open-Meteo — для оперативного прогноза и ограниченной истории, ERA5-Land — для однородного сезонного сравнения.
+Основной Telegram и научный контур работает через единый aiogram-entrypoint. PostgreSQL является source of truth, Redis используется для FSM и межпроцессной координации, Open-Meteo — для оперативного прогноза и ограниченной истории, ERA5-Land — для однородного сезонного сравнения.
 
-Последний завершённый вертикальный срез: **ERA5-Land seasonal reference, слит через PR #27**.
+Текущий завершённый code-level срез: **PR #29 — version-consistent release rollback, backup restore verification и live provider gates**. Полный CI прошёл, включая реальные PostgreSQL/Redis integration tests и `pg_dump → pg_restore` с непустыми данными.
 
 ## Целевая архитектура
 
@@ -23,9 +23,11 @@ infrastructure adapters
   ├─ PostgreSQL repositories / Alembic
   ├─ Redis callback/job leases / deduplication
   └─ optional source-attributed RAG
+        ↓
+versioned systemd release + heartbeat + recovery evidence
 ```
 
-## Правила принятия изменений
+## Инварианты принятия изменений
 
 1. Один Telegram framework и один entrypoint.
 2. Handlers не выполняют расчёты, HTTP и блокирующий I/O.
@@ -38,62 +40,56 @@ infrastructure adapters
 9. Background monitoring относится ко всем enabled fields.
 10. Пользовательская state-changing операция не имеет промежуточных commit.
 11. Worker не продолжает side effects после потери lease ownership.
-12. Релиз принимается после CI, migration check и runtime smoke.
-13. Production разворачивается Bash/systemd без Docker.
-14. Накопления строятся только по завершённым локальным суткам и сохраняют provenance.
-15. Разность величин вычисляется по одному набору парных наблюдений.
-16. Многолетнее сравнение использует одну фиксированную модель для текущего и reference-периода.
-17. Сумма не сравнивается при пропуске; отношение температуры в °C к среднему не вычисляется.
-18. Эмпирический процентиль не называется вероятностью, SPI/SPEI или станционной нормой.
+12. Код, systemd-unit и healthcheck рассматриваются как один versioned release.
+13. Failed activation не оставляет новый код или unit активными без успешного heartbeat.
+14. Backup считается проверенным только после реального restore и сравнения данных/схемы.
+15. Многолетнее сравнение использует одну фиксированную модель для текущего и reference-периода.
+16. Сумма не сравнивается при пропуске; отношение температуры в °C к среднему не вычисляется.
+17. Эмпирический процентиль не называется вероятностью, SPI/SPEI или станционной нормой.
+18. Релиз принимается после static/policy checks, unit/contract, integration, migration и recovery gates.
 
 ## Завершённые вертикальные срезы
 
-### Runtime и field-readiness — PR #21
+### Field-readiness — PR #21
 
 - [x] `insufficient_forecast_data` отделён от подтверждённого `no_risk`;
-- [x] ГДД фильтруются строго от локальной даты начала сезона;
+- [x] ГДД строго от локальной даты начала сезона;
 - [x] все enabled fields мониторятся в фоне;
-- [x] daily digest использует локальное утреннее окно поля;
-- [x] race-safe onboarding через upsert и row lock;
+- [x] local-morning digest;
+- [x] race-safe onboarding;
 - [x] provider provenance и regression tests.
 
 ### Telegram/FSM reliability — PR #24
 
-- [x] testable production `build_dispatcher`;
+- [x] production `build_dispatcher`;
 - [x] Dispatcher-flow `field → crop → season → phase → report`;
-- [x] RedisStorage reopen для основных FSM-веток;
+- [x] RedisStorage reopen основных FSM-веток;
 - [x] controlled PostgreSQL/Redis error UX;
 - [x] deleted-message callback recovery;
-- [x] единый каталог ручных фаз;
-- [x] UX all-field monitoring синхронизирован с scheduler.
+- [x] единый каталог ручных фаз.
 
 ### Process failure orchestration — PR #25
 
-- [x] reusable `RenewingLease` с token-checked heartbeat;
-- [x] продление scheduler lock во время долгого provider/report I/O;
-- [x] отмена текущего read/report после потери ownership;
-- [x] запрет перехода к следующему полю после lease loss;
-- [x] real Redis tests для long job, forced lock loss и crash/TTL recovery;
-- [x] `_lock_user` без промежуточного commit;
-- [x] crop/season/phase mutations под user row lock;
-- [x] real PostgreSQL failure-injection после `flush` и до `COMMIT`;
-- [x] rollback без частичных user/field/season записей;
-- [x] caller cancellation не оставляет защищённую coroutine в фоне.
+- [x] renewable Redis job lease;
+- [x] отмена provider/report после lease loss;
+- [x] запрет новых side effects после потери ownership;
+- [x] real Redis long-job, lock-loss и crash/TTL tests;
+- [x] user/field/season mutations в одной транзакции;
+- [x] real PostgreSQL failure-injection до `COMMIT`;
+- [x] rollback без частичных записей.
 
-Ограничение: Telegram `sendMessage` не поддерживает application idempotency key. Абсолютный exactly-once результат между внешней отправкой и фиксацией dedup недоказуем.
+Ограничение: Telegram `sendMessage` не поддерживает application idempotency key. Абсолютный exactly-once результат между внешней отправкой и dedup commit недоказуем.
 
 ### Накопленные осадки и атмосферная испаряемость — PR #26
 
-- [x] накопленные осадки по завершённым локальным суткам;
-- [x] накопленная provider ET₀ с независимым QC;
+- [x] накопленные осадки и provider ET₀ по завершённым локальным суткам;
 - [x] `ΣP−ΣET₀` только по парным валидным суткам;
 - [x] локальная граница сезона;
 - [x] прогноз исключён из накоплений;
-- [x] отрицательные значения не превращаются в ноль;
 - [x] dry/wet threshold `1 мм/сут` по ETCCDI/Climdex;
-- [x] текущая и максимальная сухая серия только на непрерывном ряду;
-- [x] максимум осадков за 1 и 5 последовательных суток;
-- [x] показатели не называются влагозапасом, фактической ET культуры или дозой полива.
+- [x] текущая/максимальная сухая серия;
+- [x] Rx1day/Rx5day operation с continuity guard;
+- [x] показатели не называются влагозапасом или дозой полива.
 
 Методика: `docs/SCIENTIFIC_WATER_INDICATORS.md`.
 
@@ -103,37 +99,49 @@ infrastructure adapters
 - [x] раздельные `current_daily` и `reference_daily`;
 - [x] одна модель `models=era5_land` для обеих серий;
 - [x] reference period 1991–2020;
-- [x] текущий ряд cache 6 часов, reference cache 30 суток;
-- [x] полностью пустой хвост задержанного ERA5-Land удаляется без подмены прогнозом;
-- [x] фактическая дата окончания ряда показывается пользователю;
-- [x] same-length windows с одинаковой календарной датой старта;
-- [x] минимум 20 валидных референсных лет;
-- [x] empirical mid-rank percentile без distribution fit;
-- [x] средняя температура, осадки, provider ET₀, ГДД и сухие серии;
-- [x] накопленные метрики требуют полного ряда;
-- [x] отношение температуры в °C к среднему запрещено;
-- [x] 29 февраля не сдвигается эвристически;
-- [x] отказ climate provider не блокирует оперативный отчёт;
-- [x] Telegram-текст укладывается в 4096 символов;
-- [x] SPI/SPEI, station normal и вероятность не заявляются;
-- [x] полный CI: static/policy, unit/contract, PostgreSQL/Redis integration, Alembic graph.
+- [x] cache 6 часов / 30 суток;
+- [x] latency-aware фактический конец текущего ряда;
+- [x] same-length windows и минимум 20 reference-лет;
+- [x] empirical percentile без distribution fit;
+- [x] температура, осадки, ET₀, ГДД и сухие серии;
+- [x] no `Best Match`, no temperature ratio, no implicit zero;
+- [x] fail-soft operational report;
+- [x] Telegram limit 4096 символов.
 
 Методика: `docs/SCIENTIFIC_CLIMATE_REFERENCE.md`.
 
-## Активный вертикальный срез — clean-host release gate
+### Release recovery и restore evidence — PR #29
+
+- [x] unit-файлы рендерятся из точного target release;
+- [x] deploy/update/rollback используют одну реализацию unit rendering;
+- [x] failed activation восстанавливает предыдущие code symlink и unit-файлы;
+- [x] восстановленный release повторно проходит `active + heartbeat`;
+- [x] failed initial activation без previous release останавливает service и удаляет broken link;
+- [x] systemd runtime paths централизованно рендерятся;
+- [x] release state machine покрыт детерминированными tests;
+- [x] PostgreSQL dump восстанавливается в изолированную local database;
+- [x] проверяются schema fingerprint, Alembic revision и core-table fingerprints;
+- [x] CI restore round trip содержит непустые user/field/season данные;
+- [x] отдельные live operational и homogeneous ERA5-Land smoke contracts;
+- [x] weekly/manual provider workflow с JSON artifacts;
+- [x] полный CI зелёный.
+
+## Активный вертикальный срез — внешняя полевая приёмка
 
 Приоритет: **P0**.
 
-1. Чистая Debian 12 VM: `deploy.sh` без ручной правки кода.
-2. Reboot и подтверждение автоматического systemd startup.
-3. Реальный Telegram smoke для двух полей.
-4. `update.sh` на новый release.
-5. Намеренно повреждённый release и healthcheck failure.
-6. Автоматический возврат предыдущего кода и systemd unit.
-7. `pg_restore` последнего dump в отдельную test database.
-8. Сравнение пользователей, полей, сезонов и Alembic revision.
-9. Live smoke Forecast/Historical/ERA5-Land на контрольных точках.
-10. Повторение smoke на поддерживаемом Astra Linux окружении.
+Эти шаги требуют реального Linux host и Telegram token; обычный GitHub-hosted CI не является их заменой.
+
+1. Чистая Debian 12 VM: `deploy.sh` документированной командой.
+2. Проверка service, heartbeat, PostgreSQL, Redis и Alembic head.
+3. Reboot и подтверждение автоматического systemd startup.
+4. `verify-production.sh --live-all` на контрольной точке.
+5. Telegram flow для двух полей, разных культур/сезонов/уведомлений.
+6. `update.sh` на новый release.
+7. Намеренно неисправный release и автоматическое восстановление старого кода/unit.
+8. `verify-backup-restore.sh` последнего production dump.
+9. Повторный Telegram flow после rollback.
+10. Повторение на поддерживаемом Astra Linux окружении.
 
 Definition of Done:
 
@@ -142,6 +150,7 @@ Definition of Done:
 - failed release не остаётся активным;
 - backup реально восстанавливается;
 - Telegram flow работает до и после rollback;
+- live provider workflow имеет успешный evidence artifact;
 - status/doctor отражают фактическое состояние.
 
 ## Остаточные P0 failure scenarios
@@ -154,7 +163,7 @@ Definition of Done:
 
 ## Этап 0 — runtime
 
-Статус: **выполнено**.
+Статус: **code-level выполнено**.
 
 - [x] aiogram 3.x и `python -m src.bot.main`;
 - [x] Router/FSM основного пути;
@@ -162,39 +171,39 @@ Definition of Done:
 - [x] systemd readiness, heartbeat и watchdog;
 - [x] native deploy/update/rollback/status;
 - [x] callback idempotency;
-- [x] distributed renewable scheduler locks.
+- [x] distributed renewable scheduler locks;
+- [x] version-consistent code/unit rollback tests.
 
 ## Этап 1 — PostgreSQL и Redis
 
-Статус: **production + real-service integration выполнены**.
+Статус: **production contracts + real-service CI выполнены**.
 
 - [x] Alembic baseline и обязательный head;
-- [x] adoption legacy schema;
 - [x] `Field` и `CropSeason`;
 - [x] несколько полей;
 - [x] Redis FSM restart;
 - [x] PostgreSQL partial unique indexes;
-- [x] row locking active field/user mutations;
+- [x] row locking active mutations;
 - [x] multi-client Redis leases;
 - [x] two-worker alert/digest tests;
 - [x] race-safe onboarding;
-- [x] atomic pre-commit rollback test;
-- [x] crash/TTL lease recovery test;
+- [x] atomic rollback test;
+- [x] backup/restore round trip с data fingerprint;
 - [ ] cleanup migration legacy user coordinate/crop columns после production-проверки.
 
 ## Этап 2 — научная целостность
 
 ### ГДД
 
-- [x] crop-specific `Tbase` из одного каталога;
-- [x] optional `Tupper` только при явной настройке;
+- [x] crop-specific `Tbase`;
+- [x] optional `Tupper`;
 - [x] completed/forecast separation;
 - [x] local-date season boundary;
 - [x] coverage и missing fraction;
 - [x] no automatic phenology;
 - [ ] independent crop/region/cultivar validation;
 - [ ] versioned parameter sources;
-- [ ] leap year, DST и long-gap suite.
+- [ ] расширенный leap-year/DST/long-gap suite.
 
 ### ГТК
 
@@ -203,24 +212,21 @@ Definition of Done:
 - [x] minimum warm-day count;
 - [x] missing fraction control;
 - [x] no universal classification;
-- [ ] season-consistent homogeneous series;
-- [ ] vegetation-period continuity rules;
+- [ ] homogeneous season continuity rules;
 - [ ] regional interpretation sources.
 
 ### ET₀, осадки и водный статус
 
-- [x] ET₀ обозначен как provider variable;
+- [x] provider ET₀ явно маркируется;
 - [x] paired-data validation;
 - [x] no irrigation-dose claim;
-- [x] накопленные `P` и provider `ET₀`;
-- [x] сезонная `ΣP−ΣET₀` по парным суткам;
-- [x] dry/wet threshold и bounded-period spell metrics;
-- [x] Rx1day/Rx5day с continuity guard;
-- [x] отрицательные значения и пропуски fail-closed;
+- [x] накопленные `P`, `ET₀`, `ΣP−ΣET₀`;
+- [x] dry/wet spells и Rx1day/Rx5day;
+- [x] отрицательные значения/пропуски fail-closed;
 - [ ] полевая валидация по станции/лизиметру;
 - [ ] local FAO-56 Penman–Monteith;
 - [ ] soil/root-zone storage model;
-- [ ] Kc только с валидированной фазой.
+- [ ] `Kc` только с валидированной фазой.
 
 ### Климатическая реанализная база
 
@@ -230,11 +236,11 @@ Definition of Done:
 - [x] empirical percentiles и descriptive quantiles;
 - [x] provenance, cache policy и latency marker;
 - [x] leap-day/cross-year tests;
-- [x] no `Best Match`, no temperature ratio, no implicit zero;
-- [ ] live full-period контрольные точки;
+- [x] live smoke contract и scheduled workflow;
+- [ ] первый успешный live artifact;
 - [ ] региональная bias-оценка по станциям;
 - [ ] прямой CDS job/object-cache pipeline;
-- [ ] SPI/SPEI после отдельной валидации distribution fit и временных масштабов.
+- [ ] SPI/SPEI после отдельной валидации distribution fit.
 
 ### Заморозки
 
@@ -251,35 +257,29 @@ Definition of Done:
 
 ## Этап 3 — provider resilience
 
-Приоритет: **P1**.
-
-- [x] typed weather and climate ports/DTO;
+- [x] typed weather/climate ports/DTO;
 - [x] timeout, retry, cache и bounded concurrency;
-- [x] controlled historical/climate fallback;
-- [x] provider resource shutdown;
+- [x] controlled fallback;
+- [x] resource shutdown;
 - [x] retrieval/cache provenance;
-- [x] mocked ERA5-Land request contract;
-- [ ] mocked full operational HTTP contract;
+- [x] mocked и live-smoke contracts;
 - [ ] jittered retry и circuit breaker;
 - [ ] measurable rate limiter;
 - [ ] stale-cache age/quality marker;
-- [ ] provider metrics;
-- [ ] actual model-run/grid metadata from supporting endpoints.
+- [ ] provider metrics.
 
 ## Этап 4 — UX и lifecycle данных
 
 - [x] полный Dispatcher test;
 - [x] restart основных FSM-веток;
 - [x] fail-closed dependency error UX;
-- [ ] синхронизировать одну строку `/help`: дата сезона также нужна для водных накоплений и ERA5-Land;
+- [ ] синхронизировать `/help` о назначении даты сезона;
 - [ ] field archive/delete flow;
 - [ ] user data export/delete;
 - [ ] quiet hours и configurable delivery window;
 - [ ] administrative provider status.
 
 ## Этап 5 — новые данные
-
-Приоритет: **P1/P2**.
 
 - [ ] SoilGrids DTO/adapter и ocean/no-data validation;
 - [ ] direct CDS/ERA5-Land asynchronous job/object-cache pipeline;
@@ -301,29 +301,31 @@ Definition of Done:
 
 ## Этап 7 — release engineering и наблюдаемость
 
-- [x] Bash/systemd releases;
+- [x] Bash/systemd versioned releases;
 - [x] PostgreSQL backup перед update;
-- [x] atomic activation и code rollback;
-- [x] verification script и live operational provider smoke command;
+- [x] version-consistent code/unit rollback;
+- [x] automated failed-start rollback state-machine tests;
+- [x] real backup/restore verification;
+- [x] operational + climate live smoke commands;
+- [x] scheduled provider evidence workflow;
 - [x] real PostgreSQL/Redis CI без Docker;
-- [ ] `uv.lock` на целевых ОС;
 - [ ] clean-host Debian 12 test;
 - [ ] Astra Linux test;
-- [ ] automated failed-start rollback test;
-- [ ] periodic restore verification;
+- [ ] periodic restore verification на production backup;
 - [ ] JSON logs и correlation ID во всех слоях;
 - [ ] provider/scheduler/Telegram metrics;
 - [ ] signed release source policy.
 
 ## Definition of Done полевого пилота
 
-- [x] field-readiness и Telegram/FSM reliability слиты с зелёным CI;
-- [x] scheduler heartbeat/loss и transaction rollback проверены реальными сервисами;
-- [x] накопленные показатели осадков/ET₀ имеют источники, единицы, QC и Telegram tests;
-- [x] homogeneous ERA5-Land reference имеет фиксированный период, provenance, QC и Telegram tests;
-- [ ] clean-host deploy/update/rollback пройден;
-- [ ] реальный Telegram smoke для двух полей пройден;
-- [ ] Open-Meteo/ERA5-Land live smoke пройден на контрольных точках;
-- [ ] параллельное сравнение с локальной станцией выполнено;
-- [ ] регламент эксплуатации утверждает screening-only статус;
-- [ ] критичные предупреждения имеют независимый резервный канал.
+- [x] field-readiness и Telegram/FSM reliability;
+- [x] scheduler heartbeat/loss и transaction rollback;
+- [x] научные накопления с provenance/QC;
+- [x] homogeneous ERA5-Land reference с QC;
+- [x] release rollback state machine;
+- [x] PostgreSQL restore round trip в CI;
+- [ ] clean-host deploy/reboot/update/rollback;
+- [ ] реальный Telegram smoke для двух полей;
+- [ ] успешный live provider artifact;
+- [ ] параллельное сравнение с локальной станцией;
+- [ ] screening-only регламент и независимый резервный канал критичных предупреждений.
