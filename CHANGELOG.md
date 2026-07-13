@@ -2,6 +2,34 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
+## 2026-07-13 — release rollback, restore evidence and live provider gates
+
+### Fixed
+
+- `deploy.sh` no longer renders systemd units from the bootstrap checkout before the target release exists;
+- deploy, update and manual rollback now install unit files from the exact release being activated;
+- failed activation restores both the previous code symlink and the previous release's unit files;
+- a restored release must pass `systemctl is-active` and heartbeat verification;
+- failed initial activation without a previous release removes the broken current symlink and stops the service;
+- systemd HOME, cache and writable paths are rendered from centralized runtime paths rather than duplicated literals.
+
+### Added
+
+- deterministic release state-machine tests with injected service-control and heartbeat commands;
+- isolated PostgreSQL restore verification with schema, Alembic and exact core-table fingerprints;
+- CI `pg_dump → pg_restore` round trip with non-empty user/field/season data;
+- homogeneous ERA5-Land live smoke validator for current/reference provenance, period coverage, required metrics and minimum reference years;
+- separate `--live-provider`, `--live-climate` and `--live-all` verification modes;
+- weekly/manual GitHub Actions provider smoke with JSON evidence artifacts;
+- operational runbook for restore verification and full provider smoke.
+
+### Remaining manual evidence
+
+- clean Debian 12 and Astra Linux installation/reboot;
+- real Telegram API flow for two fields;
+- intentionally failed release on a real systemd host;
+- regional ERA5-Land comparison with local stations.
+
 ## 2026-07-12 — ERA5-Land season reference and empirical anomalies
 
 ### Added
