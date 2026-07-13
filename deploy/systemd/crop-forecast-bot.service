@@ -16,8 +16,8 @@ EnvironmentFile=@ENV_FILE@
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=@CURRENT_LINK@
-Environment=HOME=/var/lib/crop-forecast-bot
-Environment=XDG_CACHE_HOME=/var/cache/crop-forecast-bot
+Environment=HOME=@STATE_ROOT@
+Environment=XDG_CACHE_HOME=@CACHE_ROOT@
 ExecStartPre=@CURRENT_LINK@/.venv/bin/python -m src.ops.doctor --runtime
 ExecStart=@CURRENT_LINK@/.venv/bin/python -m src.bot.main
 Restart=always
@@ -55,7 +55,7 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
-ReadWritePaths=/var/lib/crop-forecast-bot /var/cache/crop-forecast-bot /var/log/crop-forecast-bot /run/crop-forecast-bot
+ReadWritePaths=@STATE_ROOT@ @CACHE_ROOT@ @LOG_ROOT@ /run/crop-forecast-bot
 
 StandardOutput=journal
 StandardError=journal
