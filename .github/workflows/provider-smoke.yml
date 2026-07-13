@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: live-provider-smoke-${{ github.ref }}
@@ -38,7 +39,22 @@ jobs:
     env:
       PYTHONPATH: ${{ github.workspace }}
       OPEN_METEO_CACHE_PATH: ${{ runner.temp }}/openmeteo-cache
+      STATUS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
+      - name: Publish pending commit status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.STATUS_SHA,
+              state: "pending",
+              context: "live-provider-smoke",
+              description: "Open-Meteo and ERA5-Land contract smoke is running",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -84,3 +100,23 @@ jobs:
             climate-smoke.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Publish final commit status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          JOB_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const succeeded = process.env.JOB_STATUS === "success";
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.STATUS_SHA,
+              state: succeeded ? "success" : "failure",
+              context: "live-provider-smoke",
+              description: succeeded
+                ? "Open-Meteo and ERA5-Land live contracts passed"
+                : "A live provider contract failed; inspect the run",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
