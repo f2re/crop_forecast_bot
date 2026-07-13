@@ -10,10 +10,10 @@ def test_ci_contains_selective_live_provider_gate() -> None:
     assert "live-provider:" in workflow
     assert "Live provider contracts (relevant PRs)" in workflow
     assert "Detect provider-contract changes" in workflow
-    assert "src/ops/provider_smoke.py" in workflow
-    assert "src/ops/climate_smoke.py" in workflow
     assert "Operational Forecast/Historical contract" in workflow
     assert "Homogeneous ERA5-Land current/reference contract" in workflow
+    assert "python -m src.ops.provider_smoke" in workflow
+    assert "python -m src.ops.climate_smoke" in workflow
     assert "pr-live-provider-smoke-${{ github.run_id }}" in workflow
     assert "retention-days: 14" in workflow
 
@@ -27,3 +27,4 @@ def test_live_provider_gate_is_pull_request_only_and_diff_scoped() -> None:
     assert "steps.changes.outputs.run == 'true'" in live_job
     assert "requirements[^/]*\\.txt" in live_job
     assert "src/(agro/climate_reference|api/open_meteo|api/open_meteo_climate" in live_job
+    assert "ops/provider_smoke|ops/climate_smoke" in live_job
