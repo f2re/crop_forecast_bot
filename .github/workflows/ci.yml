@@ -203,7 +203,7 @@ jobs:
     timeout-minutes: 25
     env:
       PYTHONPATH: ${{ github.workspace }}
-      OPEN_METEO_CACHE_PATH: ${{ runner.temp }}/openmeteo-cache
+      OPEN_METEO_CACHE_PATH: ${{ github.workspace }}/.cache/openmeteo
     steps:
       - uses: actions/checkout@v4
         with:
