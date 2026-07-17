@@ -2,7 +2,9 @@
 
 Дата актуализации: **2026-07-17**.
 
-Текущий вертикальный срез: **ансамблевый мониторинг погодных рисков NOAA GFS через Open-Meteo и строгий сезонный ГТК**. Код, unit/contract tests и методика добавлены в отдельной ветке; полный CI и внешняя полевая приёмка ещё обязательны.
+Текущий вертикальный срез — **ансамблевый мониторинг погодных рисков NOAA GFS через Open-Meteo и строгий сезонный ГТК** — слит в `main` через PR #35. Полный PR CI прошёл: статические проверки, unit/contract tests, PostgreSQL/Redis integration, backup/restore и Alembic graph.
+
+Внешняя полевая приёмка, clean-host deployment и региональная метеорологическая валидация остаются обязательными до заявления «готов к эксплуатации в поле».
 
 ## Production-контур
 
@@ -76,6 +78,8 @@ systemd + versioned releases + heartbeat + rollback
 
 Методика: `docs/ENSEMBLE_RISK_METHODOLOGY.md`.
 
+Формульный аудит: `docs/SCIENTIFIC_FORMULA_AUDIT_2026-07-17.md`.
+
 ### Release engineering
 
 - [x] native deploy/update/rollback/status;
@@ -84,11 +88,11 @@ systemd + versioned releases + heartbeat + rollback
 - [x] active + heartbeat verification;
 - [x] PostgreSQL backup restore round trip в CI;
 - [x] schema/Alembic/core-table fingerprints;
-- [x] live provider verification commands и scheduled workflow.
+- [x] PR #35 CI полностью зелёный.
 
 ## Научные ограничения
 
-- ГТК теперь требует полного сезонного ряда, но региональные интерпретационные пороги ещё не валидированы.
+- ГТК требует полного сезонного ряда, но региональные интерпретационные пороги ещё не валидированы.
 - Provider ET₀ — reference evapotranspiration, не фактическая ET культуры и не доза полива.
 - Tmin воздуха 2 м — screening, не температура растения и не crop damage model.
 - GDD-параметры требуют versioned cultivar/region validation.
@@ -100,7 +104,6 @@ systemd + versioned releases + heartbeat + rollback
 
 ## Что ещё требует внешней среды
 
-- [ ] полный CI текущей ветки;
 - [ ] clean Debian 12 deploy и reboot;
 - [ ] real Telegram API smoke для двух пользователей и нескольких полей;
 - [ ] intentionally failed release на реальном systemd host;
@@ -115,7 +118,6 @@ systemd + versioned releases + heartbeat + rollback
 
 ### P0
 
-- [ ] пройти полный CI и устранить static/type/integration regressions;
 - [ ] выполнить clean-host и Telegram field acceptance;
 - [ ] проверить ensemble provider на реальном ответе и сохранить evidence;
 - [ ] ввести model-run/retrieval-time в долговременный журнал предупреждений;
@@ -137,6 +139,6 @@ systemd + versioned releases + heartbeat + rollback
 
 ## Готовность
 
-**Code-level:** основной бот, сезонный ГТК и ансамблевый срез реализованы.
+**Code-level:** основной бот, сезонный ГТК и ансамблевый срез реализованы и слиты; PR CI зелёный.
 
-**Полевой продукт:** ещё не принят. Для статуса «готов к эксплуатации» обязательны полный CI, real Telegram smoke, clean-host/reboot/rollback, live provider evidence и региональная валидация.
+**Полевой продукт:** ещё не принят. Для статуса «готов к эксплуатации» обязательны real Telegram smoke, clean-host/reboot/rollback, live provider evidence и региональная валидация.
