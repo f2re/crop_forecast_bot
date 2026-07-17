@@ -50,6 +50,8 @@ def test_raw_member_fraction_is_exposed_without_probability_claim() -> None:
     assert event.lead_days == 12
     assert "дальний срок" in event.reliability_note
     assert "не откалиброванная вероятность" in result.method_reference
+    assert result.valid_days == 1
+    assert result.incomplete_days == 0
 
 
 def test_convection_is_not_called_hail_probability() -> None:
@@ -98,7 +100,47 @@ def test_insufficient_members_fail_closed() -> None:
 
     assert result.available is False
     assert result.events == ()
-    assert result.status == "недостаточно членов ансамбля"
+    assert result.status == "недостаточно членов ансамбля для полного анализа рисков"
+    assert result.valid_days == 0
+    assert result.incomplete_days == 1
+
+
+def test_incomplete_variable_excludes_whole_day() -> None:
+    complete_rows = [
+        {
+            "local_date": date(2026, 7, 18),
+            "member_id": f"m{member:02d}",
+            "t_min_c": 8.0,
+            "t_max_c": 25.0,
+            "precip_mm": 2.0,
+            "wind_gust_ms": 6.0,
+            "cape_j_kg": 100.0,
+        }
+        for member in range(31)
+    ]
+    incomplete_rows = [
+        {
+            "local_date": date(2026, 7, 19),
+            "member_id": f"m{member:02d}",
+            "t_min_c": -5.0,
+            "t_max_c": 25.0,
+            "precip_mm": 2.0,
+            "wind_gust_ms": 6.0,
+            "cape_j_kg": 100.0 if member < 10 else float("nan"),
+        }
+        for member in range(31)
+    ]
+
+    result = calc_ensemble_risks(
+        _forecast(complete_rows + incomplete_rows),
+        as_of_date=date(2026, 7, 17),
+    )
+
+    assert result.available is True
+    assert result.valid_days == 1
+    assert result.incomplete_days == 1
+    assert result.events == ()
+    assert "часть горизонта не оценена" in result.status
 
 
 def test_no_threshold_crossing_is_valid_no_risk() -> None:
