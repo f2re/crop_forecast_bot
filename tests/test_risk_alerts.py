@@ -32,7 +32,9 @@ def test_alert_explains_raw_fraction_and_hail_limit() -> None:
         events=(event,),
         model="gfs_seamless",
         member_count=31,
-        valid_days=16,
+        forecast_days=16,
+        valid_days=15,
+        incomplete_days=1,
         generated_for_date=date(2026, 7, 17),
     )
 
@@ -48,3 +50,5 @@ def test_alert_explains_raw_fraction_and_hail_limit() -> None:
     assert "сырая доля модельных сценариев" in text
     assert "не прогноз града" in text
     assert "через 12 сут." in text
+    assert "15 из 16" in text
+    assert "исключено из-за неполных данных: 1" in text
