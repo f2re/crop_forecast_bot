@@ -31,7 +31,7 @@ async def _show_settings(callback: CallbackQuery, context) -> None:
         "⚙️ <b>Уведомления активного поля</b>\n"
         f"🗺 {html.escape(context.field_name)}\n"
         f"📨 Ежедневный отчёт: {'включён' if context.daily_digest else 'выключен'}\n"
-        f"🌡 Температурные алерты: {'включены' if context.frost_alerts else 'выключены'}",
+        f"⚠️ Погодные риски: {'включены' if context.frost_alerts else 'выключены'}",
         reply_markup=get_settings_keyboard(
             field_id=context.field_id,
             daily_digest_enabled=context.daily_digest,
@@ -96,6 +96,7 @@ async def set_digest(callback: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data.startswith("set_frost:"))
 async def set_frost(callback: CallbackQuery, session: AsyncSession) -> None:
+    """Keep the stable callback/DB field while widening its user-facing meaning."""
     try:
         field_id, enabled = parse_setting_callback(callback.data, "set_frost")
     except ValueError as exc:
@@ -111,7 +112,7 @@ async def set_frost(callback: CallbackQuery, session: AsyncSession) -> None:
         frost_alerts=enabled,
     )
     await callback.answer(
-        f"Температурные алерты {'включены' if enabled else 'выключены'}"
+        f"Предупреждения о погодных рисках {'включены' if enabled else 'выключены'}"
     )
     await _show_settings(callback, context)
 
