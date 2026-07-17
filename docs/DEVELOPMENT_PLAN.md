@@ -10,7 +10,7 @@
 
 ## Фактическое состояние
 
-### Подтверждено кодом и тестами
+### Подтверждено кодом, CI и live-контрактом
 
 - единый entrypoint `python -m src.bot.main` на aiogram 3.x;
 - PostgreSQL + SQLAlchemy 2 async + Alembic;
@@ -20,7 +20,8 @@
 - ERA5-Land для однородного сезонного сравнения с периодом 1991–2020;
 - GDD, сезонно-непрерывный HTC/ГТК, provider ET₀, P−ET₀, накопленные осадки, сухие серии, Rx1day/Rx5day;
 - versioned systemd release, heartbeat, rollback и backup/restore verification;
-- ансамблевый GFS-контур пяти погодных рисков.
+- ансамблевый GFS-контур пяти погодных рисков;
+- live GFS Ensemble contract: 31 член, 16 последовательных локальных суток, полное покрытие диагностик.
 
 ### Ещё не подтверждено внешней приёмкой
 
@@ -70,7 +71,7 @@ APScheduler + versioned systemd release + heartbeat
 
 ## Завершённый вертикальный срез — ансамблевые погодные риски
 
-Статус: **реализовано в ветке; требуется полный CI и внешняя полевая приёмка**.
+Статус: **слито в `main`; основной CI и live GFS Ensemble contract зелёные; внешняя полевая приёмка остаётся**.
 
 ### Данные и расчёт
 
@@ -102,7 +103,19 @@ APScheduler + versioned systemd release + heartbeat
 - shutdown закрывает отдельную HTTP-сессию ансамблевого провайдера;
 - существующий детерминированный frost screening сохранён как совместимый расчёт, но не является единственным монитором.
 
+### Live acceptance
+
+- отдельный workflow запускается в PR, при push в `main`, ежедневно и вручную;
+- JSON evidence хранится как GitHub artifact 14 суток;
+- проверяются provenance, timezone, aware timestamp, cache metadata;
+- минимум 20 членов для каждой переменной и даты;
+- непрерывный горизонт не менее 10 суток;
+- физические guardrails и отсутствие date/member дублей;
+- реальный dataset обязан полностью пройти `calc_ensemble_risks`.
+
 Методика: `docs/ENSEMBLE_RISK_METHODOLOGY.md`.
+
+Датированный live evidence: `docs/evidence/ENSEMBLE_PROVIDER_SMOKE_2026-07-17.md`.
 
 ## Аудит научных показателей
 
@@ -162,12 +175,11 @@ Tmin воздуха 2 м не равна температуре листа ил�
 
 ### P0 — закрытие полевого пилота
 
-1. Полный CI текущего среза: Ruff, typing, unit, PostgreSQL/Redis integration, migration, backup/restore.
-2. Чистая Debian 12 VM: deploy, migration, service, heartbeat, reboot.
-3. Telegram smoke: два пользователя, несколько полей, разные культуры и настройки.
-4. Проверка уведомлений на реальных полях с сохранением model run, source, retrieval time и message evidence.
-5. Astra Linux smoke.
-6. Параллельная проверка GFS, ERA5-Land, ET₀ и ГТК по локальным станциям в нескольких климатических режимах.
+1. Чистая Debian 12 VM: deploy, migration, service, heartbeat, reboot.
+2. Telegram smoke: два пользователя, несколько полей, разные культуры и настройки.
+3. Проверка уведомлений на реальных полях с сохранением model run, source, retrieval time и message evidence.
+4. Astra Linux smoke.
+5. Параллельная проверка GFS, ERA5-Land, ET₀ и ГТК по локальным станциям в нескольких климатических режимах.
 
 ### P1 — качество вероятностных предупреждений
 
@@ -205,7 +217,7 @@ Tmin воздуха 2 м не равна температуре листа ил�
 - один aiogram-entrypoint;
 - основной flow доступен в реальном Telegram;
 - PostgreSQL/Redis/Alembic и scheduler работают после reboot;
-- ансамблевые предупреждения проходят полный CI и реальный smoke;
+- ансамблевые предупреждения проходят полный CI, live provider contract и реальный Telegram smoke;
 - сообщения показывают источник, дату события, заблаговременность, `k/n`, покрытие и ограничение;
 - отсутствуют заявления о вероятности града, урожайности или дозе полива без валидации;
 - ГТК скрывается без полной сезонной обеспеченности;
