@@ -4,6 +4,8 @@
 
 Текущий вертикальный срез — **ансамблевый мониторинг погодных рисков NOAA GFS через Open-Meteo и строгий сезонный ГТК** — слит в `main` через PR #35. Полный PR CI прошёл: статические проверки, unit/contract tests, PostgreSQL/Redis integration, backup/restore и Alembic graph.
 
+PR #37 добавил независимый live GFS Ensemble acceptance workflow. Реальный ответ провайдера подтверждён: 31 член, 16 последовательных локальных суток и полное покрытие всех пяти диагностик. Датированный отчёт: `docs/evidence/ENSEMBLE_PROVIDER_SMOKE_2026-07-17.md`.
+
 Внешняя полевая приёмка, clean-host deployment и региональная метеорологическая валидация остаются обязательными до заявления «готов к эксплуатации в поле».
 
 ## Production-контур
@@ -74,11 +76,15 @@ systemd + versioned releases + heartbeat + rollback
 - [x] максимум пять наиболее важных сообщений на поле за цикл;
 - [x] русская практическая подсказка и научное ограничение в каждом сообщении;
 - [x] отдельное закрытие HTTP-сессии при shutdown;
-- [x] unit tests расчёта, parser contract, fail-closed coverage, formatter и scheduler dedup.
+- [x] unit tests расчёта, parser contract, fail-closed coverage, formatter и scheduler dedup;
+- [x] live provider smoke для PR, push в `main`, ежедневного schedule и ручного запуска;
+- [x] JSON evidence artifact с provenance, member/day coverage и физическими guardrails.
 
 Методика: `docs/ENSEMBLE_RISK_METHODOLOGY.md`.
 
 Формульный аудит: `docs/SCIENTIFIC_FORMULA_AUDIT_2026-07-17.md`.
+
+Live evidence: `docs/evidence/ENSEMBLE_PROVIDER_SMOKE_2026-07-17.md`.
 
 ### Release engineering
 
@@ -88,7 +94,8 @@ systemd + versioned releases + heartbeat + rollback
 - [x] active + heartbeat verification;
 - [x] PostgreSQL backup restore round trip в CI;
 - [x] schema/Alembic/core-table fingerprints;
-- [x] PR #35 CI полностью зелёный.
+- [x] PR #35 CI полностью зелёный;
+- [x] PR #37 основной CI и live GFS Ensemble contract зелёные.
 
 ## Научные ограничения
 
@@ -108,7 +115,6 @@ systemd + versioned releases + heartbeat + rollback
 - [ ] real Telegram API smoke для двух пользователей и нескольких полей;
 - [ ] intentionally failed release на реальном systemd host;
 - [ ] Astra Linux smoke;
-- [ ] live ensemble provider evidence artifact;
 - [ ] сравнение GFS/ERA5-Land/ET₀/ГТК с локальными станциями;
 - [ ] проверка полезности и частоты предупреждений с агрономами.
 
@@ -119,7 +125,6 @@ systemd + versioned releases + heartbeat + rollback
 ### P0
 
 - [ ] выполнить clean-host и Telegram field acceptance;
-- [ ] проверить ensemble provider на реальном ответе и сохранить evidence;
 - [ ] ввести model-run/retrieval-time в долговременный журнал предупреждений;
 - [ ] провести station comparison минимум в нескольких регионах и сезонах.
 
@@ -139,6 +144,6 @@ systemd + versioned releases + heartbeat + rollback
 
 ## Готовность
 
-**Code-level:** основной бот, сезонный ГТК и ансамблевый срез реализованы и слиты; PR CI зелёный.
+**Code-level:** основной бот, сезонный ГТК, ансамблевый срез и live provider contract реализованы и слиты; CI зелёный.
 
-**Полевой продукт:** ещё не принят. Для статуса «готов к эксплуатации» обязательны real Telegram smoke, clean-host/reboot/rollback, live provider evidence и региональная валидация.
+**Полевой продукт:** ещё не принят. Для статуса «готов к эксплуатации» обязательны real Telegram smoke, clean-host/reboot/rollback и региональная валидация.
