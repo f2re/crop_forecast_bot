@@ -10,10 +10,20 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import get_settings
+from src.agro.ensemble_risks import calc_ensemble_risks
 from src.agro.indices import FROST_STATUS_INSUFFICIENT, calc_frost_risk
 from src.api.open_meteo import OpenMeteoError, fetch_agro_data
+from src.api.open_meteo_ensemble import (
+    OpenMeteoEnsembleError,
+    OpenMeteoEnsembleProvider,
+)
 from src.application.agro_report import generate_agro_report
+from src.application.ports.risk import RiskForecastProvider
 from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
+from src.bot.risk_alerts import (
+    format_ensemble_data_unavailable,
+    format_ensemble_risk_alert,
+)
 from src.database.crud import NotificationTarget
 from src.database.notification_targets import list_enabled_notification_targets
 from src.infrastructure.coordination import (
@@ -29,12 +39,16 @@ _scheduler: AsyncIOScheduler | None = None
 _NOTIFICATION_RESERVATION_TTL = 5 * 60
 _FROST_DEDUP_TTL = 20 * 60 * 60
 _FROST_UNAVAILABLE_DEDUP_TTL = 20 * 60 * 60
+_ENSEMBLE_RISK_DEDUP_TTL = 21 * 24 * 60 * 60
+_ENSEMBLE_UNAVAILABLE_DEDUP_TTL = 20 * 60 * 60
 _DAILY_DIGEST_DEDUP_TTL = 36 * 60 * 60
 _FROST_JOB_LOCK_TTL = 5 * 60 * 60
+_ENSEMBLE_JOB_LOCK_TTL = 5 * 60 * 60
 _DAILY_JOB_LOCK_TTL = 6 * 60 * 60
 _JOB_LEASE_RENEW_INTERVAL_SECONDS = 60.0
 _DAILY_DIGEST_LOCAL_START_HOUR = 7
 _DAILY_DIGEST_LOCAL_END_HOUR = 11
+_MAX_RISK_ALERTS_PER_FIELD = 5
 
 
 def get_scheduler() -> AsyncIOScheduler:
@@ -83,12 +97,12 @@ async def start_scheduler(
     if scheduler.running:
         return
     scheduler.add_job(
-        check_frost_alerts,
+        check_weather_risk_alerts,
         trigger="cron",
         hour="0,6,12,18",
         minute=10,
         args=[bot, session_factory, coordination],
-        id="frost_check",
+        id="weather_risk_check",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
@@ -157,6 +171,128 @@ async def _send_once(
     return True
 
 
+async def check_weather_risk_alerts(
+    bot: Bot,
+    session_factory: SessionFactory,
+    coordination: CoordinationBackend,
+    *,
+    provider: RiskForecastProvider | None = None,
+    job_lock_ttl_seconds: int = _ENSEMBLE_JOB_LOCK_TTL,
+    renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
+) -> None:
+    """Screen all enabled fields against individual GFS ensemble members."""
+
+    job_guard = await RenewingLease.acquire(
+        coordination,
+        "job:weather-risk-check",
+        ttl_seconds=job_lock_ttl_seconds,
+        renew_interval_seconds=renew_interval_seconds,
+    )
+    if job_guard is None:
+        logger.info("Weather-risk screening skipped: another process owns the job lock")
+        return
+
+    risk_provider = provider or OpenMeteoEnsembleProvider()
+    logger.info(
+        "[%s] Ensemble weather-risk screening started",
+        datetime.now().isoformat(timespec="minutes"),
+    )
+    try:
+        async with job_guard:
+            targets = await job_guard.run(
+                _targets(session_factory, frost_alerts_only=True)
+            )
+            for target in targets:
+                job_guard.ensure_owned()
+                try:
+                    forecast = await job_guard.run(
+                        risk_provider.fetch(target.latitude, target.longitude)
+                    )
+                    outlook = calc_ensemble_risks(
+                        forecast,
+                        as_of_date=_local_datetime(target.timezone).date(),
+                    )
+                    if not outlook.available:
+                        unavailable_key = (
+                            "notification:weather-risk-data-unavailable:"
+                            f"{target.telegram_id}:{target.field_id}:"
+                            f"{_local_date(target.timezone)}"
+                        )
+
+                        async def send_unavailable(
+                            target: NotificationTarget = target,
+                            reason: str = outlook.status,
+                        ) -> object:
+                            return await bot.send_message(
+                                target.telegram_id,
+                                format_ensemble_data_unavailable(
+                                    target.field_name,
+                                    reason,
+                                ),
+                            )
+
+                        job_guard.ensure_owned()
+                        await _send_once(
+                            coordination,
+                            unavailable_key,
+                            _ENSEMBLE_UNAVAILABLE_DEDUP_TTL,
+                            send_unavailable,
+                        )
+                        continue
+
+                    for event in outlook.events[:_MAX_RISK_ALERTS_PER_FIELD]:
+                        alert_key = (
+                            "notification:weather-risk:"
+                            f"{target.telegram_id}:{target.field_id}:"
+                            f"{event.risk_type}:{event.event_date.isoformat()}:"
+                            f"{event.level}"
+                        )
+
+                        async def send(
+                            event=event,
+                            outlook=outlook,
+                            target: NotificationTarget = target,
+                        ) -> object:
+                            return await bot.send_message(
+                                target.telegram_id,
+                                format_ensemble_risk_alert(
+                                    event,
+                                    outlook,
+                                    field_name=target.field_name,
+                                    crop=target.selected_crop,
+                                    phase=target.phenological_phase,
+                                ),
+                            )
+
+                        job_guard.ensure_owned()
+                        await _send_once(
+                            coordination,
+                            alert_key,
+                            _ENSEMBLE_RISK_DEDUP_TTL,
+                            send,
+                        )
+                except LeaseLostError:
+                    raise
+                except OpenMeteoEnsembleError as exc:
+                    logger.warning(
+                        "Ensemble provider unavailable for user %s field %s: %s",
+                        target.telegram_id,
+                        target.field_id,
+                        exc,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Weather-risk alert failed for user %s field %s",
+                        target.telegram_id,
+                        target.field_id,
+                    )
+    except LeaseLostError as exc:
+        logger.error(
+            "Weather-risk screening lost its distributed lock; aborting: %s",
+            exc,
+        )
+
+
 async def check_frost_alerts(
     bot: Bot,
     session_factory: SessionFactory,
@@ -165,6 +301,8 @@ async def check_frost_alerts(
     job_lock_ttl_seconds: int = _FROST_JOB_LOCK_TTL,
     renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
+    """Retained deterministic 7-day frost screen for compatibility and manual use."""
+
     job_guard = await RenewingLease.acquire(
         coordination,
         "job:frost-check",
@@ -223,10 +361,6 @@ async def check_frost_alerts(
                                 ),
                             )
 
-                        # A notification has its own lease. Once acquired, let
-                        # the in-flight Telegram operation settle even if the
-                        # broader job lease is lost; another worker cannot send
-                        # the same field/day notification concurrently.
                         job_guard.ensure_owned()
                         await _send_once(
                             coordination,
@@ -279,7 +413,6 @@ async def check_frost_alerts(
                     )
     except LeaseLostError as exc:
         logger.error("Frost screening lost its distributed lock; aborting: %s", exc)
-        return
 
 
 async def send_daily_digest(
@@ -349,4 +482,3 @@ async def send_daily_digest(
                     )
     except LeaseLostError as exc:
         logger.error("Daily digest lost its distributed lock; aborting: %s", exc)
-        return
