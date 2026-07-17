@@ -213,19 +213,20 @@ def get_settings_keyboard(
 ) -> InlineKeyboardMarkup:
     """Build replay-safe notification controls for one field.
 
-    ``field_id=None`` is retained only for old handler compatibility. Such a
-    keyboard refreshes the settings page instead of changing state.
+    ``frost_alerts_enabled`` is the retained storage/callback name for the
+    general weather-risk monitor. ``field_id=None`` remains only for old handler
+    compatibility and refreshes the settings page instead of changing state.
     """
     digest_action = "Отключить" if daily_digest_enabled else "Включить"
-    frost_action = "Отключить" if frost_alerts_enabled else "Включить"
+    risk_action = "Отключить" if frost_alerts_enabled else "Включить"
     if field_id is None:
         digest_callback = "settings"
-        frost_callback = "settings"
+        risk_callback = "settings"
     else:
         digest_callback = (
             f"set_digest:{field_id}:{0 if daily_digest_enabled else 1}"
         )
-        frost_callback = (
+        risk_callback = (
             f"set_frost:{field_id}:{0 if frost_alerts_enabled else 1}"
         )
     return InlineKeyboardMarkup(
@@ -238,8 +239,8 @@ def get_settings_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text=f"{frost_action} температурные алерты",
-                    callback_data=frost_callback,
+                    text=f"{risk_action} предупреждения о рисках",
+                    callback_data=risk_callback,
                 )
             ],
             [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
