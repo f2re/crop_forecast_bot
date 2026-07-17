@@ -5,7 +5,9 @@ Implemented quantities
 * Growing degree days (GDD), daily-average method: ``max(0, Tmean - Tbase)``.
   An upper cutoff is applied only when a crop definition explicitly provides it.
 * Selyaninov hydrothermal coefficient (HTC/GTC): ``10 * sum(P) / sum(Tmean)``
-  over completed warm days with ``Tmean > 10°C``.
+  over completed warm days with ``Tmean > 10°C`` inside one explicit continuous
+  season window. The value is withheld when the season start is absent or the
+  daily coverage is incomplete.
 * Completed-period precipitation minus provider reference ET0. This is a
   screening difference, not a root-zone water balance or an irrigation dose.
 * Forecast daily minimum-temperature screening at 2 m. This is not a crop
@@ -108,108 +110,210 @@ def _source_counts(frame: pd.DataFrame) -> dict[str, int]:
     }
 
 
+def _empty_htc_result(
+    interpretation: str,
+    *,
+    season_start_day: pd.Timestamp | None,
+    period_end: pd.Timestamp | None = None,
+    expected_days: int = 0,
+    valid_days: int = 0,
+    missing_days: int = 0,
+    missing_fraction: float | None = None,
+    warm_days: int = 0,
+    source_counts: dict[str, int] | None = None,
+    coverage_start_reached: bool = False,
+    legacy_window_days_requested: int | None = None,
+) -> dict[str, Any]:
+    return {
+        "available": False,
+        "htc": None,
+        "sum_precip_mm": None,
+        "sum_t_above10": None,
+        "window_days": expected_days,
+        "expected_days": expected_days,
+        "valid_days": valid_days,
+        "available_days": warm_days,
+        "missing_days": missing_days,
+        "missing_fraction": missing_fraction,
+        "min_valid_days": 20,
+        "period_start": (
+            None
+            if season_start_day is None
+            else season_start_day.date().isoformat()
+        ),
+        "period_end": None if period_end is None else period_end.date().isoformat(),
+        "season_start": (
+            None
+            if season_start_day is None
+            else season_start_day.date().isoformat()
+        ),
+        "period_is_season": False,
+        "coverage_start_reached": coverage_start_reached,
+        "source_counts": source_counts or {},
+        "units": "dimensionless",
+        "interpretation": interpretation,
+        "legacy_window_days_requested": legacy_window_days_requested,
+        "method_reference": (
+            "ГТК Селянинова: 10·ΣP/ΣTср по завершённым суткам "
+            "с Tср > 10°C в непрерывном периоде от заданной даты сезона"
+        ),
+    }
+
+
 def calc_htc(
     df_daily: pd.DataFrame,
-    window_days: int = 30,
+    window_days: int | None = None,
     min_valid_warm_days: int = 20,
-    max_missing_fraction: float = 0.10,
+    max_missing_fraction: float = 0.0,
     *,
+    season_start: pd.Timestamp | None = None,
     as_of: pd.Timestamp | None = None,
 ) -> dict[str, Any]:
-    """Calculate Selyaninov HTC over completed days only.
+    """Calculate season-to-date Selyaninov HTC from completed local days.
 
-    The coefficient is withheld when the requested window has too many missing
-    days or too few completed warm days. No universal crop recommendation is
-    derived from the coefficient.
+    ``window_days`` is retained only for call compatibility and is not used to
+    create a rolling HTC. A value is released only when ``season_start`` is
+    supplied, the local start day is present, every day through the latest
+    completed day has valid non-negative precipitation and valid mean
+    temperature, and at least ``min_valid_warm_days`` have ``Tmean > 10°C``.
     """
-    if window_days <= 0:
-        raise ValueError("window_days must be positive")
+    if window_days is not None and window_days <= 0:
+        raise ValueError("window_days must be positive when provided")
     if min_valid_warm_days <= 0:
         raise ValueError("min_valid_warm_days must be positive")
     if not 0 <= max_missing_fraction <= 1:
         raise ValueError("max_missing_fraction must be between 0 and 1")
 
+    if season_start is None:
+        return _empty_htc_result(
+            "не рассчитан: не задана дата начала сезона/вегетационного периода",
+            season_start_day=None,
+            legacy_window_days_requested=window_days,
+        )
+
+    season_start_day = pd.Timestamp(pd.Timestamp(season_start).date())
     now = _as_utc(as_of or _now_utc())
     frame = _prepare_daily(df_daily, {"date", "t_mean", "precip_sum"})
+    frame["t_mean"] = pd.to_numeric(frame["t_mean"], errors="coerce")
+    frame["precip_sum"] = pd.to_numeric(frame["precip_sum"], errors="coerce")
+    frame.loc[frame["precip_sum"] < 0, "precip_sum"] = pd.NA
+
     completed = _completed(frame, now)
+    completed = completed[completed["_day"] >= season_start_day].copy()
     if completed.empty:
-        return {
-            "htc": None,
-            "sum_precip_mm": None,
-            "sum_t_above10": None,
-            "window_days": window_days,
-            "expected_days": window_days,
-            "valid_days": 0,
-            "available_days": 0,
-            "missing_days": window_days,
-            "missing_fraction": 1.0,
-            "min_valid_days": min_valid_warm_days,
-            "period_start": None,
-            "period_end": None,
-            "source_counts": {},
-            "units": "dimensionless",
-            "interpretation": "нет завершённых суток для расчёта",
-            "method_reference": (
-                "ГТК Селянинова: 10·ΣP/ΣTср по завершённым суткам "
-                "с Tср > 10°C"
-            ),
-        }
+        return _empty_htc_result(
+            "не рассчитан: нет завершённых суток от заданной даты сезона",
+            season_start_day=season_start_day,
+            legacy_window_days_requested=window_days,
+        )
 
     period_end = completed["_day"].max()
-    period_start = period_end - pd.Timedelta(days=window_days - 1)
-    raw_window = completed[
-        (completed["_day"] >= period_start)
+    expected_days = max(0, int((period_end - season_start_day).days) + 1)
+    raw_period = completed[
+        (completed["_day"] >= season_start_day)
         & (completed["_day"] <= period_end)
-    ]
-    window = raw_window.dropna(subset=["t_mean", "precip_sum"])
+    ].copy()
+    valid_period = raw_period.dropna(subset=["t_mean", "precip_sum"])
     valid_days, missing_days, missing_fraction = _window_stats(
-        window,
-        expected_days=window_days,
+        valid_period,
+        expected_days=expected_days,
     )
-    warm = window[window["t_mean"] > 10.0]
+    coverage_start_reached = bool(
+        (valid_period["_day"] == season_start_day).any()
+    )
+    warm = valid_period[valid_period["t_mean"] > 10.0]
     warm_days = int(warm["_day"].nunique())
-    sum_precip = float(warm["precip_sum"].clip(lower=0).sum())
-    sum_temperature = float(warm["t_mean"].sum())
 
-    value: float | None = None
-    if missing_fraction is not None and missing_fraction > max_missing_fraction:
-        interpretation = (
-            f"не рассчитан: пропущено {missing_days} из {window_days} суток "
-            f"({missing_fraction * 100:.1f}%)"
+    if not coverage_start_reached:
+        return _empty_htc_result(
+            "не рассчитан: нет валидной строки на локальную дату начала сезона",
+            season_start_day=season_start_day,
+            period_end=period_end,
+            expected_days=expected_days,
+            valid_days=valid_days,
+            missing_days=missing_days,
+            missing_fraction=missing_fraction,
+            warm_days=warm_days,
+            source_counts=_source_counts(valid_period),
+            coverage_start_reached=False,
+            legacy_window_days_requested=window_days,
         )
-    elif warm_days < min_valid_warm_days:
-        interpretation = (
+    if missing_fraction is None or missing_fraction > max_missing_fraction:
+        return _empty_htc_result(
+            f"не рассчитан: пропущено {missing_days} из {expected_days} суток "
+            f"({(missing_fraction or 0.0) * 100:.1f}%)",
+            season_start_day=season_start_day,
+            period_end=period_end,
+            expected_days=expected_days,
+            valid_days=valid_days,
+            missing_days=missing_days,
+            missing_fraction=missing_fraction,
+            warm_days=warm_days,
+            source_counts=_source_counts(valid_period),
+            coverage_start_reached=True,
+            legacy_window_days_requested=window_days,
+        )
+    if warm_days < min_valid_warm_days:
+        return _empty_htc_result(
             f"не рассчитан: валидных тёплых суток {warm_days}, "
-            f"требуется не менее {min_valid_warm_days}"
-        )
-    elif sum_temperature <= 0:
-        interpretation = "не рассчитан: сумма температур тёплого периода равна нулю"
-    else:
-        value = round(10.0 * sum_precip / sum_temperature, 3)
-        interpretation = (
-            "коэффициент рассчитан; интерпретация зависит от культуры, "
-            "региона и выбранного периода"
+            f"требуется не менее {min_valid_warm_days}",
+            season_start_day=season_start_day,
+            period_end=period_end,
+            expected_days=expected_days,
+            valid_days=valid_days,
+            missing_days=missing_days,
+            missing_fraction=missing_fraction,
+            warm_days=warm_days,
+            source_counts=_source_counts(valid_period),
+            coverage_start_reached=True,
+            legacy_window_days_requested=window_days,
         )
 
+    sum_precip = float(warm["precip_sum"].sum())
+    sum_temperature = float(warm["t_mean"].sum())
+    if sum_temperature <= 0:
+        return _empty_htc_result(
+            "не рассчитан: сумма температур тёплого периода не положительна",
+            season_start_day=season_start_day,
+            period_end=period_end,
+            expected_days=expected_days,
+            valid_days=valid_days,
+            missing_days=missing_days,
+            missing_fraction=missing_fraction,
+            warm_days=warm_days,
+            source_counts=_source_counts(valid_period),
+            coverage_start_reached=True,
+            legacy_window_days_requested=window_days,
+        )
+
+    value = round(10.0 * sum_precip / sum_temperature, 3)
     return {
+        "available": True,
         "htc": value,
         "sum_precip_mm": round(sum_precip, 1),
         "sum_t_above10": round(sum_temperature, 1),
-        "window_days": window_days,
-        "expected_days": window_days,
+        "window_days": expected_days,
+        "expected_days": expected_days,
         "valid_days": valid_days,
         "available_days": warm_days,
         "missing_days": missing_days,
         "missing_fraction": missing_fraction,
         "min_valid_days": min_valid_warm_days,
-        "period_start": period_start.date().isoformat(),
+        "period_start": season_start_day.date().isoformat(),
         "period_end": period_end.date().isoformat(),
-        "source_counts": _source_counts(window),
+        "season_start": season_start_day.date().isoformat(),
+        "period_is_season": True,
+        "coverage_start_reached": True,
+        "source_counts": _source_counts(valid_period),
         "units": "dimensionless",
-        "interpretation": interpretation,
+        "interpretation": (
+            "сезонный коэффициент рассчитан по непрерывному завершённому ряду; "
+            "агрономическая интерпретация зависит от культуры и региона"
+        ),
+        "legacy_window_days_requested": window_days,
         "method_reference": (
             "ГТК Селянинова: 10·ΣP/ΣTср по завершённым суткам "
-            "с Tср > 10°C"
+            "с Tср > 10°C в непрерывном периоде от заданной даты сезона"
         ),
     }
 
@@ -554,7 +658,11 @@ def compute_all_indices(
     as_of: pd.Timestamp | None = None,
 ) -> dict[str, dict[str, Any]]:
     return {
-        "htc": calc_htc(df_daily, as_of=as_of),
+        "htc": calc_htc(
+            df_daily,
+            season_start=season_start,
+            as_of=as_of,
+        ),
         "gdd": calc_gdd(df_daily, crop, season_start=season_start, as_of=as_of),
         "frost": calc_frost_risk(
             df_daily,
@@ -585,8 +693,8 @@ def format_indices_for_rag(
     else:
         missing_fraction = htc.get("missing_fraction") or 0.0
         lines.append(
-            f"ГТК за {htc['window_days']} завершённых суток: {htc['htc']:.3f}; "
-            f"пропуски {missing_fraction * 100:.1f}%"
+            f"ГТК с {htc['period_start']} по {htc['period_end']}: "
+            f"{htc['htc']:.3f}; пропуски {missing_fraction * 100:.1f}%"
         )
 
     gdd = indices.get("gdd", {})
