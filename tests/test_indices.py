@@ -11,7 +11,26 @@ from src.agro.indices import (
 )
 
 
-def test_htc_is_not_reported_for_short_warm_window() -> None:
+def test_htc_requires_explicit_season_start() -> None:
+    as_of = pd.Timestamp("2026-07-10T12:00:00Z")
+    dates = pd.date_range(end="2026-07-09", periods=30, freq="D", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_mean": [15.0] * 30,
+            "precip_sum": [1.0] * 30,
+            "data_kind": ["operational_past"] * 30,
+        }
+    )
+    result = calc_htc(frame, as_of=as_of)
+    assert result["htc"] is None
+    assert result["period_is_season"] is False
+    assert result["period_start"] is None
+    assert "не задана дата" in result["interpretation"]
+
+
+def test_htc_is_not_reported_for_short_warm_season() -> None:
     as_of = pd.Timestamp("2026-07-10T12:00:00Z")
     dates = pd.date_range(end="2026-07-09", periods=14, freq="D", tz="UTC")
     frame = pd.DataFrame(
@@ -23,7 +42,11 @@ def test_htc_is_not_reported_for_short_warm_window() -> None:
             "data_kind": ["operational_past"] * 14,
         }
     )
-    result = calc_htc(frame, as_of=as_of)
+    result = calc_htc(
+        frame,
+        season_start=pd.Timestamp("2026-06-26", tz="Europe/Moscow"),
+        as_of=as_of,
+    )
     assert result["htc"] is None
     assert result["available_days"] == 14
     assert result["source_counts"] == {"operational_past": 14}
@@ -42,10 +65,63 @@ def test_htc_excludes_forecast_precipitation() -> None:
             "data_kind": ["reanalysis"] * 30 + ["forecast"],
         }
     )
-    result = calc_htc(frame, as_of=as_of)
+    result = calc_htc(
+        frame,
+        season_start=pd.Timestamp("2026-07-01", tz="Europe/Moscow"),
+        as_of=as_of,
+    )
     assert result["htc"] == 1.0
     assert result["sum_precip_mm"] == 60.0
+    assert result["period_start"] == "2026-07-01"
+    assert result["period_end"] == "2026-07-30"
+    assert result["period_is_season"] is True
     assert "forecast" not in result["source_counts"]
+
+
+def test_htc_fails_closed_on_calendar_gap() -> None:
+    as_of = pd.Timestamp("2026-07-31T12:00:00Z")
+    dates = pd.date_range("2026-07-01", periods=30, freq="D", tz="UTC").delete(14)
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_mean": [20.0] * len(dates),
+            "precip_sum": [2.0] * len(dates),
+            "data_kind": ["reanalysis"] * len(dates),
+        }
+    )
+    result = calc_htc(
+        frame,
+        season_start=pd.Timestamp("2026-07-01", tz="Europe/Moscow"),
+        as_of=as_of,
+    )
+    assert result["htc"] is None
+    assert result["missing_days"] == 1
+    assert result["missing_fraction"] == 0.033
+    assert "пропущено 1" in result["interpretation"]
+
+
+def test_htc_fails_closed_on_negative_precipitation() -> None:
+    as_of = pd.Timestamp("2026-07-31T12:00:00Z")
+    dates = pd.date_range("2026-07-01", periods=30, freq="D", tz="UTC")
+    precipitation = [2.0] * 30
+    precipitation[10] = -1.0
+    frame = pd.DataFrame(
+        {
+            "date": dates,
+            "local_date": list(dates.date),
+            "t_mean": [20.0] * 30,
+            "precip_sum": precipitation,
+            "data_kind": ["reanalysis"] * 30,
+        }
+    )
+    result = calc_htc(
+        frame,
+        season_start=pd.Timestamp("2026-07-01", tz="Europe/Moscow"),
+        as_of=as_of,
+    )
+    assert result["htc"] is None
+    assert result["missing_days"] == 1
 
 
 def test_gdd_does_not_infer_phenology_without_season_start() -> None:

@@ -17,6 +17,7 @@ from aiogram.types import BotCommand, TelegramObject
 
 from config.settings import Settings, get_settings
 from src.api.open_meteo import close_open_meteo_resources
+from src.api.open_meteo_ensemble import close_open_meteo_ensemble_resources
 from src.bot.errors import handle_runtime_error
 from src.bot.middlewares import CallbackIdempotencyMiddleware
 from src.bot.scheduler import start_scheduler, stop_scheduler
@@ -102,6 +103,7 @@ async def run() -> None:
 
     async with AsyncExitStack() as stack:
         stack.push_async_callback(close_open_meteo_resources)
+        stack.push_async_callback(close_open_meteo_ensemble_resources)
         database: Database = init_db(settings.database_url)
         stack.push_async_callback(database.dispose)
         await database.ping()
