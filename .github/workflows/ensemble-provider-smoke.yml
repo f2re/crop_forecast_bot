@@ -1,0 +1,74 @@
+name: Ensemble provider smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ensemble-provider-smoke.yml"
+      - "requirements*.txt"
+      - "config/**"
+      - "src/agro/ensemble_risks.py"
+      - "src/api/open_meteo_ensemble.py"
+      - "src/domain/risk.py"
+      - "src/ops/ensemble_smoke.py"
+      - "tests/test_ensemble_provider_smoke.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/ensemble-provider-smoke.yml"
+      - "requirements*.txt"
+      - "config/**"
+      - "src/agro/ensemble_risks.py"
+      - "src/api/open_meteo_ensemble.py"
+      - "src/domain/risk.py"
+      - "src/ops/ensemble_smoke.py"
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ensemble-provider-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-ensemble:
+    name: Live GFS ensemble contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      OPEN_METEO_CACHE_PATH: ${{ github.workspace }}/.cache/openmeteo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install production dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip check
+
+      - name: Run live GFS ensemble contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m src.ops.ensemble_smoke \
+            --latitude 55.75 \
+            --longitude 37.62 | tee ensemble-smoke.json
+
+      - name: Upload ensemble evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ensemble-provider-smoke-${{ github.run_id }}
+          path: ensemble-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
