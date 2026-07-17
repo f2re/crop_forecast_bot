@@ -36,6 +36,16 @@ def format_ensemble_risk_alert(
         if phase
         else ""
     )
+    coverage_line = ""
+    if outlook.forecast_days > 0:
+        coverage_line = (
+            f"\n• Полностью проверено суток: {outlook.valid_days} из "
+            f"{outlook.forecast_days}"
+        )
+        if outlook.incomplete_days:
+            coverage_line += (
+                f"; исключено из-за неполных данных: {outlook.incomplete_days}"
+            )
     lead = "сегодня" if event.lead_days == 0 else f"через {event.lead_days} сут."
     raw_percent = event.member_fraction * 100.0
     severe_percent = event.severe_member_fraction * 100.0
@@ -55,7 +65,7 @@ def format_ensemble_risk_alert(
         f"• Диапазон P10–P90: {event.p10:g}…{event.p90:g}; "
         f"медиана {event.median:g} {html.escape(event.unit)}\n"
         f"• Модель: {html.escape(event.model)}; {html.escape(event.reliability_note)}"
-        f"{crop_line}{phase_line}\n\n"
+        f"{coverage_line}{crop_line}{phase_line}\n\n"
         f"<b>Что делать:</b> {html.escape(event.action)}\n\n"
         f"<b>Ограничение:</b> {html.escape(event.caveat)}\n"
         "Доля ансамбля — это сырая доля модельных сценариев, а не "
