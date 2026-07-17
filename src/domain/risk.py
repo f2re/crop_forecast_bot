@@ -63,7 +63,9 @@ class RiskOutlook:
     events: tuple[RiskEvent, ...] = field(default_factory=tuple)
     model: str | None = None
     member_count: int = 0
+    forecast_days: int = 0
     valid_days: int = 0
+    incomplete_days: int = 0
     generated_for_date: date | None = None
     method_reference: str = (
         "сырая доля членов ансамбля k/n, пересёкших операционный порог; "
