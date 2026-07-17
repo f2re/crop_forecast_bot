@@ -12,7 +12,13 @@ from typing import Literal
 
 import pandas as pd
 
-from src.domain.risk import EnsembleForecastData, RiskEvent, RiskOutlook, RiskType
+from src.domain.risk import (
+    EnsembleForecastData,
+    RiskEvent,
+    RiskLevel,
+    RiskOutlook,
+    RiskType,
+)
 
 Direction = Literal["below", "above"]
 
@@ -119,7 +125,7 @@ RISK_POLICIES: tuple[RiskPolicy, ...] = (
     ),
 )
 
-_LEVEL_ORDER = {"high": 0, "elevated": 1, "watch": 2}
+_LEVEL_ORDER: dict[RiskLevel, int] = {"high": 0, "elevated": 1, "watch": 2}
 
 
 def _fraction(values: pd.Series, policy: RiskPolicy, threshold: float) -> tuple[int, float]:
@@ -131,7 +137,10 @@ def _fraction(values: pd.Series, policy: RiskPolicy, threshold: float) -> tuple[
     return count, count / len(values)
 
 
-def _risk_level(watch_fraction: float, severe_fraction: float) -> str | None:
+def _risk_level(
+    watch_fraction: float,
+    severe_fraction: float,
+) -> RiskLevel | None:
     if severe_fraction >= 0.30 or watch_fraction >= 0.60:
         return "high"
     if severe_fraction >= 0.15 or watch_fraction >= 0.30:
@@ -157,6 +166,12 @@ def calc_ensemble_risks(
     as_of_date: date,
     min_valid_members: int = MIN_VALID_MEMBERS,
 ) -> RiskOutlook:
+    """Screen only complete local days with enough members for every risk.
+
+    A day with insufficient members for even one configured variable is excluded
+    as a whole. This prevents a partial dataset from producing a false general
+    ``no risk`` conclusion.
+    """
     if min_valid_members < 2:
         raise ValueError("min_valid_members must be at least 2")
 
@@ -169,23 +184,29 @@ def calc_ensemble_risks(
     frame["local_date"] = pd.to_datetime(frame["local_date"], errors="coerce").dt.date
     frame = frame.dropna(subset=["local_date", "member_id"])
     frame = frame[frame["local_date"] >= as_of_date]
+    forecast_days = int(frame["local_date"].nunique())
     if frame.empty:
         return RiskOutlook(
             available=False,
             status="нет прогнозных локальных суток",
             model=forecast.meta.model,
             member_count=forecast.meta.member_count,
+            forecast_days=0,
             generated_for_date=as_of_date,
         )
 
     events: list[RiskEvent] = []
     valid_day_count = 0
+    incomplete_day_count = 0
     for local_day, day_frame in frame.groupby("local_date", sort=True):
-        day_has_valid_policy = False
         lead_days = max(0, (local_day - as_of_date).days)
+        day_events: list[RiskEvent] = []
+        day_complete = True
+
         for policy in RISK_POLICIES:
             if policy.column not in day_frame.columns:
-                continue
+                day_complete = False
+                break
             member_values = day_frame[["member_id", policy.column]].drop_duplicates(
                 "member_id", keep="last"
             )
@@ -194,8 +215,8 @@ def calc_ensemble_risks(
             ).dropna()
             valid_members = int(values.shape[0])
             if valid_members < min_valid_members:
-                continue
-            day_has_valid_policy = True
+                day_complete = False
+                break
 
             watch_count, watch_fraction = _fraction(values, policy, policy.threshold)
             severe_count, severe_fraction = _fraction(
@@ -208,7 +229,7 @@ def calc_ensemble_risks(
                 continue
 
             quantiles = values.quantile([0.10, 0.50, 0.90])
-            events.append(
+            day_events.append(
                 RiskEvent(
                     risk_type=policy.risk_type,
                     event_date=local_day,
@@ -231,8 +252,12 @@ def calc_ensemble_risks(
                     caveat=policy.caveat,
                 )
             )
-        if day_has_valid_policy:
+
+        if day_complete:
             valid_day_count += 1
+            events.extend(day_events)
+        else:
+            incomplete_day_count += 1
 
     events.sort(
         key=lambda event: (
@@ -242,17 +267,28 @@ def calc_ensemble_risks(
             event.risk_type,
         )
     )
-    status = (
-        "риски выше порога уведомления выявлены"
-        if events
-        else "в валидном ансамбле риски выше порога уведомления не выявлены"
-    )
+    if valid_day_count == 0:
+        status = "недостаточно членов ансамбля для полного анализа рисков"
+    elif events and incomplete_day_count:
+        status = "риски выявлены; часть прогнозных суток исключена из-за неполных данных"
+    elif events:
+        status = "риски выше порога уведомления выявлены"
+    elif incomplete_day_count:
+        status = (
+            "на полностью обеспеченных сутках риски не выявлены; "
+            "часть горизонта не оценена"
+        )
+    else:
+        status = "в полном валидном ансамбле риски выше порога уведомления не выявлены"
+
     return RiskOutlook(
         available=valid_day_count > 0,
-        status=status if valid_day_count > 0 else "недостаточно членов ансамбля",
+        status=status,
         events=tuple(events),
         model=forecast.meta.model,
         member_count=forecast.meta.member_count,
+        forecast_days=forecast_days,
         valid_days=valid_day_count,
+        incomplete_days=incomplete_day_count,
         generated_for_date=as_of_date,
     )
