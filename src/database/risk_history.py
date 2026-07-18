@@ -107,6 +107,25 @@ def _stored(run: RiskForecastRun, *, created: bool) -> StoredRiskRun:
     return StoredRiskRun(run_id=run.id, signal_ids=signal_ids, created=created)
 
 
+def _signal_model(event) -> RiskForecastSignal:
+    return RiskForecastSignal(
+        risk_type=event.risk_type,
+        event_date=event.event_date,
+        lead_days=event.lead_days,
+        level=event.level,
+        members_exceeding=event.members_exceeding,
+        valid_members=event.valid_members,
+        member_fraction=event.member_fraction,
+        severe_member_fraction=event.severe_member_fraction,
+        threshold=event.threshold,
+        severe_threshold=event.severe_threshold,
+        unit=event.unit,
+        p10=event.p10,
+        median=event.median,
+        p90=event.p90,
+    )
+
+
 async def save_risk_run(
     session: AsyncSession,
     *,
@@ -143,29 +162,10 @@ async def save_risk_run(
         valid_days=outlook.valid_days,
         incomplete_days=outlook.incomplete_days,
         status=outlook.status,
+        signals=[_signal_model(event) for event in outlook.events],
     )
     try:
         session.add(run)
-        await session.flush()
-        for event in outlook.events:
-            run.signals.append(
-                RiskForecastSignal(
-                    risk_type=event.risk_type,
-                    event_date=event.event_date,
-                    lead_days=event.lead_days,
-                    level=event.level,
-                    members_exceeding=event.members_exceeding,
-                    valid_members=event.valid_members,
-                    member_fraction=event.member_fraction,
-                    severe_member_fraction=event.severe_member_fraction,
-                    threshold=event.threshold,
-                    severe_threshold=event.severe_threshold,
-                    unit=event.unit,
-                    p10=event.p10,
-                    median=event.median,
-                    p90=event.p90,
-                )
-            )
         await session.flush()
         await session.commit()
     except IntegrityError:
@@ -230,6 +230,10 @@ def _signal_snapshot(signal: RiskForecastSignal) -> RiskSignalSnapshot:
 
 
 def _run_snapshot(run: RiskForecastRun) -> RiskRunSnapshot:
+    signals = sorted(
+        run.signals,
+        key=lambda signal: (signal.event_date, signal.risk_type, signal.id),
+    )
     return RiskRunSnapshot(
         run_id=run.id,
         field_id=run.field_id,
@@ -243,7 +247,7 @@ def _run_snapshot(run: RiskForecastRun) -> RiskRunSnapshot:
         valid_days=run.valid_days,
         incomplete_days=run.incomplete_days,
         status=run.status,
-        signals=tuple(_signal_snapshot(signal) for signal in run.signals),
+        signals=tuple(_signal_snapshot(signal) for signal in signals),
     )
 
 
