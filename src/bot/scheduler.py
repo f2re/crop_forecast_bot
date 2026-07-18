@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram import Bot
@@ -26,6 +26,13 @@ from src.bot.risk_alerts import (
 )
 from src.database.crud import NotificationTarget
 from src.database.notification_targets import list_enabled_notification_targets
+from src.database.risk_history import (
+    StoredRiskRun,
+    prune_risk_runs_before,
+    save_risk_run,
+    set_signal_delivery,
+)
+from src.domain.risk import EnsembleForecastMeta, RiskOutlook
 from src.infrastructure.coordination import (
     CoordinationBackend,
     LeaseLostError,
@@ -145,6 +152,45 @@ async def _targets(
         )
 
 
+async def _record_risk_run(
+    session_factory: SessionFactory,
+    *,
+    field_id: int,
+    meta: EnsembleForecastMeta,
+    outlook: RiskOutlook,
+) -> StoredRiskRun:
+    async with session_factory() as session:
+        return await save_risk_run(
+            session,
+            field_id=field_id,
+            meta=meta,
+            outlook=outlook,
+        )
+
+
+async def _set_risk_delivery(
+    session_factory: SessionFactory,
+    *,
+    signal_id: int,
+    state: str,
+    notified_at: datetime | None = None,
+) -> bool:
+    async with session_factory() as session:
+        return await set_signal_delivery(
+            session,
+            signal_id=signal_id,
+            state=state,
+            notified_at=notified_at,
+        )
+
+
+async def _prune_risk_history(session_factory: SessionFactory) -> int:
+    retention_days = get_settings().risk_history_retention_days
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    async with session_factory() as session:
+        return await prune_risk_runs_before(session, cutoff=cutoff)
+
+
 async def _send_once(
     coordination: CoordinationBackend,
     key: str,
@@ -180,7 +226,7 @@ async def check_weather_risk_alerts(
     job_lock_ttl_seconds: int = _ENSEMBLE_JOB_LOCK_TTL,
     renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
-    """Screen all enabled fields against individual GFS ensemble members."""
+    """Screen all enabled fields and persist accepted ensemble runs."""
 
     job_guard = await RenewingLease.acquire(
         coordination,
@@ -232,15 +278,32 @@ async def check_weather_risk_alerts(
                             )
 
                         job_guard.ensure_owned()
-                        await _send_once(
-                            coordination,
-                            unavailable_key,
-                            _ENSEMBLE_UNAVAILABLE_DEDUP_TTL,
-                            send_unavailable,
+                        await job_guard.run(
+                            _send_once(
+                                coordination,
+                                unavailable_key,
+                                _ENSEMBLE_UNAVAILABLE_DEDUP_TTL,
+                                send_unavailable,
+                            )
                         )
                         continue
 
+                    stored_run = await job_guard.run(
+                        _record_risk_run(
+                            session_factory,
+                            field_id=target.field_id,
+                            meta=forecast.meta,
+                            outlook=outlook,
+                        )
+                    )
                     for event in outlook.events[:_MAX_RISK_ALERTS_PER_FIELD]:
+                        signal_id = stored_run.signal_ids.get(
+                            (event.risk_type, event.event_date)
+                        )
+                        if signal_id is None:
+                            raise RuntimeError(
+                                "Persisted risk signal is missing from the run"
+                            )
                         alert_key = (
                             "notification:weather-risk:"
                             f"{target.telegram_id}:{target.field_id}:"
@@ -264,12 +327,42 @@ async def check_weather_risk_alerts(
                                 ),
                             )
 
-                        job_guard.ensure_owned()
-                        await _send_once(
-                            coordination,
-                            alert_key,
-                            _ENSEMBLE_RISK_DEDUP_TTL,
-                            send,
+                        await job_guard.run(
+                            _set_risk_delivery(
+                                session_factory,
+                                signal_id=signal_id,
+                                state="sending",
+                            )
+                        )
+                        try:
+                            sent = await job_guard.run(
+                                _send_once(
+                                    coordination,
+                                    alert_key,
+                                    _ENSEMBLE_RISK_DEDUP_TTL,
+                                    send,
+                                )
+                            )
+                        except LeaseLostError:
+                            raise
+                        except Exception:
+                            await job_guard.run(
+                                _set_risk_delivery(
+                                    session_factory,
+                                    signal_id=signal_id,
+                                    state="failed",
+                                )
+                            )
+                            raise
+                        await job_guard.run(
+                            _set_risk_delivery(
+                                session_factory,
+                                signal_id=signal_id,
+                                state="sent" if sent else "deduplicated",
+                                notified_at=(
+                                    datetime.now(timezone.utc) if sent else None
+                                ),
+                            )
                         )
                 except LeaseLostError:
                     raise
@@ -286,6 +379,10 @@ async def check_weather_risk_alerts(
                         target.telegram_id,
                         target.field_id,
                     )
+            job_guard.ensure_owned()
+            deleted = await job_guard.run(_prune_risk_history(session_factory))
+            if deleted:
+                logger.info("Pruned %s expired risk forecast runs", deleted)
     except LeaseLostError as exc:
         logger.error(
             "Weather-risk screening lost its distributed lock; aborting: %s",
