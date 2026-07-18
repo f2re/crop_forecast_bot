@@ -25,6 +25,7 @@ class FieldKeyboardItem(Protocol):
 def get_main_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🌦 Агроотчёт", callback_data="agro_report")],
+        [InlineKeyboardButton(text="⚠️ Погодные риски", callback_data="risk_overview")],
         [InlineKeyboardButton(text="🗺 Мои поля", callback_data="fields")],
         [InlineKeyboardButton(text="🌱 Выбрать культуру", callback_data="crop_choose")],
         [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
@@ -92,6 +93,7 @@ def get_field_actions_keyboard(
         rows.extend(
             [
                 [InlineKeyboardButton(text="🌦 Агроотчёт", callback_data="agro_report")],
+                [InlineKeyboardButton(text="⚠️ Погодные риски", callback_data="risk_overview")],
                 [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
             ]
         )
