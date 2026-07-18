@@ -102,24 +102,22 @@ async def test_manual_overview_distinguishes_valid_no_signal() -> None:
     assert "отсутствие сигнала не исключает локальное явление" in text
 
 
-def test_manual_overview_fails_closed_for_unavailable_outlook() -> None:
+@pytest.mark.asyncio
+async def test_manual_overview_fails_closed_for_unavailable_outlook() -> None:
     data = _forecast(rain_members=0)
     data.daily_members = data.daily_members.head(10)
-    provider = FakeRiskProvider(data)
 
-    async def run() -> str:
-        overview = await generate_risk_overview(
-            55.75,
-            37.62,
-            provider=provider,
-            as_of_date=date(2026, 7, 18),
-        )
-        return format_risk_overview(
-            overview,
-            field_name="Поле 1",
-            crop="wheat",
-        )
+    overview = await generate_risk_overview(
+        55.75,
+        37.62,
+        provider=FakeRiskProvider(data),
+        as_of_date=date(2026, 7, 18),
+    )
+    text = format_risk_overview(
+        overview,
+        field_name="Поле 1",
+        crop="wheat",
+    )
 
-    text = __import__("asyncio").run(run())
     assert "Анализ не выполнен" in text
     assert "Отсутствие полного ансамбля не означает отсутствие локального риска" in text
