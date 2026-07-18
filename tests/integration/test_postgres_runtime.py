@@ -47,6 +47,7 @@ async def _reset_database(database_url: str) -> None:
             await connection.execute(
                 text(
                     "DROP TABLE IF EXISTS "
+                    "risk_forecast_signals, risk_forecast_runs, "
                     "crop_seasons, fields, users, alembic_version CASCADE"
                 )
             )
@@ -203,10 +204,6 @@ async def test_initial_field_operation_rolls_back_as_one_transaction(
     try:
         async with database.get_session() as session:
             async def fail_commit() -> None:
-                # Force all pending ORM objects to reach PostgreSQL, then fail
-                # before COMMIT. User, field and season must already coexist in
-                # this one transaction; an intermediate user commit would make
-                # these assertions fail.
                 await session.flush()
                 user_count = await session.scalar(
                     text("SELECT count(*) FROM users WHERE telegram_id = 1600")
