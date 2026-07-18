@@ -1,93 +1,134 @@
 # 🌾 Crop Forecast Bot
 
-Telegram-бот для оперативной агрометеорологической оценки:
+Telegram-бот для проверяемой агрометеорологической оценки:
 
 ```text
-поле → культура → сезон → проверяемый отчёт → фоновые предупреждения
+поле → культура → сезон → отчёт → риски → история сигнала
 ```
 
 [![CI](https://github.com/f2re/crop_forecast_bot/actions/workflows/ci.yml/badge.svg)](https://github.com/f2re/crop_forecast_bot/actions/workflows/ci.yml)
 
 **Стек:** Python 3.11+, aiogram 3.x, PostgreSQL, Redis, Alembic, APScheduler и systemd. Docker не используется.
 
-## ✅ Что работает
+## Что работает
 
-- 🗺 несколько полей в одном Telegram-профиле;
-- 📍 геолокация и ручной ввод координат;
-- ✏️ создание, переименование, переключение и изменение координат;
-- 🌱 отдельные культура, дата посева и наблюдаемая фаза каждого поля;
-- 🌦 Open-Meteo Forecast API;
-- 🗓 сезонный реанализ Open-Meteo Historical Weather API;
-- 📈 однородное сравнение текущего ERA5-Land-сезона с базой ERA5-Land 1991–2020;
-- 🌿 ГДД с crop-specific `Tbase`, контролем периода и пропусков;
-- 💧 ГТК только для валидного завершённого тёплого окна;
-- 🚿 диагностическая разность осадки − ET₀ без фиктивных нулей;
-- 🌧 накопленные осадки и provider ET₀ с начала сезона или за доступный период;
-- 📉 парная климатическая разность `ΣP−ΣET₀`, сухие серии и максимумы осадков за 1/5 суток;
-- 🌡 скрининг прогнозной Tmin воздуха на высоте 2 м;
-- 📨 отдельные настройки дайджеста и температурных алертов каждого поля;
-- 🔒 Redis FSM, callback idempotency, renewable job leases и дедупликация;
-- 🗃 обязательные Alembic-миграции;
-- ♻️ versioned Bash/systemd releases с совместным откатом кода и unit-файлов;
-- 💾 проверяемый `pg_dump → pg_restore` для core-таблиц;
-- 🔎 раздельные live-smoke контракты Open-Meteo и ERA5-Land;
-- 📚 опциональная RAG-база знаний с отображением источников.
+- несколько полей в одном Telegram-профиле;
+- геолокация и ручной ввод координат;
+- культура, дата сезона и наблюдаемая фаза для каждого поля;
+- оперативный агроотчёт Open-Meteo;
+- сезонная история и homogeneous ERA5-Land comparison с базой 1991–2020;
+- GDD, сезонный ГТК, provider ET₀, `P−ET₀`, накопленные осадки, сухие серии, Rx1day/Rx5day;
+- GFS Ensemble screening до 16 суток;
+- риски холода, жары, сильных осадков, ветра и конвективной неустойчивости;
+- ручной обзор рисков `/risks`;
+- фоновый анализ каждые 6 часов;
+- persistent history запусков и сигналов;
+- тренд `/history`: новый, усиливается, стабилен, ослабевает, снят;
+- Redis FSM, callback idempotency, renewable leases и deduplication;
+- versioned systemd releases, heartbeat, verified rollback;
+- PostgreSQL backup/restore verification;
+- live Open-Meteo, ERA5-Land и GFS contracts;
+- optional source-attributed RAG.
 
-> Отсутствующие данные не заменяются эвристикой. «Нет валидной прогнозной Tmin» и «риск не выявлен» — разные состояния.
+> Пропуск данных не заменяется эвристикой. «Недостаточно данных» и «риск не выявлен» — разные состояния.
 
-## 🧑‍🌾 Как пользоваться
+## Пользовательский сценарий
 
 1. Отправьте `/start`.
 2. Откройте **«Мои поля»**.
 3. Добавьте поле или выберите активное.
 4. Выберите культуру.
 5. Укажите дату посева/начала сезона.
-6. При наличии наблюдения выберите фактическую фазу.
-7. Нажмите **«Агроотчёт»**.
+6. При наличии наблюдения укажите фактическую фазу.
+7. Откройте **«Агроотчёт»**, **«Погодные риски»** или **«История рисков»**.
 
-Активное поле используется для ручного отчёта и редактирования. **Фоновый scheduler контролирует каждое поле, для которого включён соответствующий тип уведомления**, независимо от того, активно оно сейчас в меню или нет.
+Активное поле используется для ручных действий. Фоновый scheduler контролирует каждое поле, для которого включены уведомления, независимо от текущего активного поля.
 
 ### Команды
 
 | Команда | Назначение |
 |---|---|
 | `/start` | главное меню |
+| `/risks` | ручной обзор ансамблевых погодных рисков |
+| `/history` | изменение сигналов между последними запусками |
 | `/help` | пользовательская справка |
-| `/cancel` | отмена ввода и очистка FSM |
+| `/cancel` | отмена текущего FSM-ввода |
 
-## 📊 Что содержит отчёт
+## Погодные риски
 
-Отчёт отвечает на четыре вопроса:
+Используются отдельные члены NOAA GFS Ensemble через Open-Meteo Ensemble API.
 
-1. **Что происходит** — температурный риск, теплообеспеченность, осадки и атмосферная испаряемость.
-2. **Насколько надёжно** — источник, модельная конфигурация, период, покрытие и пропуски.
-3. **Что проверить сейчас** — локальный прогноз, фазу и микрорельеф.
-4. **Когда обновить оценку** — после нового прогноза или изменения состояния поля.
+Для каждой локальной даты анализируются:
 
-Типы данных разделены:
+- Tmin воздуха 2 м;
+- Tmax воздуха 2 м;
+- суточные осадки;
+- максимальный порыв ветра 10 м;
+- CAPE max.
 
-- `reanalysis` — прошлый ряд Historical Weather API;
-- `operational_past` — завершённые прошлые локальные сутки Forecast API;
-- `forecast` — текущие и будущие локальные сутки;
-- climate reference — отдельные ERA5-Land current/reference series одной модели.
+Сутки принимаются только при достаточном количестве членов по всем пяти диагностическим переменным. Отчёт показывает:
 
-Отчёт показывает время получения данных ботом и политику кэша. Точный model run и пространственное разрешение не придумываются, если endpoint их не сообщает.
+- `k/n` членов, пересёкших операционный порог;
+- P10, медиану и P90;
+- заблаговременность;
+- модель, источник и покрытие;
+- практическую проверку и научное ограничение.
 
-## 📐 Расчёты
+`k/n` — сырая доля модельных сценариев, а не откалиброванная вероятность. CAPE показывает потенциальную конвективную среду и не является прогнозом грозы или града.
 
-### ГДД
+## История и тренд
+
+Accepted ensemble runs сохраняются в PostgreSQL:
 
 ```text
-GDDday = max(0, min(Tmean, Tupper) − Tbase)
+risk_forecast_runs
+risk_forecast_signals
+```
+
+Run и его signals фиксируются одной транзакцией до Telegram side effect. Повтор одного provider response идемпотентен по:
+
+```text
+field_id + model + retrieved_at
+```
+
+Delivery state:
+
+```text
+not_attempted
+sending
+sent
+deduplicated
+failed
+```
+
+`/history` сравнивает два последних запуска одной модели для одинаковых `risk_type + event_date`:
+
+- `new`;
+- `strengthening`;
+- `stable`;
+- `weakening`;
+- `cleared`.
+
+Изменение уровня имеет приоритет; внутри одного уровня существенным считается изменение доли на 10 процентных пунктов. Это тренд модельного сигнала, а не вероятность события или ущерба.
+
+Retention задаётся:
+
+```dotenv
+RISK_HISTORY_RETENTION_DAYS=90
+```
+
+## Агрометеорологические расчёты
+
+### GDD
+
+```text
+GDDday = max(0, min((Tmax + Tmin) / 2, Tupper) − Tbase)
 ```
 
 - единицы: `°C·сут`;
-- строки до **локальной даты** посева исключаются;
-- прошлый период и прогнозный прирост считаются отдельно;
-- сезонная сумма заявляется только при наличии строки на дату начала и допустимой доле пропусков;
+- строки до локальной даты сезона исключаются;
+- завершённый период и forecast increment считаются отдельно;
 - автоматическая фенофаза не определяется.
-
-Методическая основа: McMaster & Wilhelm, 1997, *Agricultural and Forest Meteorology*, 87(4), 291–300.
 
 ### ГТК Селянинова
 
@@ -95,74 +136,60 @@ GDDday = max(0, min(Tmean, Tupper) − Tbase)
 ГТК = 10 × ΣP / ΣTср
 ```
 
-Используются только завершённые сутки с `Tср > 10°C`. Прогнозные осадки не входят в расчёт. При коротком окне или недопустимой доле пропусков показатель не публикуется.
+Условия публикации:
 
-### Осадки − ET₀
+- задана локальная дата сезона;
+- используются только завершённые сутки;
+- `Tср > 10°C`;
+- минимум 20 тёплых суток;
+- непрерывный календарный ряд;
+- forecast precipitation исключён;
+- отрицательные осадки считаются отсутствующими данными.
 
-Короткое 7-суточное окно показывает диагностическую разность осадков и provider ET₀. Это не баланс корнеобитаемого слоя и не доза полива.
+Универсальная классификация засухи не генерируется.
 
-### Накопленные осадки и ET₀
+### Осадки и ET₀
 
-Для заданной даты начала сезона рассчитываются:
+Показываются:
 
-- `ΣP` и `ΣET₀` по завершённым локальным суткам;
-- `ΣP−ΣET₀` только по парным валидным датам;
-- число сухих и влажных суток при пороге `1 мм/сут`;
+- короткая диагностическая разность `P−ET₀`;
+- накопленные `ΣP` и provider `ΣET₀`;
+- парная `ΣP−ΣET₀`;
+- сухие/влажные сутки при пороге 1 мм/сут;
 - текущая и максимальная сухая серия;
-- максимальная сумма осадков за 1 и 5 последовательных суток.
+- Rx1day и bounded Rx5day.
 
-Прогнозные строки не входят в накопления. Сухие серии и 5-суточный максимум не публикуются при календарном разрыве или пропуске осадков. ET₀ остаётся характеристикой атмосферной испаряемости эталонной поверхности, а не фактической ET культуры. Методика: [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md).
+ET₀ — reference evapotranspiration, не фактическая ET культуры. `P−ET₀` не является влагозапасом или дозой полива.
 
-### Сезон ERA5-Land относительно базы 1991–2020
+### ERA5-Land 1991–2020
 
-При заданной дате сезона бот запрашивает две однородные серии одной модели `era5_land`:
+Текущий сезон сравнивается с окнами той же длины и календарной даты старта одной модели `era5_land`. Требуется минимум 20 валидных reference-лет. Empirical percentile не является вероятностью, SPI/SPEI или станционной климатической нормой.
 
-```text
-ERA5-Land: текущий сезон
-ERA5-Land: 1991–2020 reference
-```
+Методики:
 
-Текущий период сравнивается с окнами той же длины и той же календарной даты старта. Показываются при достаточном качестве:
+- `docs/SCIENTIFIC_FORMULA_AUDIT_2026-07-17.md`;
+- `docs/SCIENTIFIC_WATER_INDICATORS.md`;
+- `docs/SCIENTIFIC_CLIMATE_REFERENCE.md`;
+- `docs/ENSEMBLE_RISK_METHODOLOGY.md`.
 
-- аномалия средней температуры, °C;
-- сумма осадков и ET₀ относительно реанализного среднего;
-- аномалия ГДД, °C·сут;
-- положение максимальной сухой серии;
-- эмпирические процентили и фактическое число сопоставимых лет.
+## Что не заявляется
 
-Требуется не менее 20 валидных исторических окон. Накопленные метрики не публикуются при пропуске хотя бы одного дня. Процент температуры от среднего не вычисляется. Процентиль не является вероятностью, а реанализная сетка не называется станционной климатической нормой. Методика: [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md).
+В production-code нет:
 
-### Температурный риск
-
-Используется прогнозная суточная Tmin воздуха на высоте 2 м.
-
-```text
-risk_detected
-no_risk_in_valid_forecast
-insufficient_forecast_data
-```
-
-При отсутствии валидной Tmin бот не показывает зелёный вывод «риска нет».
-
-## ⛔ Что не заявляется
-
-В production пока нет:
-
-- прогноза урожайности или валидированной ML-модели;
-- SPI/SPEI без отдельного длинного однородного pipeline и distribution fit;
+- валидированного прогноза урожайности;
+- SPI/SPEI по короткому прогнозу;
+- crop/phase damage model;
+- вероятности града;
 - локального FAO-56 Penman–Monteith;
-- фактической ET культуры, `Kc/Ks`, влагозапаса корнеобитаемого слоя или дозы полива;
-- прямого CDS job/object-cache pipeline для ERA5-Land;
-- production-интеграции SoilGrids, Sentinel-2 или MODIS;
-- crop/phase-specific вероятности повреждения заморозком;
-- автоматической фенофазы по непроверенным GDD-порогам;
-- доз удобрений и препаратов без нормативного источника.
+- validated `Kc/Ks` и root-zone water balance;
+- SoilGrids/Sentinel/MODIS production adapters;
+- доз препаратов или удобрений без нормативного источника.
 
-Матрица: [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md).
+Фактическая матрица: `docs/CAPABILITIES.md`.
 
-## 🚀 Установка без Docker
+## Установка без Docker
 
-Поддерживаются Debian, Ubuntu и совместимые Astra Linux окружения.
+Поддерживаемый deployment path:
 
 ```bash
 git clone https://github.com/f2re/crop_forecast_bot.git
@@ -170,20 +197,20 @@ cd crop_forecast_bot
 sudo bash scripts/deploy.sh
 ```
 
-Первый запуск создаёт PostgreSQL, Redis, пользователя `cropbot` и файл:
+Первый запуск создаёт runtime user, PostgreSQL, Redis, versioned release и environment file:
 
 ```text
 /etc/crop-forecast-bot.env
 ```
 
-Укажите Telegram-токен и повторите установку:
+Укажите Telegram token и повторите deploy:
 
 ```bash
 sudo editor /etc/crop-forecast-bot.env
 sudo bash scripts/deploy.sh
 ```
 
-Неинтерактивный вариант:
+Неинтерактивный token path:
 
 ```bash
 sudo install -m 600 /dev/null /root/cropbot-token
@@ -191,143 +218,63 @@ sudo editor /root/cropbot-token
 sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
 ```
 
-`deploy.sh` устанавливает systemd-unit из того же release, который активирует. При failed healthcheck предыдущие код и unit-файлы восстанавливаются вместе и повторно проверяются по `active + heartbeat`.
-
-## 🛠 Команды администратора
+## Администрирование
 
 ```bash
-# Состояние, heartbeat, БД, Redis и журнал
+# service, heartbeat, DB, Redis, release и журнал
 sudo bash /opt/crop-forecast-bot/current/scripts/status.sh
 
-# Полная локальная проверка release
+# локальный release verification
 sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh
 
-# Open-Meteo Forecast/Historical + homogeneous ERA5-Land
+# Open-Meteo + ERA5-Land live checks
 sudo -u cropbot bash \
   /opt/crop-forecast-bot/current/scripts/verify-production.sh \
   --live-all 55.75 37.62 2026-04-15 wheat
 
-# Проверка восстановления последнего PostgreSQL backup
+# backup restore verification
 sudo bash \
   /opt/crop-forecast-bot/current/scripts/verify-backup-restore.sh
 
-# Логи и перезапуск
-sudo journalctl -u crop-forecast-bot -f
-sudo systemctl restart crop-forecast-bot
-
-# Обновление и откат
+# update / rollback
 sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
 sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
+
+# logs
+sudo journalctl -u crop-forecast-bot -f
 ```
 
-### Скрипты
-
-| Скрипт | Назначение |
-|---|---|
-| `scripts/deploy.sh` | зависимости, БД, Redis, versioned release и systemd |
-| `scripts/update.sh` | backup, новый release, миграции, preflight и verified rollback |
-| `scripts/rollback.sh` | возврат кода и unit-файлов выбранного release |
-| `scripts/status.sh` | service, commit, heartbeat, PostgreSQL, Redis и журнал |
-| `scripts/verify-production.sh` | Ruff, compileall, pytest, Alembic, Bash и live providers |
-| `scripts/verify-backup-restore.sh` | isolated restore, schema/Alembic/data fingerprints |
-| `scripts/help.sh` | краткая справка по командам |
-
-## 🔄 Обновление и recovery
+Production запускается:
 
 ```bash
-sudo bash /opt/crop-forecast-bot/current/scripts/update.sh main
+python -m src.bot.main
 ```
 
-```text
-PostgreSQL dump
-→ отдельный release
-→ новый virtualenv
-→ pip check / compileall
-→ alembic upgrade head
-→ runtime preflight
-→ units из target release
-→ atomic current switch
-→ systemd + heartbeat check
-→ code + unit rollback при ошибке
-→ повторный healthcheck предыдущего release
-```
-
-Миграции БД автоматически назад не откатываются. Перед update создаётся backup. Его восстановимость проверяется отдельным isolated restore без изменения production-БД.
-
-### Гарантии фоновых заданий
-
-Scheduler продлевает Redis job lease независимо от длительности запроса к провайдеру. При потере token ownership текущий read/report отменяется, а новые поля не обрабатываются. После аварийного завершения процесса другой worker получает lock только после истечения TTL.
-
-Telegram `sendMessage` не поддерживает idempotency key: если процесс погиб после принятия сообщения Telegram, но до фиксации dedup lease, абсолютная гарантия exactly-once невозможна. Бот не должен быть единственным каналом критических предупреждений.
-
-## 🧪 Разработка и тесты
+## Проверки разработчика
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env
-alembic upgrade head
-python -m src.bot.main
+ruff check src config alembic tests
+python -m compileall -q alembic config src tests
+python -m pytest -q -m "not integration"
+TEST_DATABASE_URL=... TEST_REDIS_URL=... \
+  python -m pytest -q -m integration
+python -m alembic heads
 ```
 
-```bash
-bash scripts/verify-production.sh
-```
+CI также выполняет ShellCheck, repository policies, PostgreSQL/Redis integration и backup/restore.
 
-CI запускает реальные PostgreSQL и Redis системными сервисами. Проверяются:
+## Граница готовности
 
-- Ruff, `compileall`, Bash и ShellCheck;
-- migration graph и current schema;
-- PostgreSQL row locks и Redis FSM/leases;
-- полный Telegram Dispatcher-flow;
-- scheduler crash/lease recovery;
-- научные контракты накоплений и ERA5-Land;
-- release/unit rollback state machine;
-- непустой `pg_dump → pg_restore` с schema, Alembic и data fingerprints.
+Код, CI и live provider contracts подтверждены. До статуса «готов к самостоятельной эксплуатации в поле» обязательны:
 
-Отдельный weekly/manual workflow **Live provider smoke** проверяет реальные Open-Meteo и ERA5-Land endpoints и сохраняет JSON-artifacts. Временная внешняя недоступность API не блокирует обычный PR CI.
+- clean Debian 12 install/reboot/update/rollback;
+- real Telegram smoke для нескольких пользователей и полей;
+- Astra Linux smoke;
+- station comparison;
+- screening-only регламент и резервный канал критических предупреждений.
 
-Локальные integration tests:
-
-```bash
-export TEST_DATABASE_URL='postgresql+asyncpg://cropbot_test:cropbot_test@127.0.0.1:5432/crop_forecast_bot_test'
-export TEST_REDIS_URL='redis://127.0.0.1:6379/15'
-python -m pytest -q -m integration
-```
-
-## 🏗 Архитектура
-
-```text
-Telegram handlers / Redis FSM
-        ↓
-application services + typed ports
-        ↓
-domain / bounded agro calculations
-        ↓
-infrastructure adapters
-  ├─ Open-Meteo forecast + seasonal history
-  ├─ homogeneous ERA5-Land current/reference
-  ├─ PostgreSQL / Alembic
-  ├─ Redis coordination
-  └─ optional RAG
-        ↓
-versioned systemd release + recovery gates
-```
-
-Единственная точка запуска:
-
-```bash
-python -m src.bot.main
-```
-
-## 📍 Документация
-
-- [`docs/STATUS.md`](docs/STATUS.md) — выполнено и текущий этап;
-- [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) — фактические возможности;
-- [`docs/DEVELOPMENT_PLAN.md`](docs/DEVELOPMENT_PLAN.md) — план модернизации;
-- [`docs/SCIENTIFIC_WATER_INDICATORS.md`](docs/SCIENTIFIC_WATER_INDICATORS.md) — накопленные осадки, ET₀ и сухие серии;
-- [`docs/SCIENTIFIC_CLIMATE_REFERENCE.md`](docs/SCIENTIFIC_CLIMATE_REFERENCE.md) — ERA5-Land 1991–2020;
-- [`QUICK_START_GUIDE.md`](QUICK_START_GUIDE.md) — установка, live smoke, backup restore и rollback;
-- [`CHANGELOG.md`](CHANGELOG.md) — история изменений.
+Статус: `docs/STATUS.md`.  
+План: `docs/DEVELOPMENT_PLAN.md`.  
+Технический аудит: `docs/TECHNICAL_AUDIT_2026-07-18.md`.
