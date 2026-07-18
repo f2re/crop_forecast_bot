@@ -155,6 +155,10 @@ class Field(Base):
         back_populates="field",
         cascade="all, delete-orphan",
     )
+    risk_forecast_runs: Mapped[list["RiskForecastRun"]] = relationship(
+        back_populates="field",
+        cascade="all, delete-orphan",
+    )
 
 
 class CropSeason(Base):
@@ -214,3 +218,114 @@ class CropSeason(Base):
     )
 
     field: Mapped["Field"] = relationship(back_populates="seasons")
+
+
+class RiskForecastRun(Base):
+    """One accepted ensemble forecast run for one field."""
+
+    __tablename__ = "risk_forecast_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "field_id",
+            "model",
+            "retrieved_at",
+            name="uq_risk_forecast_runs_identity",
+        ),
+        Index(
+            "ix_risk_forecast_runs_field_retrieved_at",
+            "field_id",
+            "retrieved_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    field_id: Mapped[int] = mapped_column(
+        ForeignKey("fields.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(String(180), nullable=False)
+    model: Mapped[str] = mapped_column(String(80), nullable=False)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    analysis_date: Mapped[date] = mapped_column(Date, nullable=False)
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    forecast_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    valid_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    incomplete_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(240), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    field: Mapped["Field"] = relationship(back_populates="risk_forecast_runs")
+    signals: Mapped[list["RiskForecastSignal"]] = relationship(
+        back_populates="run",
+        cascade="all, delete-orphan",
+        order_by="RiskForecastSignal.event_date, RiskForecastSignal.id",
+    )
+
+
+class RiskForecastSignal(Base):
+    """One risk threshold crossing produced by an accepted forecast run."""
+
+    __tablename__ = "risk_forecast_signals"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "risk_type",
+            "event_date",
+            name="uq_risk_forecast_signals_event",
+        ),
+        CheckConstraint(
+            "member_fraction >= 0 AND member_fraction <= 1",
+            name="ck_risk_forecast_signals_member_fraction",
+        ),
+        CheckConstraint(
+            "severe_member_fraction >= 0 AND severe_member_fraction <= 1",
+            name="ck_risk_forecast_signals_severe_fraction",
+        ),
+        Index(
+            "ix_risk_forecast_signals_type_date",
+            "risk_type",
+            "event_date",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(
+        ForeignKey("risk_forecast_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    risk_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_date: Mapped[date] = mapped_column(Date, nullable=False)
+    lead_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False)
+    members_exceeding: Mapped[int] = mapped_column(Integer, nullable=False)
+    valid_members: Mapped[int] = mapped_column(Integer, nullable=False)
+    member_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    severe_member_fraction: Mapped[float] = mapped_column(Float, nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    severe_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    unit: Mapped[str] = mapped_column(String(80), nullable=False)
+    p10: Mapped[float] = mapped_column(Float, nullable=False)
+    median: Mapped[float] = mapped_column(Float, nullable=False)
+    p90: Mapped[float] = mapped_column(Float, nullable=False)
+    delivery_state: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="not_attempted",
+        server_default="not_attempted",
+    )
+    notified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default=text("CURRENT_TIMESTAMP"),
+    )
+
+    run: Mapped["RiskForecastRun"] = relationship(back_populates="signals")
