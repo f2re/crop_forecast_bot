@@ -60,6 +60,7 @@ async def configure_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Открыть главное меню"),
+            BotCommand(command="risks", description="Проверить погодные риски"),
             BotCommand(command="help", description="Показать справку"),
             BotCommand(command="cancel", description="Отменить текущий ввод"),
         ]
@@ -83,11 +84,13 @@ def build_dispatcher(
 
     from src.bot.handlers.core import router as core_router
     from src.bot.handlers.rag import router as rag_router
+    from src.bot.handlers.risks import router as risks_router
     from src.bot.handlers.settings import router as settings_router
 
     # Settings precede the legacy core handlers so old toggle callbacks are
     # rejected rather than replayed as non-idempotent state inversions.
     dispatcher.include_router(copy.deepcopy(settings_router))
+    dispatcher.include_router(copy.deepcopy(risks_router))
     dispatcher.include_router(copy.deepcopy(core_router))
     dispatcher.include_router(copy.deepcopy(rag_router))
     return dispatcher
