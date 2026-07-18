@@ -4,247 +4,209 @@
 
 ## Цель ближайшего релиза
 
-Довести бот до воспроизводимого полевого пилота: один aiogram 3.x runtime, устойчивое хранение состояния, научно ограниченные агрометеорологические показатели, доступный вручную обзор рисков и автоматические предупреждения с прозрачной неопределённостью.
+Довести code-level пилот до воспроизводимого контролируемого полевого пилота: подтвердить установку и Telegram-flow во внешней среде, снизить шум предупреждений и начать региональную проверку прогнозов.
 
 Бот не подменяет официальные предупреждения, локальную метеостанцию, агрономическое обследование или нормативную инструкцию к препарату.
 
-## Фактическое состояние
+## Подтверждённое состояние `main`
 
-### Подтверждено кодом, CI и live-контрактами
-
-- единый entrypoint `python -m src.bot.main` на aiogram 3.x;
+- один aiogram 3.x entrypoint;
 - PostgreSQL + SQLAlchemy 2 async + Alembic;
-- Redis FSM, callback idempotency, renewable scheduler leases и deduplication;
-- несколько полей, культура, дата сезона и ручная фенологическая фаза;
+- Redis FSM, callback idempotency, renewable leases и deduplication;
+- несколько полей, культура, дата сезона и ручная фаза;
 - Open-Meteo Forecast/Historical Weather;
-- однородное ERA5-Land сравнение текущего сезона с базой 1991–2020;
-- GDD, сезонный ГТК, provider ET₀, `P−ET₀`, накопленные осадки, сухие серии и Rx1day/Rx5day;
-- GFS Ensemble-контур пяти погодных рисков;
-- live GFS contract: 31 член, 16 последовательных локальных суток, полное покрытие диагностик;
-- ручной обзор рисков из Telegram через кнопку и `/risks`;
-- versioned systemd releases, heartbeat, verified rollback и backup/restore evidence.
+- homogeneous ERA5-Land current/reference, база 1991–2020;
+- GDD, сезонный ГТК, provider ET₀, `P−ET₀`, накопления и precipitation extremes;
+- GFS Ensemble multi-hazard screening;
+- ручной обзор рисков `/risks`;
+- persistent risk history и тренд `/history`;
+- versioned systemd release, heartbeat, rollback и backup/restore verification;
+- unit/contract, PostgreSQL/Redis integration и live provider gates.
 
-### Не подтверждено внешней приёмкой
-
-- clean Debian 12/Astra Linux deploy и reboot;
-- real Telegram-flow с production token для нескольких пользователей и полей;
-- forced rollback на реальном systemd host;
-- региональная проверка GFS, ERA5-Land, ET₀ и ГТК по локальным станциям;
-- откалиброванные вероятности рисков и crop-specific damage thresholds;
-- валидированный прогноз града, болезней или урожайности.
-
-## Целевая архитектура
-
-```text
-Telegram / aiogram Router + Redis FSM
-        ↓
-application services / typed ports
-        ↓
-domain / scientifically bounded calculations
-        ↓
-infrastructure adapters
-  ├─ Open-Meteo operational forecast/history
-  ├─ Open-Meteo GFS Ensemble members
-  ├─ ERA5-Land current season + 1991–2020 reference
-  ├─ PostgreSQL repositories / Alembic
-  ├─ Redis leases / deduplication / coordination
-  └─ optional source-attributed RAG
-        ↓
-APScheduler + versioned systemd release + heartbeat
-```
-
-## Инварианты
+## Архитектурные инварианты
 
 1. Один Telegram framework и один entrypoint.
-2. Handlers не выполняют расчёты, HTTP или блокирующий I/O.
-3. Все I/O-контракты асинхронные и типизированные.
+2. Handlers не выполняют формулы, HTTP и блокирующий I/O.
+3. Все внешние I/O-контракты асинхронные и типизированные.
 4. PostgreSQL — source of truth; Redis — FSM и coordination.
 5. Observation, reanalysis, forecast и climate reference не смешиваются.
 6. Пропуск не превращается в ноль, безопасность или синтетический fallback.
 7. Формула имеет источник, единицы, период, область применимости и тесты.
-8. Сырая доля ансамбля `k/n` не называется откалиброванной вероятностью.
+8. `k/n` не называется откалиброванной вероятностью.
 9. CAPE не называется прогнозом грозы или града.
-10. Фоновый мониторинг охватывает все явно включённые поля.
+10. Background monitoring охватывает все явно enabled fields.
 11. Side effects прекращаются после потери scheduler lease.
-12. State-changing callback задаёт конечное состояние, а не toggle.
-13. Код, systemd-unit, миграции и healthcheck рассматриваются как один release.
-14. Функция считается готовой только после Telegram-сценария и тестов.
+12. Accepted risk run сохраняется до Telegram side effect.
+13. State-changing callback задаёт конечное состояние, а не toggle.
+14. Код, systemd units, миграции и healthcheck образуют один release.
+15. Функция считается готовой только после Telegram-flow и тестов.
 
-## Завершённый вертикальный срез — ручной обзор погодных рисков
+## Завершённый срез — ручной обзор рисков
 
-Статус: **слито в `main` через PR #39; полный CI зелёный; новые формулы и пороги не вводились**.
+PR #39:
 
-### Причина
+- кнопка и `/risks`;
+- application service поверх общего `RiskForecastProvider`;
+- тот же `calc_ensemble_risks`, что в scheduler;
+- до пяти событий, `k/n`, P10/P50/P90, lead time и provenance;
+- fail-closed UX;
+- Dispatcher scenario.
 
-Scheduler уже рассчитывал пять ансамблевых рисков, но пользователь не мог самостоятельно запросить единый текущий обзор для активного поля.
+## Завершённый срез — журнал и тренд риска
 
-### Реализовано
+PR #41:
 
-- кнопка **«Погодные риски»** в главном меню и карточке активного поля;
-- команда `/risks`;
-- отдельный aiogram Router;
-- application service поверх существующего `RiskForecastProvider`;
-- тот же `calc_ensemble_risks`, что используется scheduler;
-- до пяти наиболее значимых событий;
-- `k/n`, P10, медиана, P90, заблаговременность, покрытие и provenance;
-- структура ответа: что происходит → насколько надёжно → что делать → когда проверить снова;
-- fail-closed при неполном ансамбле или отказе провайдера;
-- лимит Telegram 4096 символов;
-- Dispatcher-flow `поле → культура → ручной обзор рисков`.
-
-### Проверено
-
-- static и scientific-claims policy checks;
-- unit/contract tests;
-- PostgreSQL/Redis integration;
-- backup/restore round trip;
-- Alembic graph;
-- существующие live-provider contracts.
-
-## Активный следующий вертикальный срез — журнал и тренд риска
-
-Приоритет: **P1**.
-
-### Причина
-
-Без сохранения последовательных прогнозов невозможно:
-
-- показать усиление или ослабление сигнала;
-- отличить новый риск от повторного уведомления;
-- доказать качество работы бота;
-- построить Brier/reliability/ROC/PR;
-- выполнить региональную калибровку.
-
-### Схема данных
-
-Добавить Alembic migration и таблицы:
+### Хранение
 
 ```text
 risk_forecast_runs
-- id
-- field_id
-- provider/source/model
-- retrieved_at/model_run
-- timezone
-- member_count/forecast_days
-- created_at
+- field_id, source, model, retrieved_at
+- analysis_date, timezone
+- member_count, forecast_days
+- valid_days, incomplete_days, status
 
 risk_forecast_signals
-- run_id
-- risk_type/event_date/lead_days/level
-- members_exceeding/valid_members/member_fraction
-- severe fraction
-- threshold/severe_threshold/unit
-- p10/median/p90
-- notified_at/delivery_state
+- run_id, risk_type, event_date, lead_days, level
+- members_exceeding, valid_members, member_fraction
+- severe_member_fraction
+- threshold, severe_threshold, unit
+- p10, median, p90
+- delivery_state, notified_at
 ```
 
-Инварианты:
+### Гарантии
 
-- уникальность run по `field_id + model + retrieved_at`;
-- сигналы одного run записываются одной транзакцией;
-- provider failure не создаёт ложный успешный run;
-- scheduler не отправляет сообщение до успешного сохранения run/signals;
-- Telegram ambiguity хранится отдельным delivery state;
-- retention policy задаётся конфигурацией.
+- уникальность run: `field_id + model + retrieved_at`;
+- accepted run и signals сохраняются одной транзакцией;
+- provider failure и incomplete ensemble не создают успешный run;
+- Telegram send начинается только после commit;
+- `sending` сохраняет неоднозначный внешний outcome;
+- retention управляется `RISK_HISTORY_RETENTION_DAYS`;
+- удаление field каскадно удаляет history.
 
-### Логика тренда
+### Тренд
 
-Для одинаковых `field + risk_type + event_date` сравнивать два последних run:
+Для одинаковых `field + model + risk_type + event_date` сравниваются два последних запуска:
 
-- `new` — раньше сигнала не было;
-- `strengthening` — fraction/level выросли выше минимального изменения;
-- `stable` — изменение ниже порога;
-- `weakening` — fraction/level снизились;
-- `cleared` — сигнал был, теперь ниже порога.
+- `new`;
+- `strengthening`;
+- `stable`;
+- `weakening`;
+- `cleared`.
 
-Тренд не является вероятностной калибровкой. Это только изменение модельного ансамблевого сигнала между запусками.
+Изменение уровня имеет приоритет; внутри уровня существенным считается изменение доли на 10 процентных пунктов. Тренд не является вероятностной калибровкой.
 
-### Telegram UX
+### Проверки
 
-- раздел **«История рисков»**;
-- последние события по активному полю;
-- дата запуска и источник;
-- отметка «новый / усиливается / стабилен / ослабевает / снят»;
-- кнопка обновления без повторной отправки старых событий;
-- компактный журнал, без выгрузки всех членов ансамбля.
+- Alembic head `20260718_0004`;
+- idempotent run insert;
+- delivery state;
+- trend boundary tests;
+- retention;
+- scheduler persistence ordering;
+- Telegram history flow;
+- PostgreSQL/Redis integration;
+- backup/restore;
+- live GFS contract.
+
+## Активный следующий срез — quiet hours и risk digest
+
+### Причина
+
+Текущий scheduler может отправить до пяти отдельных сообщений на поле за цикл. Для фермеров с несколькими полями это создаёт шум, особенно ночью и при повторных изменениях прогноза.
+
+### Минимальный scope
+
+На уровне `fields` добавить:
+
+```text
+risk_delivery_mode: immediate | digest | high_only
+quiet_hours_start: local time | null
+quiet_hours_end: local time | null
+```
+
+Не создавать отдельный rules engine.
+
+### Поведение
+
+- `immediate`: текущая доставка;
+- `digest`: одно сообщение с событиями цикла;
+- `high_only`: немедленно только `high`, остальные — в digest;
+- quiet hours определяются в timezone поля;
+- просроченный event после quiet hours не отправляется;
+- `cleared` и strengthening можно включать в digest без отдельного спама;
+- delivery state сохраняется для итогового сообщения.
 
 ### Тесты
 
-- Alembic fresh/upgrade/downgrade graph;
-- idempotent run insert;
-- atomic run + signals rollback;
-- two-worker scheduler competition;
-- trend boundary tests;
-- timezone/event-date tests;
-- Telegram history flow;
-- retention cleanup;
-- provider failure and ambiguous delivery state.
+- IANA timezone и DST;
+- interval через полночь;
+- несколько полей в разных timezone;
+- один digest при двух workers;
+- retry после Telegram failure;
+- отсутствие просроченного alert;
+- message length;
+- restart между расчётом и delivery.
 
-## Последующие срезы
+## P0 — внешняя приёмка
 
-### 1. Quiet hours и risk digest
+1. clean Debian 12 deploy → migrate → start → reboot;
+2. update и intentionally failed release → verified rollback;
+3. real Telegram smoke: два пользователя, несколько полей, разные timezone;
+4. Astra Linux smoke;
+5. сохранение message/log/heartbeat evidence;
+6. operator runbook для состояния `sending`;
+7. screening-only регламент и резервный канал критических предупреждений.
 
-- локальные часы тишины поля;
-- режимы «сразу», «дайджест», «только высокий риск»;
-- объединение нескольких рисков в одно сообщение;
-- DST/timezone tests;
-- запрет доставки просроченного события после quiet hours.
+## P1 — наблюдаемость и отказоустойчивость
 
-### 2. Эксплуатационная приёмка
+- provider latency/error/cache/fallback metrics;
+- stale-cache age в metadata и Telegram UX;
+- измеримый rate limiter;
+- простой circuit breaker на provider adapter;
+- административный provider status;
+- pytest failure artifacts;
+- постепенно включить mypy для domain/ports/DTO;
+- включить bandit с документированными исключениями.
 
-- clean Debian 12 deploy/reboot/update/rollback;
-- real Telegram smoke для двух пользователей и нескольких полей;
-- Astra Linux smoke;
-- message/log/screenshot evidence;
-- operator runbook для неоднозначного результата Telegram send.
+## P1 — станционная проверка
 
-### 3. Станционная проверка и калибровка
-
-- импорт наблюдений локальной станции;
+- импорт station observations;
 - forecast run ↔ observation matching;
-- bias, MAE/RMSE для непрерывных величин;
-- contingency table, POD/FAR/CSI для событий;
-- Brier score и reliability diagram для member fractions;
-- отдельная калибровка по риску, сроку, сезону и региону.
+- bias/MAE/RMSE для непрерывных величин;
+- POD/FAR/CSI для событий;
+- Brier/reliability для всех daily evaluations, включая below-threshold;
+- calibration по risk/lead/season/region.
 
-### 4. Окно полевых работ
+Важно: текущие `risk_forecast_signals` содержат threshold crossings и достаточны для UX trend, но не являются unbiased calibration dataset.
 
-- осадки, ветер, температура, влажность и предшествующее увлажнение;
-- отдельное окно опрыскивания только как метеоограничение;
-- ссылка на этикетку/регламент вместо генерации дозировок;
-- объяснение причины подходящего или неподходящего окна.
+## P1/P2 — продуктовые функции
 
-### 5. Почвенно-водный контур
+1. окно полевых работ;
+2. метеоокно опрыскивания без обхода этикетки;
+3. SoilGrids + terrain screening;
+4. локальная FAO-56 при полном наборе входов;
+5. validated `Kc/Ks` и root-zone balance;
+6. Sentinel-2/MODIS NDVI/LAI с quality masks;
+7. привязка локальной метеостанции и bias correction;
+8. GloFAS/flood/erosion screening.
 
-- SoilGrids adapter и ocean/no-data guards;
-- локальная FAO-56 при полном наборе входов;
-- validated `Kc/Ks`;
-- root-zone storage, фактический полив, runoff/infiltration assumptions;
-- полевая валидация и явная неопределённость.
+## Технический долг
 
-### 6. Спутниковый мониторинг
+- разделить `scheduler.py`, вынеся только weather-risk cycle в application service;
+- разделить `handlers/core.py` на field/season/report routers;
+- переименовать `frost_alerts_enabled` в `weather_risk_alerts_enabled` совместимой миграцией;
+- удалить transitional columns из `users` после production upgrade evidence;
+- не переписывать sync provider clients до появления метрик;
+- не вводить queues/microservices/CQRS без подтверждённой нагрузки.
 
-- Sentinel-2/MODIS provider;
-- SCL/cloud/water/quality masks;
-- NDVI/LAI при достаточном quality coverage;
-- сравнение поля с собственной историей;
-- temporal consistency до уведомления об аномалии.
+## Definition of Done следующего релиза
 
-## Сопутствующий технический долг
+- quiet hours/digest доступны из Telegram settings;
+- нет повторного или просроченного alert;
+- full CI и live provider gates зелёные;
+- clean-host и real Telegram acceptance выполнены либо явно остаются blocking gate;
+- технический аудит и capability matrix синхронизированы;
+- новые тексты не создают claims вероятности ущерба, града или точной дозы мероприятий.
 
-- актуализировать README и `docs/CAPABILITIES.md` под GFS Ensemble и `/risks`;
-- совместимой миграцией переименовать `frost_alerts_enabled` в `weather_risk_alerts_enabled`;
-- добавить архивирование/удаление поля и экспорт пользовательских данных;
-- добавить provider latency/error/cache/fallback metrics;
-- реализовать circuit breaker, измеримый rate limiter и stale-cache age;
-- versioned sources для crop-specific `Tbase/Tupper`.
-
-## Definition of Done ближайшего релиза
-
-- ручной обзор доступен из production Router graph;
-- основной CI зелёный;
-- live GFS contract остаётся зелёным;
-- расчёты и тексты не вводят новые научные claims;
-- audit и development plan синхронизированы;
-- clean-host, real Telegram и station-validation gates перечислены явно.
+Технический аудит: `docs/TECHNICAL_AUDIT_2026-07-18.md`.
