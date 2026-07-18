@@ -23,6 +23,16 @@ def _env_bool(name: str, default: bool = False) -> bool:
     raise RuntimeError(f"{name} must be a boolean value")
 
 
+def _env_int(name: str, default: int) -> int:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value.strip())
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer value") from exc
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     telegram_bot_token: str
@@ -35,6 +45,7 @@ class Settings:
     scheduler_timezone: str
     heartbeat_file: Path
     open_meteo_cache_path: Path
+    risk_history_retention_days: int
 
     def validate(self) -> None:
         errors: list[str] = []
@@ -46,6 +57,8 @@ class Settings:
             errors.append("DATABASE_URL must use an async SQLAlchemy driver")
         if not self.coordination_namespace:
             errors.append("COORDINATION_NAMESPACE must not be empty")
+        if not 7 <= self.risk_history_retention_days <= 3650:
+            errors.append("RISK_HISTORY_RETENTION_DAYS must be between 7 and 3650")
         try:
             ZoneInfo(self.scheduler_timezone)
         except ZoneInfoNotFoundError:
@@ -96,6 +109,10 @@ def get_settings() -> Settings:
         open_meteo_cache_path=Path(
             os.getenv("OPEN_METEO_CACHE_PATH", ".cache/openmeteo")
         ).expanduser(),
+        risk_history_retention_days=_env_int(
+            "RISK_HISTORY_RETENTION_DAYS",
+            90,
+        ),
     )
 
 
