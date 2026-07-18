@@ -8,6 +8,7 @@ import pytest
 import src.bot.scheduler as scheduler_module
 from src.bot.scheduler import check_weather_risk_alerts
 from src.database.crud import NotificationTarget
+from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.infrastructure.coordination import MemoryCoordination
 
@@ -76,7 +77,7 @@ class RecordingBot:
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_sends_once_per_field_event(
+async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_targets(
@@ -89,7 +90,39 @@ async def test_weather_risk_scheduler_sends_once_per_field_event(
         assert frost_alerts_only is True
         return [_target()]
 
+    stored = False
+    delivery_states: list[str] = []
+
+    async def fake_record(session_factory, *, field_id, meta, outlook):
+        nonlocal stored
+        assert field_id == 42
+        assert outlook.available is True
+        stored = True
+        return StoredRiskRun(
+            run_id=1,
+            signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+            created=True,
+        )
+
+    async def fake_delivery(
+        session_factory,
+        *,
+        signal_id,
+        state,
+        notified_at=None,
+    ) -> bool:
+        assert stored is True
+        assert signal_id == 99
+        delivery_states.append(state)
+        return True
+
+    async def fake_prune(session_factory) -> int:
+        return 0
+
     monkeypatch.setattr(scheduler_module, "_targets", fake_targets)
+    monkeypatch.setattr(scheduler_module, "_record_risk_run", fake_record)
+    monkeypatch.setattr(scheduler_module, "_set_risk_delivery", fake_delivery)
+    monkeypatch.setattr(scheduler_module, "_prune_risk_history", fake_prune)
     monkeypatch.setattr(
         scheduler_module,
         "_local_datetime",
@@ -126,3 +159,4 @@ async def test_weather_risk_scheduler_sends_once_per_field_event(
     assert "Сильные осадки" in text
     assert "22 из 31" in text
     assert "сырая доля модельных сценариев" in text
+    assert delivery_states == ["sending", "sent", "sending", "deduplicated"]

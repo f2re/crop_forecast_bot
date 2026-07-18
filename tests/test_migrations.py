@@ -34,6 +34,8 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "users",
         "fields",
         "crop_seasons",
+        "risk_forecast_runs",
+        "risk_forecast_signals",
         "alembic_version",
     }.issubset(inspector.get_table_names())
 
@@ -86,6 +88,51 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "updated_at",
     } == season_columns
 
+    run_columns = {
+        column["name"] for column in inspector.get_columns("risk_forecast_runs")
+    }
+    assert {
+        "id",
+        "field_id",
+        "source",
+        "model",
+        "retrieved_at",
+        "analysis_date",
+        "timezone",
+        "member_count",
+        "forecast_days",
+        "valid_days",
+        "incomplete_days",
+        "status",
+        "created_at",
+    } == run_columns
+
+    signal_columns = {
+        column["name"]
+        for column in inspector.get_columns("risk_forecast_signals")
+    }
+    assert {
+        "id",
+        "run_id",
+        "risk_type",
+        "event_date",
+        "lead_days",
+        "level",
+        "members_exceeding",
+        "valid_members",
+        "member_fraction",
+        "severe_member_fraction",
+        "threshold",
+        "severe_threshold",
+        "unit",
+        "p10",
+        "median",
+        "p90",
+        "delivery_state",
+        "notified_at",
+        "created_at",
+    } == signal_columns
+
     field_indexes = {
         index["name"]: index for index in inspector.get_indexes("fields")
     }
@@ -94,11 +141,21 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         index["name"]: index for index in inspector.get_indexes("crop_seasons")
     }
     assert season_indexes["uq_crop_seasons_one_active_per_field"]["unique"] == 1
+    run_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("risk_forecast_runs")
+    }
+    assert "uq_risk_forecast_runs_identity" in run_unique_constraints
+    signal_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("risk_forecast_signals")
+    }
+    assert "uq_risk_forecast_signals_event" in signal_unique_constraints
 
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260710_0003"
+    assert revision == expected_schema_revision() == "20260718_0004"
 
 
 def test_migrations_adopt_legacy_user_and_backfill_field_settings(
@@ -170,7 +227,7 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
     assert season_row[1] == "sunflower"
     assert season_row[2] is None
     assert bool(season_row[3]) is True
-    assert revision == "20260710_0003"
+    assert revision == "20260718_0004"
 
 
 def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
