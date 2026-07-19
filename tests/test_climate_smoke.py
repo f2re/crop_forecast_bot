@@ -56,7 +56,7 @@ def _data() -> ClimateReferenceData:
             retrieved_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
             reference_cache_ttl_seconds=30 * 24 * 60 * 60,
             current_cache_ttl_seconds=6 * 60 * 60,
-            spatial_resolution_km=11.0,
+            spatial_resolution_km=25.0,
         ),
         reference_daily=reference,
         current_daily=current,
@@ -70,7 +70,7 @@ def test_live_climate_contract_validates_homogeneous_series() -> None:
         crop="sunflower",
     )
 
-    assert result.model == "era5_land"
+    assert result.model == "era5"
     assert result.reference_start == "1991-01-01"
     assert result.reference_end == "2020-12-31"
     assert result.comparison_start == "2026-04-01"
@@ -97,11 +97,11 @@ def test_live_climate_contract_rejects_mixed_forecast_rows() -> None:
         )
 
 
-def test_live_climate_contract_rejects_incomplete_accumulation() -> None:
+def test_live_climate_contract_rejects_incomplete_retained_row() -> None:
     data = _data()
     data.current_daily.loc[data.current_daily.index[3], "precip_sum"] = float("nan")
 
-    with pytest.raises(ValueError, match="missing required metrics: precip_sum_mm"):
+    with pytest.raises(ValueError, match="incomplete retained row"):
         validate_climate_data(
             data,
             season_start=date(2026, 4, 1),
