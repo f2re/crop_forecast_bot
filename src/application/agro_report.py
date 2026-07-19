@@ -16,7 +16,7 @@ from src.agro.indices import (
 )
 from src.agro.water import calc_water_accumulation
 from src.api.open_meteo import OpenMeteoProvider
-from src.api.open_meteo_climate import OpenMeteoClimateProvider
+from src.api.open_meteo_climate import CLIMATE_MODEL, OpenMeteoClimateProvider
 from src.application.ports.climate import ClimateProvider, ClimateProviderError
 from src.application.ports.weather import WeatherProvider
 from src.domain.climate import ClimateReferenceData
@@ -39,6 +39,16 @@ class AgroReport:
     retrieved_at: datetime | None = None
     cache_ttl_seconds: int | None = None
     spatial_resolution_km: float | None = None
+
+
+def _climate_model_label(model: object) -> str:
+    value = str(model or "reanalysis")
+    labels = {
+        "era5": "ERA5",
+        "era5_land": "ERA5-Land",
+        "era5_seamless": "ERA5-Seamless",
+    }
+    return labels.get(value, value)
 
 
 async def generate_agro_report(
@@ -137,10 +147,12 @@ async def generate_agro_report(
                 longitude,
                 exc,
             )
+            model_label = _climate_model_label(CLIMATE_MODEL)
             indices["climate_reference"] = {
                 "available": False,
                 "requested": True,
-                "status": "однородный ряд ERA5-Land временно недоступен",
+                "status": f"однородный ряд {model_label} временно недоступен",
+                "provider": {"model": CLIMATE_MODEL},
             }
 
     text = format_agro_report(
@@ -233,9 +245,14 @@ def _format_climate_reference(climate: dict) -> list[str]:
     if not climate.get("requested"):
         return []
 
-    lines = ["", "📈 <b>Сезон ERA5-Land относительно базы 1991–2020</b>"]
+    provider = climate.get("provider", {})
+    model_label = html.escape(_climate_model_label(provider.get("model")))
+    lines = ["", f"📈 <b>Сезон {model_label} относительно базы 1991–2020</b>"]
     if not climate.get("available"):
-        lines.append(f"• Не рассчитано: {html.escape(climate.get('status', 'нет данных'))}.")
+        lines.append(
+            f"• Не рассчитано: "
+            f"{html.escape(climate.get('status', 'нет данных'))}."
+        )
         return lines
 
     metrics = climate["metrics"]
@@ -298,7 +315,6 @@ def _format_climate_reference(climate: dict) -> list[str]:
         if metric.get("available")
     ]
     min_years = min(available_counts) if available_counts else 0
-    provider = climate.get("provider", {})
     resolution = provider.get("spatial_resolution_km")
     resolution_note = (
         f", номинальная сетка около {resolution:g} км"
@@ -308,7 +324,7 @@ def _format_climate_reference(climate: dict) -> list[str]:
     period_start = _format_iso_day(climate.get("period_start"))
     period_end = _format_iso_day(climate.get("period_end"))
     lines.append(
-        f"• Однородный ряд ERA5-Land: {period_start} — {period_end}; "
+        f"• Однородный ряд {model_label}: {period_start} — {period_end}; "
         f"{climate['window_days']} сут.; не менее {min_years} сопоставимых лет"
         f"{resolution_note}."
     )
@@ -373,7 +389,8 @@ def format_agro_report(
                 else f"примерно через {alert['lead_days']} сут."
             )
             lines.append(
-                f"• {alert['date_local']}: Tmin воздуха {alert['t_min']:.1f}°C, {lead}"
+                f"• {alert['date_local']}: Tmin воздуха "
+                f"{alert['t_min']:.1f}°C, {lead}"
             )
         lines.append(
             "<b>Что делать:</b> сверить локальный прогноз, измерения на поле, "
@@ -448,22 +465,23 @@ def format_agro_report(
                 "• Сухая серия на конец ряда: "
                 f"{accumulated_water['trailing_dry_spell_days']} сут.; "
                 f"максимум {accumulated_water['max_dry_spell_days']} сут. "
-                f"при осадках <{accumulated_water['dry_day_threshold_mm']:g} мм/сут."
+                f"при осадках "
+                f"<{accumulated_water['dry_day_threshold_mm']:g} мм/сут."
             )
         else:
             lines.append(
-                f"• Сухие серии не рассчитаны: "
+                "• Сухие серии не рассчитаны: "
                 f"{html.escape(accumulated_water.get('dry_spell_status', 'нет данных'))}."
             )
         if accumulated_water.get("max_1day_precip_mm") is not None:
             extremes = (
-                f"• Максимум осадков за сутки: "
+                "• Максимум осадков за сутки: "
                 f"{accumulated_water['max_1day_precip_mm']:.1f} мм "
                 f"({_format_iso_day(accumulated_water.get('max_1day_precip_date'))})"
             )
             if accumulated_water.get("max_5day_precip_mm") is not None:
                 extremes += (
-                    f"; за 5 последовательных суток: "
+                    "; за 5 последовательных суток: "
                     f"{accumulated_water['max_5day_precip_mm']:.1f} мм"
                 )
             lines.append(extremes + ".")
@@ -500,7 +518,8 @@ def format_agro_report(
         )
     if gdd["missing_fraction"] is not None and gdd["missing_fraction"] > 0:
         lines.append(
-            f"• Пропуски в расчётном периоде: {gdd['missing_fraction'] * 100:.1f}%"
+            f"• Пропуски в расчётном периоде: "
+            f"{gdd['missing_fraction'] * 100:.1f}%"
         )
     contributions = gdd.get("contribution_by_kind", {})
     if contributions:
@@ -521,12 +540,14 @@ def format_agro_report(
             f"• Период объединённого ряда: {_coverage_line(weather)}",
             f"• ГДД: {_format_source_counts(gdd.get('source_counts', {}))}",
             f"• ГТК: {_format_source_counts(htc.get('source_counts', {}))}",
-            f"• Осадки − ET₀: {_format_source_counts(water.get('source_counts', {}))}",
+            f"• Осадки − ET₀: "
+            f"{_format_source_counts(water.get('source_counts', {}))}",
             (
                 "• Накопленные осадки/ET₀: "
                 + _format_source_counts(accumulated_water.get("source_counts", {}))
             ),
-            f"• Tmin-прогноз: {_format_source_counts(frost.get('source_counts', {}))}",
+            f"• Tmin-прогноз: "
+            f"{_format_source_counts(frost.get('source_counts', {}))}",
         ]
     )
     lines.extend(_format_provider_metadata(weather))
@@ -545,9 +566,12 @@ def format_agro_report(
         current_cache_hours = int(
             provider_meta.get("current_cache_ttl_seconds", 0)
         ) // (60 * 60)
+        climate_label = html.escape(
+            _climate_model_label(provider_meta.get("model"))
+        )
         lines.append(
             "• Климатическое сравнение: текущий сезон и база 1991–2020 "
-            f"из одной модели ERA5-Land; кэш {current_cache_hours} ч./"
+            f"из одной модели {climate_label}; кэш {current_cache_hours} ч./"
             f"{reference_cache_days} сут."
         )
     lines.append("• Текущие и будущие дни: Open-Meteo Forecast API.")
@@ -561,9 +585,14 @@ def format_agro_report(
         ]
     )
     if climate_reference.get("requested"):
+        provider_meta = climate_reference.get("provider", {})
+        climate_label = html.escape(
+            _climate_model_label(provider_meta.get("model"))
+        )
         lines.append(
-            "ℹ️ ERA5-Land публикуется с задержкой: климатический блок может "
-            "заканчиваться раньше оперативного ряда; это не прогноз урожайности."
+            f"ℹ️ {climate_label} публикуется с задержкой: климатический блок "
+            "может заканчиваться раньше оперативного ряда; это не прогноз "
+            "урожайности."
         )
     else:
         lines.append("ℹ️ Это не климатическая норма и не прогноз урожайности.")
