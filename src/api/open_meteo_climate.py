@@ -118,6 +118,35 @@ def _request_history(
     return payload, frame
 
 
+def _complete_current_prefix(
+    frame: pd.DataFrame,
+    *,
+    season_start: date,
+) -> pd.DataFrame:
+    """Keep one continuous season prefix with all accumulated metrics available.
+
+    ERA5-Land variables can be published with different latency. Comparing a
+    temperature window ending later than precipitation or ET0 would silently mix
+    periods. Stop at the first missing calendar day or first row missing any core
+    variable, and never resume after that gap.
+    """
+    if frame.empty:
+        return frame.copy()
+
+    prepared = frame.sort_values("local_date").reset_index(drop=True)
+    expected_day = season_start
+    valid_rows = 0
+    for _, row in prepared.iterrows():
+        local_day = row["local_date"]
+        if local_day != expected_day:
+            break
+        if row[list(_CORE_COLUMNS)].isna().any():
+            break
+        valid_rows += 1
+        expected_day += timedelta(days=1)
+    return prepared.iloc[:valid_rows].copy().reset_index(drop=True)
+
+
 def _fetch_climate_reference_sync(
     latitude: float,
     longitude: float,
@@ -154,12 +183,14 @@ def _fetch_climate_reference_sync(
             "ERA5-Land reference does not cover the complete 1991-2020 period"
         )
 
-    # ERA5-Land is published with latency. Open-Meteo may return dated rows whose
-    # requested variables are all null near the end of the interval. Remove only
-    # those fully unavailable rows; partial rows stay visible to downstream QC.
-    current_frame = current_frame.dropna(subset=list(_CORE_COLUMNS), how="all").copy()
+    current_frame = _complete_current_prefix(
+        current_frame,
+        season_start=season_start,
+    )
     if current_frame.empty:
-        raise OpenMeteoClimateError("ERA5-Land current-season series is unavailable")
+        raise OpenMeteoClimateError(
+            "ERA5-Land current-season series has no complete shared daily window"
+        )
     current_start = min(current_frame["local_date"])
     current_end = max(current_frame["local_date"])
     if current_start != season_start:
@@ -196,5 +227,5 @@ def _fetch_climate_reference_sync(
             spatial_resolution_km=CLIMATE_SPATIAL_RESOLUTION_KM,
         ),
         reference_daily=reference_frame,
-        current_daily=current_frame.reset_index(drop=True),
+        current_daily=current_frame,
     )
