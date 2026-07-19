@@ -1,26 +1,28 @@
 # План модернизации Crop Forecast Bot
 
-Дата актуализации: **2026-07-18**.
+Дата актуализации: **2026-07-19**.
 
 ## Цель ближайшего релиза
 
-Довести code-level пилот до воспроизводимого контролируемого полевого пилота: подтвердить установку и Telegram-flow во внешней среде, снизить шум предупреждений и начать региональную проверку прогнозов.
+Перевести code-level пилот в контролируемый полевой пилот: подтвердить deployment/Telegram-flow во внешней среде и начать накапливать фактические наблюдения пользователя для проверки прогнозов и будущих расчётов.
 
 Бот не подменяет официальные предупреждения, локальную метеостанцию, агрономическое обследование или нормативную инструкцию к препарату.
 
-## Подтверждённое состояние `main`
+## Подтверждённое состояние
 
 - один aiogram 3.x entrypoint;
 - PostgreSQL + SQLAlchemy 2 async + Alembic;
 - Redis FSM, callback idempotency, renewable leases и deduplication;
 - несколько полей, культура, дата сезона и ручная фаза;
-- Open-Meteo Forecast/Historical Weather;
-- homogeneous ERA5-Land current/reference, база 1991–2020;
+- Open-Meteo Forecast Best Match/Historical Weather;
+- homogeneous ERA5 current/reference, база 1991–2020;
+- общий climate prefix, полный по `Tmean/P/ET₀`;
 - GDD, сезонный ГТК, provider ET₀, `P−ET₀`, накопления и precipitation extremes;
 - GFS Ensemble multi-hazard screening;
-- ручной обзор рисков `/risks`;
-- persistent risk history и тренд `/history`;
-- versioned systemd release, heartbeat, rollback и backup/restore verification;
+- ручной обзор `/risks`;
+- risk history и trend `/history`;
+- delivery modes, quiet hours и compact digest;
+- versioned systemd release, heartbeat, rollback и backup/restore;
 - unit/contract, PostgreSQL/Redis integration и live provider gates.
 
 ## Архитектурные инварианты
@@ -30,183 +32,208 @@
 3. Все внешние I/O-контракты асинхронные и типизированные.
 4. PostgreSQL — source of truth; Redis — FSM и coordination.
 5. Observation, reanalysis, forecast и climate reference не смешиваются.
-6. Пропуск не превращается в ноль, безопасность или синтетический fallback.
+6. Пропуск не превращается в ноль, безопасность или synthetic fallback.
 7. Формула имеет источник, единицы, период, область применимости и тесты.
-8. `k/n` не называется откалиброванной вероятностью.
+8. `k/n` не называется calibrated probability.
 9. CAPE не называется прогнозом грозы или града.
-10. Background monitoring охватывает все явно enabled fields.
+10. Background monitoring охватывает все enabled fields.
 11. Side effects прекращаются после потери scheduler lease.
-12. Accepted risk run сохраняется до Telegram side effect.
-13. State-changing callback задаёт конечное состояние, а не toggle.
-14. Код, systemd units, миграции и healthcheck образуют один release.
-15. Функция считается готовой только после Telegram-flow и тестов.
+12. Accepted risk run сохраняется до delivery decision и Telegram side effect.
+13. Quiet hours влияют на delivery, но не на scientific result/history.
+14. State-changing callback задаёт конечное состояние, а не toggle.
+15. Код, systemd units, migrations и healthcheck образуют один release.
+16. Функция готова только после Telegram-flow и тестов.
 
-## Завершённый срез — ручной обзор рисков
+## Завершённые вертикальные срезы
 
-PR #39:
+### Ручной обзор риска — PR #39
 
 - кнопка и `/risks`;
-- application service поверх общего `RiskForecastProvider`;
-- тот же `calc_ensemble_risks`, что в scheduler;
-- до пяти событий, `k/n`, P10/P50/P90, lead time и provenance;
-- fail-closed UX;
-- Dispatcher scenario.
+- общий domain calculation;
+- `k/n`, P10/P50/P90, lead time и provenance;
+- fail-closed UX.
 
-## Завершённый срез — журнал и тренд риска
+### Журнал и тренд — PR #41
 
-PR #41:
-
-### Хранение
-
-```text
-risk_forecast_runs
-- field_id, source, model, retrieved_at
-- analysis_date, timezone
-- member_count, forecast_days
-- valid_days, incomplete_days, status
-
-risk_forecast_signals
-- run_id, risk_type, event_date, lead_days, level
-- members_exceeding, valid_members, member_fraction
-- severe_member_fraction
-- threshold, severe_threshold, unit
-- p10, median, p90
-- delivery_state, notified_at
-```
-
-### Гарантии
-
-- уникальность run: `field_id + model + retrieved_at`;
-- accepted run и signals сохраняются одной транзакцией;
-- provider failure и incomplete ensemble не создают успешный run;
-- Telegram send начинается только после commit;
-- `sending` сохраняет неоднозначный внешний outcome;
-- retention управляется `RISK_HISTORY_RETENTION_DAYS`;
-- удаление field каскадно удаляет history.
-
-### Тренд
-
-Для одинаковых `field + model + risk_type + event_date` сравниваются два последних запуска:
-
-- `new`;
-- `strengthening`;
-- `stable`;
-- `weakening`;
-- `cleared`.
-
-Изменение уровня имеет приоритет; внутри уровня существенным считается изменение доли на 10 процентных пунктов. Тренд не является вероятностной калибровкой.
-
-### Проверки
-
-- Alembic head `20260718_0004`;
-- idempotent run insert;
-- delivery state;
-- trend boundary tests;
+- `risk_forecast_runs/signals`;
+- atomic accepted run + signals;
+- delivery states;
+- `new / strengthening / stable / weakening / cleared`;
 - retention;
-- scheduler persistence ordering;
-- Telegram history flow;
-- PostgreSQL/Redis integration;
-- backup/restore;
-- live GFS contract.
+- `/history`.
 
-## Активный следующий срез — quiet hours и risk digest
+### Quiet hours и risk digest — PR #43
 
-### Причина
-
-Текущий scheduler может отправить до пяти отдельных сообщений на поле за цикл. Для фермеров с несколькими полями это создаёт шум, особенно ночью и при повторных изменениях прогноза.
-
-### Минимальный scope
-
-На уровне `fields` добавить:
+Schema:
 
 ```text
 risk_delivery_mode: immediate | digest | high_only
-quiet_hours_start: local time | null
-quiet_hours_end: local time | null
+quiet_hours_start: local hour | null
+quiet_hours_end: local hour | null
 ```
 
-Не создавать отдельный rules engine.
+Поведение:
 
-### Поведение
+- один compact multi-hazard message на поле;
+- `immediate` — state-based delivery;
+- `digest` — один обычный message на local date;
+- `high_only` — только `level=high`;
+- watch/elevated откладываются в quiet hours;
+- high risk bypasses quiet hours/daily digest;
+- accepted run сохраняется независимо от delivery;
+- DST/cross-midnight tests;
+- Alembic head `20260719_0005`.
 
-- `immediate`: текущая доставка;
-- `digest`: одно сообщение с событиями цикла;
-- `high_only`: немедленно только `high`, остальные — в digest;
-- quiet hours определяются в timezone поля;
-- просроченный event после quiet hours не отправляется;
-- `cleared` и strengthening можно включать в digest без отдельного спама;
-- delivery state сохраняется для итогового сообщения.
+### Provider contract hardening — PR #43
+
+- generic Forecast больше не отправляет устаревший `models=auto`;
+- operational metadata показывает `best_match`;
+- climate current/reference переведены на одну fixed ERA5 configuration;
+- current climate period complete по `Tmean/P/ET₀`;
+- live provider gates и pytest artifacts.
+
+## Активный следующий кодовый срез — полевой журнал
+
+### Причина
+
+Новые модельные индексы без фактических наблюдений дают ограниченную добавочную ценность. Полевой журнал создаёт контекст для рекомендаций, station validation, water balance и оценки полезности alerts.
+
+### Минимальная схема
+
+```text
+field_observations
+- id
+- field_id
+- observed_at
+- observation_type
+- numeric_value nullable
+- unit nullable
+- note nullable
+- source
+- created_at
+```
+
+Первый набор `observation_type`:
+
+```text
+phase
+operation
+irrigation
+rain_gauge
+station_tmin
+station_tmax
+damage
+note
+```
+
+### Telegram UX
+
+- кнопка **«Журнал поля»**;
+- список последних записей;
+- add observation через короткий FSM;
+- delete только собственной записи;
+- локальное время поля;
+- единицы и допустимые диапазоны;
+- `/journal` optional command;
+- без автоматической интерпретации повреждения.
+
+### Инварианты
+
+- запись принадлежит конкретному field;
+- observation time timezone-aware на входе и хранится UTC;
+- user source маркируется явно;
+- irrigation/rain values не смешиваются с model precipitation;
+- station temperature не заменяет provider series автоматически;
+- photo/file reference optional и не анализируется в первом срезе;
+- no free-form pesticide/fertilizer dosing logic.
 
 ### Тесты
 
-- IANA timezone и DST;
-- interval через полночь;
-- несколько полей в разных timezone;
-- один digest при двух workers;
-- retry после Telegram failure;
-- отсутствие просроченного alert;
-- message length;
-- restart между расчётом и delivery.
+- Alembic fresh/upgrade/downgrade;
+- ownership и cascade delete;
+- value/unit validation;
+- timezone/DST;
+- restart-safe FSM;
+- duplicate callback protection;
+- Telegram add/list/delete scenario;
+- PostgreSQL integration;
+- message length.
 
 ## P0 — внешняя приёмка
 
 1. clean Debian 12 deploy → migrate → start → reboot;
 2. update и intentionally failed release → verified rollback;
-3. real Telegram smoke: два пользователя, несколько полей, разные timezone;
+3. real Telegram smoke: два пользователя, несколько полей/timezone;
 4. Astra Linux smoke;
-5. сохранение message/log/heartbeat evidence;
-6. operator runbook для состояния `sending`;
-7. screening-only регламент и резервный канал критических предупреждений.
+5. message/log/heartbeat evidence;
+6. operator runbook для `sending`;
+7. screening-only регламент;
+8. независимый официальный warning channel.
 
-## P1 — наблюдаемость и отказоустойчивость
+## P1 — после полевого журнала
 
-- provider latency/error/cache/fallback metrics;
-- stale-cache age в metadata и Telegram UX;
-- измеримый rate limiter;
-- простой circuit breaker на provider adapter;
-- административный provider status;
-- pytest failure artifacts;
-- постепенно включить mypy для domain/ports/DTO;
-- включить bandit с документированными исключениями.
+### Окно полевых работ
 
-## P1 — станционная проверка
+- операция выбирается явно;
+- осадки, ветер/порывы, температура, RH/VPD и previous rain;
+- explanation per constraint;
+- отдельное spray weather window без обхода label;
+- no opaque suitability score.
 
-- импорт station observations;
+### Official warnings
+
+- CAP adapters по стране/региону;
+- issuer/identifier/effective/expires/area/severity;
+- отдельные секции `официальное предупреждение` и `модельный сигнал`;
+- no probability mixing.
+
+### Provider observability
+
+- latency/error/cache/fallback metrics;
+- stale-cache age;
+- simple circuit breaker;
+- admin provider status;
+- bounded field concurrency только после метрик.
+
+### Station verification
+
+- station observation import;
 - forecast run ↔ observation matching;
-- bias/MAE/RMSE для непрерывных величин;
-- POD/FAR/CSI для событий;
-- Brier/reliability для всех daily evaluations, включая below-threshold;
-- calibration по risk/lead/season/region.
+- bias/MAE/RMSE;
+- POD/FAR/CSI;
+- below-threshold daily evaluations;
+- Brier/reliability по risk/lead/season/region.
 
-Важно: текущие `risk_forecast_signals` содержат threshold crossings и достаточны для UX trend, но не являются unbiased calibration dataset.
+## P2
 
-## P1/P2 — продуктовые функции
-
-1. окно полевых работ;
-2. метеоокно опрыскивания без обхода этикетки;
-3. SoilGrids + terrain screening;
-4. локальная FAO-56 при полном наборе входов;
-5. validated `Kc/Ks` и root-zone balance;
-6. Sentinel-2/MODIS NDVI/LAI с quality masks;
-7. привязка локальной метеостанции и bias correction;
-8. GloFAS/flood/erosion screening.
+1. field polygon geometry;
+2. SoilGrids context с uncertainty;
+3. Sentinel-2 L2A + SCL/cloud masks;
+4. own-field temporal baseline;
+5. local FAO-56 при полном наборе входов;
+6. validated `Kc/Ks` и root-zone balance;
+7. GloFAS/flood screening;
+8. pathogen-specific disease models;
+9. отдельный hail validation track.
 
 ## Технический долг
 
-- разделить `scheduler.py`, вынеся только weather-risk cycle в application service;
-- разделить `handlers/core.py` на field/season/report routers;
-- переименовать `frost_alerts_enabled` в `weather_risk_alerts_enabled` совместимой миграцией;
-- удалить transitional columns из `users` после production upgrade evidence;
+- вынести weather-risk cycle из `scheduler.py` в application service;
+- разделить `handlers/core.py` на feature routers;
+- привести optional RAG к application service/bounded executor/timeouts;
+- переименовать `frost_alerts_enabled` в `weather_risk_alerts_enabled`;
+- удалить transitional `users` columns после production upgrade evidence;
+- постепенно включить mypy и Bandit;
 - не переписывать sync provider clients до появления метрик;
 - не вводить queues/microservices/CQRS без подтверждённой нагрузки.
 
 ## Definition of Done следующего релиза
 
-- quiet hours/digest доступны из Telegram settings;
-- нет повторного или просроченного alert;
-- full CI и live provider gates зелёные;
-- clean-host и real Telegram acceptance выполнены либо явно остаются blocking gate;
-- технический аудит и capability matrix синхронизированы;
-- новые тексты не создают claims вероятности ущерба, града или точной дозы мероприятий.
+- полевой журнал доступен из production Router graph;
+- данные field-scoped и restart-safe;
+- full CI/live gates зелёные;
+- clean-host/Telegram acceptance выполнены или остаются явно blocking;
+- journal observations не подменяют provider data;
+- audit/capability/status/docs синхронизированы.
 
-Технический аудит: `docs/TECHNICAL_AUDIT_2026-07-18.md`.
+Глубокий аудит: `docs/DEEP_AUDIT_2026-07-19.md`.

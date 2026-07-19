@@ -12,7 +12,7 @@ def test_ci_contains_selective_live_provider_gate() -> None:
     assert "Live provider contracts (relevant PRs)" in workflow
     assert "Detect provider-contract changes" in workflow
     assert "Operational Forecast/Historical contract" in workflow
-    assert "Homogeneous ERA5-Land current/reference contract" in workflow
+    assert "Homogeneous ERA5 current/reference contract" in workflow
     assert "python -m src.ops.provider_smoke" in workflow
     assert "python -m src.ops.climate_smoke" in workflow
     assert "pr-live-provider-smoke-${{ github.run_id }}" in workflow

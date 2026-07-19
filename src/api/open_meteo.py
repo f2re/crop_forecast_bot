@@ -33,9 +33,9 @@ ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
 _MAX_CONCURRENT_REQUESTS = 4
 _REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
 _CACHE_TTL_SECONDS = 60 * 60
-# Open-Meteo API documents `auto` as the default model selection. In the UI
-# this is described as Best Match: suitable models are combined automatically.
-_FORECAST_MODEL = "auto"
+# The generic Forecast API uses Best Match when the models parameter is omitted.
+# Do not send the historical alias `auto`: the live API no longer accepts it.
+_FORECAST_MODEL = "best_match"
 _HISTORY_SOURCE = "Open-Meteo Historical Weather API (reanalysis Best Match)"
 
 
@@ -230,12 +230,11 @@ def _fetch_sync(
     )
 
 
-def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
-    retrieved_at = datetime.now(timezone.utc)
-    params = {
+def _forecast_params(lat: float, lon: float) -> dict[str, Any]:
+    """Build the generic Best Match request without a model alias."""
+    return {
         "latitude": lat,
         "longitude": lon,
-        "models": _FORECAST_MODEL,
         "past_days": PAST_DAYS,
         "forecast_days": FORECAST_DAYS,
         "hourly": [
@@ -254,6 +253,11 @@ def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
         ],
         "timezone": "auto",
     }
+
+
+def _fetch_forecast_sync(lat: float, lon: float) -> AgroWeatherData:
+    retrieved_at = datetime.now(timezone.utc)
+    params = _forecast_params(lat, lon)
 
     responses = _get_client().weather_api(FORECAST_URL, params=params)
     if not responses:

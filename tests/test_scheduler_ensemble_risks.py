@@ -7,14 +7,19 @@ import pytest
 
 import src.bot.scheduler as scheduler_module
 from src.bot.scheduler import check_weather_risk_alerts
-from src.database.crud import NotificationTarget
+from src.database.notification_targets import EnabledNotificationTarget
 from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.infrastructure.coordination import MemoryCoordination
 
 
-def _target() -> NotificationTarget:
-    return NotificationTarget(
+def _target(
+    *,
+    mode: str = "immediate",
+    quiet_hours_start: int | None = None,
+    quiet_hours_end: int | None = None,
+) -> EnabledNotificationTarget:
+    return EnabledNotificationTarget(
         telegram_id=1001,
         field_id=42,
         field_name="Северное",
@@ -28,18 +33,25 @@ def _target() -> NotificationTarget:
         phenological_phase="Колошение",
         daily_digest_enabled=False,
         frost_alerts_enabled=True,
+        risk_delivery_mode=mode,  # type: ignore[arg-type]
+        quiet_hours_start=quiet_hours_start,
+        quiet_hours_end=quiet_hours_end,
     )
 
 
-def _ensemble() -> EnsembleForecastData:
+def _ensemble(
+    *,
+    rain_members: int = 22,
+    wind_members: int = 0,
+) -> EnsembleForecastData:
     rows = [
         {
             "local_date": date(2026, 7, 29),
             "member_id": f"m{member:02d}",
             "t_min_c": 8.0,
             "t_max_c": 25.0,
-            "precip_mm": 40.0 if member < 22 else 2.0,
-            "wind_gust_ms": 6.0,
+            "precip_mm": 40.0 if member < rain_members else 2.0,
+            "wind_gust_ms": 17.0 if member < wind_members else 6.0,
             "cape_j_kg": 100.0,
         }
         for member in range(31)
@@ -61,10 +73,13 @@ def _ensemble() -> EnsembleForecastData:
 
 
 class FakeProvider:
+    def __init__(self, data: EnsembleForecastData | None = None) -> None:
+        self.data = data or _ensemble()
+
     async def fetch(self, latitude: float, longitude: float) -> EnsembleForecastData:
         assert latitude == 55.75
         assert longitude == 37.62
-        return _ensemble()
+        return self.data
 
 
 class RecordingBot:
@@ -76,31 +91,33 @@ class RecordingBot:
         return object()
 
 
-@pytest.mark.asyncio
-async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
+def _patch_common(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    *,
+    target: EnabledNotificationTarget,
+    hour: int,
+    signal_ids: dict[tuple[str, date], int],
+) -> tuple[list[str], list[bool]]:
+    stored_flags: list[bool] = []
+    delivery_states: list[str] = []
+
     async def fake_targets(
         session_factory,
         *,
         daily_digest_only: bool = False,
         frost_alerts_only: bool = False,
-    ) -> list[NotificationTarget]:
+    ) -> list[EnabledNotificationTarget]:
         assert daily_digest_only is False
         assert frost_alerts_only is True
-        return [_target()]
-
-    stored = False
-    delivery_states: list[str] = []
+        return [target]
 
     async def fake_record(session_factory, *, field_id, meta, outlook):
-        nonlocal stored
         assert field_id == 42
         assert outlook.available is True
-        stored = True
+        stored_flags.append(True)
         return StoredRiskRun(
             run_id=1,
-            signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+            signal_ids=signal_ids,  # type: ignore[arg-type]
             created=True,
         )
 
@@ -111,8 +128,8 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
         state,
         notified_at=None,
     ) -> bool:
-        assert stored is True
-        assert signal_id == 99
+        assert stored_flags
+        assert signal_id in signal_ids.values()
         delivery_states.append(state)
         return True
 
@@ -130,9 +147,22 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
             2026,
             7,
             17,
-            10,
+            hour,
             tzinfo=timezone.utc,
         ),
+    )
+    return delivery_states, stored_flags
+
+
+@pytest.mark.asyncio
+async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivery_states, _ = _patch_common(
+        monkeypatch,
+        target=_target(),
+        hour=10,
+        signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
     )
 
     bot = RecordingBot()
@@ -156,7 +186,73 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
     assert len(bot.messages) == 1
     chat_id, text = bot.messages[0]
     assert chat_id == 1001
+    assert "Сводка погодных рисков" in text
     assert "Сильные осадки" in text
     assert "22 из 31" in text
     assert "сырая доля модельных сценариев" in text
     assert delivery_states == ["sending", "sent", "sending", "deduplicated"]
+
+
+@pytest.mark.asyncio
+async def test_weather_risk_scheduler_defers_non_high_signal_in_quiet_hours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivery_states, stored_flags = _patch_common(
+        monkeypatch,
+        target=_target(
+            quiet_hours_start=22,
+            quiet_hours_end=7,
+        ),
+        hour=23,
+        signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+    )
+
+    bot = RecordingBot()
+    coordination = MemoryCoordination(namespace="test-ensemble-quiet-hours")
+    try:
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=10)),
+        )
+    finally:
+        await coordination.close()
+
+    assert stored_flags == [True]
+    assert bot.messages == []
+    assert delivery_states == []
+
+
+@pytest.mark.asyncio
+async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivery_states, _ = _patch_common(
+        monkeypatch,
+        target=_target(mode="digest"),
+        hour=10,
+        signal_ids={
+            ("heavy_rain", date(2026, 7, 29)): 99,
+            ("strong_wind", date(2026, 7, 29)): 100,
+        },
+    )
+
+    bot = RecordingBot()
+    coordination = MemoryCoordination(namespace="test-ensemble-digest")
+    try:
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=10, wind_members=10)),
+        )
+    finally:
+        await coordination.close()
+
+    assert len(bot.messages) == 1
+    text = bot.messages[0][1]
+    assert "Сильные осадки" in text
+    assert "Сильный ветер" in text
+    assert "один дайджест в сутки" in text
+    assert delivery_states == ["sending", "sending", "sent", "sent"]

@@ -155,6 +155,11 @@ async def test_digest_callback_sets_explicit_state(
         daily_digest=True,
         frost_alerts=True,
     )
+    preferences = SimpleNamespace(
+        mode="immediate",
+        quiet_hours_start=None,
+        quiet_hours_end=None,
+    )
     saved: list[dict[str, bool]] = []
 
     async def fake_context(session, telegram_id):
@@ -164,14 +169,19 @@ async def test_digest_callback_sets_explicit_state(
         saved.append(kwargs)
         return after
 
+    async def fake_preferences(session, callback, field_id):
+        assert field_id == 42
+        return preferences
+
     monkeypatch.setattr(settings_handler, "get_field_context", fake_context)
     monkeypatch.setattr(settings_handler, "set_field_notifications", fake_save)
+    monkeypatch.setattr(settings_handler, "_preferences", fake_preferences)
     callback = _FakeCallback("set_digest:42:1")
 
     await settings_handler.set_digest(callback, object())
 
     assert saved == [{"daily_digest": True}]
-    assert callback.answers[-1] == ("Ежедневный отчёт включён", False)
+    assert callback.answers[-1] == ("Ежедневный агроотчёт включён", False)
     markup = callback.message.edits[-1][1]
     callback_data = [
         button.callback_data

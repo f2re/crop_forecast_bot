@@ -52,7 +52,7 @@ jobs:
               sha: process.env.STATUS_SHA,
               state: "pending",
               context: "live-provider-smoke",
-              description: "Open-Meteo and ERA5-Land contract smoke is running",
+              description: "Open-Meteo and ERA5 contract smoke is running",
               target_url: process.env.RUN_URL,
             });
 
@@ -80,7 +80,7 @@ jobs:
             --longitude 37.62 \
             --season-start "${season_start}" | tee operational-smoke.json
 
-      - name: Homogeneous ERA5-Land current/reference contract
+      - name: Homogeneous ERA5 current/reference contract
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -117,7 +117,7 @@ jobs:
               state: succeeded ? "success" : "failure",
               context: "live-provider-smoke",
               description: succeeded
-                ? "Open-Meteo and ERA5-Land live contracts passed"
+                ? "Open-Meteo and ERA5 live contracts passed"
                 : "A live provider contract failed; inspect the run",
               target_url: process.env.RUN_URL,
             });

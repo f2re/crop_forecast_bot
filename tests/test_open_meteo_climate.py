@@ -1,5 +1,7 @@
 from datetime import date
 
+import pandas as pd
+
 from src.api import open_meteo_climate as climate
 
 
@@ -24,7 +26,12 @@ class FakeSession:
         return next(self.responses)
 
 
-def _payload(days: list[str], *, trailing_missing: bool = False) -> dict:
+def _payload(
+    days: list[str],
+    *,
+    trailing_missing: bool = False,
+    trailing_water_missing: bool = False,
+) -> dict:
     length = len(days)
     t_max: list[float | None] = [-2.0 + index for index in range(length)]
     t_min: list[float | None] = [-8.0 + index for index in range(length)]
@@ -35,6 +42,9 @@ def _payload(days: list[str], *, trailing_missing: bool = False) -> dict:
         t_max[-1] = None
         t_min[-1] = None
         t_mean[-1] = None
+        precip[-1] = None
+        et0[-1] = None
+    if trailing_water_missing:
         precip[-1] = None
         et0[-1] = None
     return {
@@ -53,7 +63,7 @@ def _payload(days: list[str], *, trailing_missing: bool = False) -> dict:
     }
 
 
-def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) -> None:
+def test_fixed_era5_contract_and_homogeneous_current_series(monkeypatch) -> None:
     monkeypatch.setattr(climate, "REFERENCE_START", date(1991, 1, 1))
     monkeypatch.setattr(climate, "REFERENCE_END", date(1991, 1, 3))
     session = FakeSession(
@@ -62,7 +72,7 @@ def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) ->
             FakeResponse(
                 _payload(
                     ["2026-04-01", "2026-04-02", "2026-04-03", "2026-04-04"],
-                    trailing_missing=True,
+                    trailing_water_missing=True,
                 )
             ),
         ]
@@ -82,7 +92,7 @@ def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) ->
     current_url, current_kwargs = session.calls[1]
     assert reference_url == current_url == climate.ARCHIVE_URL
     for kwargs in (reference_kwargs, current_kwargs):
-        assert kwargs["params"]["models"] == "era5_land"
+        assert kwargs["params"]["models"] == climate.CLIMATE_MODEL == "era5"
         assert kwargs["params"]["cell_selection"] == "land"
         assert "temperature_2m_max" in kwargs["params"]["daily"]
         assert "temperature_2m_min" in kwargs["params"]["daily"]
@@ -95,12 +105,54 @@ def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) ->
     assert current_kwargs["params"]["end_date"] == "2026-04-04"
     assert current_kwargs["expire_after"] == climate.CURRENT_CACHE_TTL_SECONDS
 
-    assert data.meta.model == "era5_land"
+    assert data.meta.model == "era5"
     assert data.meta.source == climate.CLIMATE_SOURCE
-    assert data.meta.spatial_resolution_km == 11.0
+    assert data.meta.spatial_resolution_km == 25.0
     assert data.meta.comparison_start == date(2026, 4, 1)
     assert data.meta.comparison_end == date(2026, 4, 3)
     assert len(data.reference_daily) == 3
     assert len(data.current_daily) == 3
+    assert data.current_daily[["t_mean", "precip_sum", "et0_sum"]].notna().all().all()
     assert set(data.reference_daily["data_source"]) == {climate.CLIMATE_SOURCE}
     assert set(data.current_daily["data_source"]) == {climate.CLIMATE_SOURCE}
+
+
+def test_complete_current_prefix_stops_at_first_gap_and_does_not_resume() -> None:
+    frame = pd.DataFrame(
+        {
+            "local_date": [
+                date(2026, 4, 1),
+                date(2026, 4, 2),
+                date(2026, 4, 4),
+                date(2026, 4, 5),
+            ],
+            "t_mean": [10.0, 11.0, 13.0, 14.0],
+            "precip_sum": [1.0, 0.0, 2.0, 0.0],
+            "et0_sum": [2.0, 2.1, 2.3, 2.4],
+        }
+    )
+
+    result = climate._complete_current_prefix(
+        frame,
+        season_start=date(2026, 4, 1),
+    )
+
+    assert list(result["local_date"]) == [date(2026, 4, 1), date(2026, 4, 2)]
+
+
+def test_complete_current_prefix_stops_at_partial_missing_row() -> None:
+    frame = pd.DataFrame(
+        {
+            "local_date": [date(2026, 4, 1), date(2026, 4, 2), date(2026, 4, 3)],
+            "t_mean": [10.0, 11.0, 12.0],
+            "precip_sum": [1.0, None, 2.0],
+            "et0_sum": [2.0, 2.1, 2.2],
+        }
+    )
+
+    result = climate._complete_current_prefix(
+        frame,
+        season_start=date(2026, 4, 1),
+    )
+
+    assert list(result["local_date"]) == [date(2026, 4, 1)]

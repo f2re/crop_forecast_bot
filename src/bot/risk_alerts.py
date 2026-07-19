@@ -4,6 +4,7 @@ import html
 
 from src.agro.crop_catalog import get_crop_name
 from src.domain.risk import RiskEvent, RiskOutlook
+from src.domain.risk_delivery import risk_delivery_mode_label
 
 _RISK_LABELS = {
     "frost": ("🌡", "Заморозок / холод"),
@@ -72,6 +73,87 @@ def format_ensemble_risk_alert(
         "откалиброванная вероятность. Проверяйте официальные предупреждения и "
         "более свежие прогнозы перед затратным или необратимым решением."
     )
+
+
+def _digest_event_line(event: RiskEvent) -> str:
+    emoji, label = _RISK_LABELS[event.risk_type]
+    lead = "сегодня" if event.lead_days == 0 else f"через {event.lead_days} сут."
+    raw_percent = event.member_fraction * 100.0
+    threshold_sign = "≤" if event.risk_type == "frost" else "≥"
+    return (
+        f"• {emoji} <b>{label}</b> — {event.event_date:%d.%m}, {lead}; "
+        f"уровень {_LEVEL_LABELS[event.level]}; "
+        f"{event.members_exceeding} из {event.valid_members} ({raw_percent:.0f}%) "
+        f"для {threshold_sign}{event.threshold:g} {html.escape(event.unit)}; "
+        f"медиана {event.median:g}, P10–P90 {event.p10:g}…{event.p90:g}."
+    )
+
+
+def _unique_actions(events: tuple[RiskEvent, ...], limit: int = 3) -> tuple[str, ...]:
+    actions: list[str] = []
+    for event in events:
+        if event.action not in actions:
+            actions.append(event.action)
+        if len(actions) >= limit:
+            break
+    return tuple(actions)
+
+
+def format_ensemble_risk_digest(
+    events: tuple[RiskEvent, ...],
+    outlook: RiskOutlook,
+    *,
+    field_name: str,
+    crop: str | None,
+    phase: str | None,
+    delivery_mode: str,
+    priority_bypass: bool,
+) -> str:
+    if not events:
+        raise ValueError("Risk digest requires at least one event")
+
+    lines = [
+        "⚠️ <b>Сводка погодных рисков</b>",
+        f"🗺 Поле: <b>{html.escape(field_name)}</b>",
+    ]
+    if crop:
+        lines.append(f"🌾 Культура: <b>{html.escape(get_crop_name(crop))}</b>")
+    if phase:
+        lines.append(f"🌿 Фаза: <b>{html.escape(phase)}</b> (наблюдение пользователя)")
+    lines.extend(["", "<b>Что происходит</b>"])
+    lines.extend(_digest_event_line(event) for event in events)
+
+    lines.extend(["", "<b>Что делать сейчас</b>"])
+    for action in _unique_actions(events):
+        lines.append(f"• {html.escape(action)}")
+
+    lines.extend(
+        [
+            "",
+            "<b>Надёжность</b>",
+            f"• Модель: {html.escape(events[0].model)}; полностью проверено "
+            f"суток {outlook.valid_days} из {outlook.forecast_days}.",
+            f"• Режим доставки: {html.escape(risk_delivery_mode_label(delivery_mode))}.",
+            "• Доля ансамбля — сырая доля модельных сценариев, а не "
+            "откалиброванная вероятность события или ущерба.",
+            "• CAPE указывает только на потенциальную конвективную среду и не "
+            "является прогнозом грозы или града.",
+        ]
+    )
+    if priority_bypass:
+        lines.append(
+            "• В сводке есть высокий уровень: сообщение отправлено без ожидания "
+            "обычного окна доставки."
+        )
+    lines.append(
+        "• Перед затратным или необратимым решением проверьте официальное "
+        "предупреждение, локальную станцию и фактическое состояние поля."
+    )
+
+    text = "\n".join(lines)
+    if len(text) > 4096:
+        raise ValueError("Risk digest exceeds Telegram message limit")
+    return text
 
 
 def format_ensemble_data_unavailable(field_name: str, reason: str) -> str:

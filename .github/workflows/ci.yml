@@ -123,10 +123,27 @@ jobs:
           esac
 
       - name: Unit and contract tests
-        run: python -m pytest -q -m "not integration"
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python -m pytest -q -m "not integration" 2>&1 | tee artifacts/unit-tests.log
 
       - name: PostgreSQL and Redis integration tests
-        run: python -m pytest -q -m integration
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts
+          python -m pytest -q -m integration 2>&1 | tee artifacts/integration-tests.log
+
+      - name: Upload pytest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-logs-${{ github.run_id }}
+          path: artifacts/*.log
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Backup and restore round trip
         shell: bash
@@ -248,7 +265,7 @@ jobs:
             --longitude 37.62 \
             --season-start "${season_start}" | tee operational-smoke.json
 
-      - name: Homogeneous ERA5-Land current/reference contract
+      - name: Homogeneous ERA5 current/reference contract
         if: steps.changes.outputs.run == 'true'
         shell: bash
         run: |
