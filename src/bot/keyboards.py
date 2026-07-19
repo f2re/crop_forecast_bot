@@ -13,6 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config.settings import get_settings
 from src.agro.crop_catalog import CATEGORIES, CROPS, get_crop_name, get_crop_phases
+from src.domain.risk_delivery import quiet_hours_label, risk_delivery_mode_label
 
 
 class FieldKeyboardItem(Protocol):
@@ -214,18 +215,18 @@ def get_settings_keyboard(
     daily_digest_enabled: bool,
     frost_alerts_enabled: bool,
     field_id: int | None = None,
+    risk_delivery_mode: str = "immediate",
+    quiet_hours_start: int | None = None,
+    quiet_hours_end: int | None = None,
 ) -> InlineKeyboardMarkup:
-    """Build replay-safe notification controls for one field.
-
-    ``frost_alerts_enabled`` is the retained storage/callback name for the
-    general weather-risk monitor. ``field_id=None`` remains only for old handler
-    compatibility and refreshes the settings page instead of changing state.
-    """
+    """Build replay-safe notification controls for one field."""
     digest_action = "Отключить" if daily_digest_enabled else "Включить"
     risk_action = "Отключить" if frost_alerts_enabled else "Включить"
     if field_id is None:
         digest_callback = "settings"
         risk_callback = "settings"
+        mode_callback = "settings"
+        quiet_callback = "settings"
     else:
         digest_callback = (
             f"set_digest:{field_id}:{0 if daily_digest_enabled else 1}"
@@ -233,11 +234,15 @@ def get_settings_keyboard(
         risk_callback = (
             f"set_frost:{field_id}:{0 if frost_alerts_enabled else 1}"
         )
+        mode_callback = f"risk_mode_menu:{field_id}"
+        quiet_callback = f"quiet_hours_menu:{field_id}"
+    mode_label = risk_delivery_mode_label(risk_delivery_mode)
+    quiet_label = quiet_hours_label(quiet_hours_start, quiet_hours_end)
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"{digest_action} ежедневный отчёт",
+                    text=f"{digest_action} ежедневный агроотчёт",
                     callback_data=digest_callback,
                 )
             ],
@@ -247,9 +252,71 @@ def get_settings_keyboard(
                     callback_data=risk_callback,
                 )
             ],
+            [
+                InlineKeyboardButton(
+                    text=f"Режим рисков: {mode_label}",
+                    callback_data=mode_callback,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"Тихие часы: {quiet_label}",
+                    callback_data=quiet_callback,
+                )
+            ],
             [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
         ]
     )
+
+
+def get_risk_delivery_mode_keyboard(
+    field_id: int,
+    current_mode: str,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    options = (
+        ("immediate", "Сразу при новом сигнале"),
+        ("digest", "Один дайджест в сутки"),
+        ("high_only", "Только высокий риск"),
+    )
+    for mode, label in options:
+        marker = "✅ " if mode == current_mode else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{marker}{label}",
+                    callback_data=f"set_risk_mode:{field_id}:{mode}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="◀️ К настройкам", callback_data="settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_quiet_hours_keyboard(
+    field_id: int,
+    start_hour: int | None,
+    end_hour: int | None,
+) -> InlineKeyboardMarkup:
+    current = (start_hour, end_hour)
+    options = (
+        ("off", None, None, "Выключить"),
+        ("22-07", 22, 7, "22:00–07:00"),
+        ("23-06", 23, 6, "23:00–06:00"),
+    )
+    rows: list[list[InlineKeyboardButton]] = []
+    for token, start, end, label in options:
+        marker = "✅ " if current == (start, end) else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{marker}{label}",
+                    callback_data=f"set_quiet_hours:{field_id}:{token}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="◀️ К настройкам", callback_data="settings")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_rag_keyboard() -> InlineKeyboardMarkup:
