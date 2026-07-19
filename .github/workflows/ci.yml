@@ -126,22 +126,22 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p .artifacts
-          python -m pytest -q -m "not integration" 2>&1 | tee .artifacts/unit-tests.log
+          mkdir -p artifacts
+          python -m pytest -q -m "not integration" 2>&1 | tee artifacts/unit-tests.log
 
       - name: PostgreSQL and Redis integration tests
         shell: bash
         run: |
           set -o pipefail
-          mkdir -p .artifacts
-          python -m pytest -q -m integration 2>&1 | tee .artifacts/integration-tests.log
+          mkdir -p artifacts
+          python -m pytest -q -m integration 2>&1 | tee artifacts/integration-tests.log
 
       - name: Upload pytest logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-logs-${{ github.run_id }}
-          path: .artifacts/*.log
+          path: artifacts/*.log
           if-no-files-found: warn
           retention-days: 14
 
