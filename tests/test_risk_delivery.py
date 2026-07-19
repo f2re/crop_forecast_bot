@@ -18,7 +18,7 @@ from src.domain.risk_delivery import (
 def _event(
     *,
     risk_type: str = "heavy_rain",
-    event_date: date = date(2026, 7, 21),
+    event_date: date = date(2026, 10, 27),
     level: str = "elevated",
     fraction: float = 0.35,
 ) -> RiskEvent:
@@ -127,8 +127,13 @@ def test_daily_digest_uses_one_local_date_token() -> None:
 
 
 def test_high_only_mode_filters_lower_levels() -> None:
-    high = _event(level="high", fraction=0.65)
-    watch = _event(risk_type="strong_wind", level="watch", fraction=0.20)
+    high = _event(event_date=date(2026, 7, 21), level="high", fraction=0.65)
+    watch = _event(
+        risk_type="strong_wind",
+        event_date=date(2026, 7, 21),
+        level="watch",
+        fraction=0.20,
+    )
     decision = plan_risk_delivery(
         (watch, high),
         mode="high_only",
@@ -147,12 +152,12 @@ def test_high_only_mode_filters_lower_levels() -> None:
 def test_immediate_dedup_token_changes_after_ten_point_fraction_bucket() -> None:
     local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
     first = plan_risk_delivery(
-        (_event(fraction=0.31),),
+        (_event(event_date=date(2026, 7, 21), fraction=0.31),),
         mode="immediate",
         local_datetime=local_now,
     )
     second = plan_risk_delivery(
-        (_event(fraction=0.41),),
+        (_event(event_date=date(2026, 7, 21), fraction=0.41),),
         mode="immediate",
         local_datetime=local_now,
     )
