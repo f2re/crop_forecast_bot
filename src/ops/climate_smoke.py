@@ -1,4 +1,4 @@
-"""Read-only live acceptance contract for homogeneous ERA5-Land data."""
+"""Read-only live acceptance contract for homogeneous ERA5 data."""
 from __future__ import annotations
 
 import argparse
@@ -82,8 +82,8 @@ def _prepare_frame(frame: pd.DataFrame, *, label: str) -> pd.DataFrame:
     if kinds != {"reanalysis"}:
         raise ValueError(f"{label} dataset is not homogeneous reanalysis: {kinds}")
     sources = {str(value) for value in prepared["data_source"].dropna().unique()}
-    if not sources or not all("ERA5-Land" in value for value in sources):
-        raise ValueError(f"{label} dataset does not identify ERA5-Land provenance")
+    if not sources or not all("ERA5" in value for value in sources):
+        raise ValueError(f"{label} dataset does not identify ERA5 provenance")
     return prepared
 
 
@@ -93,7 +93,7 @@ def validate_climate_data(
     season_start: date,
     crop: str,
 ) -> ClimateSmokeResult:
-    """Validate the live homogeneous ERA5-Land contract and calculations."""
+    """Validate the live homogeneous ERA5 contract and calculations."""
     try:
         ZoneInfo(data.meta.timezone)
     except ZoneInfoNotFoundError as exc:
@@ -122,15 +122,15 @@ def validate_climate_data(
     if reference_end != data.meta.reference_end:
         raise ValueError("Reference data does not end at metadata reference_end")
     if current_start != season_start or current_start != data.meta.comparison_start:
-        raise ValueError("Current ERA5-Land data does not reach the season start")
+        raise ValueError("Current ERA5 data does not reach the season start")
     if current_end != data.meta.comparison_end:
-        raise ValueError("Current ERA5-Land end date differs from metadata")
+        raise ValueError("Current ERA5 end date differs from metadata")
 
     local_yesterday = datetime.now(ZoneInfo(data.meta.timezone)).date() - timedelta(days=1)
     if current_end > local_yesterday:
-        raise ValueError("Current ERA5-Land data contains an unfinished local day")
-    if current[["t_mean", "precip_sum", "et0_sum"]].isna().all(axis=1).any():
-        raise ValueError("Current ERA5-Land data contains a fully empty retained row")
+        raise ValueError("Current ERA5 data contains an unfinished local day")
+    if current[["t_mean", "precip_sum", "et0_sum"]].isna().any(axis=1).any():
+        raise ValueError("Current ERA5 data contains an incomplete retained row")
 
     comparison = calc_season_climate_reference(
         current,
@@ -214,7 +214,7 @@ def _parse_date(value: str) -> date:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Read-only homogeneous ERA5-Land climate contract smoke test"
+        description="Read-only homogeneous ERA5 climate contract smoke test"
     )
     parser.add_argument("--latitude", type=float, required=True)
     parser.add_argument("--longitude", type=float, required=True)
