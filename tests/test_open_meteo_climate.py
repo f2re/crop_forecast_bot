@@ -63,7 +63,7 @@ def _payload(
     }
 
 
-def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) -> None:
+def test_fixed_era5_contract_and_homogeneous_current_series(monkeypatch) -> None:
     monkeypatch.setattr(climate, "REFERENCE_START", date(1991, 1, 1))
     monkeypatch.setattr(climate, "REFERENCE_END", date(1991, 1, 3))
     session = FakeSession(
@@ -92,7 +92,7 @@ def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) ->
     current_url, current_kwargs = session.calls[1]
     assert reference_url == current_url == climate.ARCHIVE_URL
     for kwargs in (reference_kwargs, current_kwargs):
-        assert kwargs["params"]["models"] == "era5_land"
+        assert kwargs["params"]["models"] == climate.CLIMATE_MODEL == "era5"
         assert kwargs["params"]["cell_selection"] == "land"
         assert "temperature_2m_max" in kwargs["params"]["daily"]
         assert "temperature_2m_min" in kwargs["params"]["daily"]
@@ -105,9 +105,9 @@ def test_fixed_era5_land_contract_and_homogeneous_current_series(monkeypatch) ->
     assert current_kwargs["params"]["end_date"] == "2026-04-04"
     assert current_kwargs["expire_after"] == climate.CURRENT_CACHE_TTL_SECONDS
 
-    assert data.meta.model == "era5_land"
+    assert data.meta.model == "era5"
     assert data.meta.source == climate.CLIMATE_SOURCE
-    assert data.meta.spatial_resolution_km == 11.0
+    assert data.meta.spatial_resolution_km == 25.0
     assert data.meta.comparison_start == date(2026, 4, 1)
     assert data.meta.comparison_end == date(2026, 4, 3)
     assert len(data.reference_daily) == 3
