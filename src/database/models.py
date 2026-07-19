@@ -86,6 +86,17 @@ class Field(Base):
     __tablename__ = "fields"
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="uq_fields_user_name"),
+        CheckConstraint(
+            "risk_delivery_mode IN ('immediate', 'digest', 'high_only')",
+            name="ck_fields_risk_delivery_mode",
+        ),
+        CheckConstraint(
+            "(quiet_hours_start IS NULL AND quiet_hours_end IS NULL) OR "
+            "(quiet_hours_start BETWEEN 0 AND 23 AND "
+            "quiet_hours_end BETWEEN 0 AND 23 AND "
+            "quiet_hours_start <> quiet_hours_end)",
+            name="ck_fields_quiet_hours",
+        ),
         Index(
             "uq_fields_one_active_per_user",
             "user_id",
@@ -130,6 +141,14 @@ class Field(Base):
         default=True,
         server_default=text("true"),
     )
+    risk_delivery_mode: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="immediate",
+        server_default="immediate",
+    )
+    quiet_hours_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quiet_hours_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
