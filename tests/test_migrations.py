@@ -66,6 +66,9 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "elevation_source",
         "daily_digest_enabled",
         "frost_alerts_enabled",
+        "risk_delivery_mode",
+        "quiet_hours_start",
+        "quiet_hours_end",
         "is_active",
         "created_at",
         "updated_at",
@@ -137,6 +140,11 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         index["name"]: index for index in inspector.get_indexes("fields")
     }
     assert field_indexes["uq_fields_one_active_per_user"]["unique"] == 1
+    field_checks = {
+        constraint["name"] for constraint in inspector.get_check_constraints("fields")
+    }
+    assert "ck_fields_risk_delivery_mode" in field_checks
+    assert "ck_fields_quiet_hours" in field_checks
     season_indexes = {
         index["name"]: index for index in inspector.get_indexes("crop_seasons")
     }
@@ -155,7 +163,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260718_0004"
+    assert revision == expected_schema_revision() == "20260719_0005"
 
 
 def test_migrations_adopt_legacy_user_and_backfill_field_settings(
@@ -204,7 +212,8 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
             sa.text(
                 "SELECT user_id, name, latitude, longitude, timezone, "
                 "timezone_source, elevation_source, daily_digest_enabled, "
-                "frost_alerts_enabled, is_active FROM fields"
+                "frost_alerts_enabled, risk_delivery_mode, quiet_hours_start, "
+                "quiet_hours_end, is_active FROM fields"
             )
         ).one()
         season_row = connection.execute(
@@ -222,12 +231,15 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
     assert field_row[6] is None
     assert bool(field_row[7]) is True
     assert bool(field_row[8]) is True
-    assert bool(field_row[9]) is True
+    assert field_row[9] == "immediate"
+    assert field_row[10] is None
+    assert field_row[11] is None
+    assert bool(field_row[12]) is True
     assert season_row[0] is not None
     assert season_row[1] == "sunflower"
     assert season_row[2] is None
     assert bool(season_row[3]) is True
-    assert revision == "20260718_0004"
+    assert revision == "20260719_0005"
 
 
 def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
@@ -260,7 +272,8 @@ def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
         row = connection.execute(
             sa.text(
                 "SELECT timezone_source, elevation_source, "
-                "daily_digest_enabled, frost_alerts_enabled "
+                "daily_digest_enabled, frost_alerts_enabled, risk_delivery_mode, "
+                "quiet_hours_start, quiet_hours_end "
                 "FROM fields WHERE user_id = :user_id"
             ),
             {"user_id": user_id},
@@ -271,3 +284,6 @@ def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
     assert row[1] == expected_source
     assert bool(row[2]) is True
     assert bool(row[3]) is True
+    assert row[4] == "immediate"
+    assert row[5] is None
+    assert row[6] is None
