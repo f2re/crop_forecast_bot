@@ -60,7 +60,7 @@ def _weather() -> AgroWeatherData:
             utc_offset_seconds=0,
             timezone="UTC",
             source="Open-Meteo Forecast API",
-            model="auto",
+            model="best_match",
             retrieved_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
             cache_ttl_seconds=3600,
         ),
@@ -68,7 +68,7 @@ def _weather() -> AgroWeatherData:
             {
                 "date": dates,
                 "local_date": list(dates.date),
-                # Operational values intentionally differ from ERA5-Land. The
+                # Operational values intentionally differ from ERA5. The
                 # climate section must use the homogeneous climate provider.
                 "t_max": [35.0] * 10 + [36.0] * 3,
                 "t_min": [25.0] * 10 + [26.0] * 3,
@@ -112,7 +112,7 @@ def _climate() -> ClimateReferenceData:
                     "et0_sum": [2.0 + offset * 0.01] * 10,
                     "wind_max": [7.0] * 10,
                     "data_kind": ["reanalysis"] * 10,
-                    "data_source": ["ERA5-Land"] * 10,
+                    "data_source": ["ERA5"] * 10,
                 }
             )
         )
@@ -128,7 +128,7 @@ def _climate() -> ClimateReferenceData:
             "et0_sum": [3.0] * 10,
             "wind_max": [7.0] * 10,
             "data_kind": ["reanalysis"] * 10,
-            "data_source": ["ERA5-Land"] * 10,
+            "data_source": ["ERA5"] * 10,
         }
     )
     return ClimateReferenceData(
@@ -137,8 +137,8 @@ def _climate() -> ClimateReferenceData:
             longitude=37.6,
             elevation_m=170.0,
             timezone="UTC",
-            source="ERA5-Land via Open-Meteo Historical Weather API",
-            model="era5_land",
+            source="ERA5 via Open-Meteo Historical Weather API",
+            model="era5",
             reference_start=date(1991, 1, 1),
             reference_end=date(2020, 12, 31),
             comparison_start=date(2026, 4, 1),
@@ -146,7 +146,7 @@ def _climate() -> ClimateReferenceData:
             retrieved_at=datetime(2026, 4, 11, tzinfo=timezone.utc),
             reference_cache_ttl_seconds=30 * 24 * 60 * 60,
             current_cache_ttl_seconds=6 * 60 * 60,
-            spatial_resolution_km=11.0,
+            spatial_resolution_km=25.0,
         ),
         reference_daily=pd.concat(reference_frames, ignore_index=True),
         current_daily=current,
@@ -167,7 +167,7 @@ async def test_report_contains_homogeneous_empirical_climate_reference() -> None
 
     assert climate_provider.requested_timezone == "UTC"
     assert climate_provider.requested_season_start == date(2026, 4, 1)
-    assert "Сезон ERA5-Land относительно базы 1991–2020" in report.text
+    assert "Сезон ERA5 относительно базы 1991–2020" in report.text
     assert "Средняя температура: 20.0°C" in report.text
     assert "Средняя температура: 30.0°C" not in report.text
     assert "эмпирический процентиль" in report.text
@@ -175,8 +175,8 @@ async def test_report_contains_homogeneous_empirical_climate_reference() -> None
     assert "не вероятность" in report.text
     assert "не полевая станция, не SPI/SPEI" in report.text
     assert "01.04.2026 — 10.04.2026" in report.text
-    assert "текущий сезон и база 1991–2020 из одной модели ERA5-Land" in report.text
-    assert "ERA5-Land via Open-Meteo Historical Weather API" in report.source
+    assert "текущий сезон и база 1991–2020 из одной модели ERA5" in report.text
+    assert "ERA5 via Open-Meteo Historical Weather API" in report.source
     assert len(report.text) <= 4096
 
 
@@ -192,8 +192,8 @@ async def test_climate_outage_degrades_report_without_losing_operational_data() 
     )
 
     assert "ГДД с начала сезона" in report.text
-    assert "однородный ряд ERA5-Land временно недоступен" in report.text
-    assert "ERA5-Land via Open-Meteo Historical Weather API" not in report.source
+    assert "однородный ряд ERA5 временно недоступен" in report.text
+    assert "ERA5 via Open-Meteo Historical Weather API" not in report.source
 
 
 @pytest.mark.asyncio
@@ -206,4 +206,4 @@ async def test_custom_weather_provider_does_not_trigger_default_climate_network(
         provider=FakeWeatherProvider(_weather()),
     )
 
-    assert "Сезон ERA5-Land относительно базы" not in report.text
+    assert "Сезон ERA5 относительно базы" not in report.text
