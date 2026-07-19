@@ -1,4 +1,4 @@
-"""Homogeneous ERA5-Land current-season and 1991-2020 reference series."""
+"""Homogeneous ERA5 current-season and 1991-2020 reference series."""
 from __future__ import annotations
 
 import asyncio
@@ -22,11 +22,14 @@ logger = logging.getLogger(__name__)
 
 REFERENCE_START = date(1991, 1, 1)
 REFERENCE_END = date(2020, 12, 31)
-CLIMATE_MODEL = "era5_land"
-CLIMATE_SOURCE = "ERA5-Land via Open-Meteo Historical Weather API"
+# Pure ERA5 is intentionally used for the whole comparison. Open-Meteo's pure
+# ERA5-Land configuration does not expose the complete precipitation/radiation
+# set required for a consistent precipitation + ET0 seasonal window.
+CLIMATE_MODEL = "era5"
+CLIMATE_SOURCE = "ERA5 via Open-Meteo Historical Weather API"
 REFERENCE_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
 CURRENT_CACHE_TTL_SECONDS = 6 * 60 * 60
-CLIMATE_SPATIAL_RESOLUTION_KM = 11.0
+CLIMATE_SPATIAL_RESOLUTION_KM = 25.0
 _DAILY_VARIABLES = (
     "temperature_2m_max",
     "temperature_2m_min",
@@ -38,7 +41,7 @@ _CORE_COLUMNS = ("t_mean", "precip_sum", "et0_sum")
 
 
 class OpenMeteoClimateError(ClimateProviderError):
-    """Open-Meteo could not return homogeneous ERA5-Land series."""
+    """Open-Meteo could not return homogeneous ERA5 series."""
 
 
 class OpenMeteoClimateProvider(ClimateProvider):
@@ -79,7 +82,7 @@ class OpenMeteoClimateProvider(ClimateProvider):
                 raise
             except Exception as exc:
                 logger.exception(
-                    "ERA5-Land climate comparison failed for %.5f, %.5f",
+                    "ERA5 climate comparison failed for %.5f, %.5f",
                     latitude,
                     longitude,
                 )
@@ -125,7 +128,7 @@ def _complete_current_prefix(
 ) -> pd.DataFrame:
     """Keep one continuous season prefix with all accumulated metrics available.
 
-    ERA5-Land variables can be published with different latency. Comparing a
+    Reanalysis variables can be published with different latency. Comparing a
     temperature window ending later than precipitation or ET0 would silently mix
     periods. Stop at the first missing calendar day or first row missing any core
     variable, and never resume after that gap.
@@ -180,7 +183,7 @@ def _fetch_climate_reference_sync(
     )
     if reference_start != REFERENCE_START or reference_end != REFERENCE_END:
         raise OpenMeteoClimateError(
-            "ERA5-Land reference does not cover the complete 1991-2020 period"
+            "ERA5 reference does not cover the complete 1991-2020 period"
         )
 
     current_frame = _complete_current_prefix(
@@ -189,13 +192,13 @@ def _fetch_climate_reference_sync(
     )
     if current_frame.empty:
         raise OpenMeteoClimateError(
-            "ERA5-Land current-season series has no complete shared daily window"
+            "ERA5 current-season series has no complete shared daily window"
         )
     current_start = min(current_frame["local_date"])
     current_end = max(current_frame["local_date"])
     if current_start != season_start:
         raise OpenMeteoClimateError(
-            "ERA5-Land current-season series does not reach the season start"
+            "ERA5 current-season series does not reach the season start"
         )
 
     resolved_timezone = _timezone_name(
@@ -203,11 +206,11 @@ def _fetch_climate_reference_sync(
     )
     current_timezone = _timezone_name(current_payload.get("timezone") or timezone_name)
     if current_timezone != resolved_timezone:
-        raise OpenMeteoClimateError("ERA5-Land responses use inconsistent timezones")
+        raise OpenMeteoClimateError("ERA5 responses use inconsistent timezones")
 
     raw_elevation = reference_payload.get("elevation")
     if raw_elevation is None:
-        raise OpenMeteoClimateError("ERA5-Land response does not contain elevation")
+        raise OpenMeteoClimateError("ERA5 response does not contain elevation")
 
     return ClimateReferenceData(
         meta=ClimateReferenceMeta(
