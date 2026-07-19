@@ -1,10 +1,33 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date
+
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.crud import NotificationTarget
 from src.database.models import CropSeason, Field, User
+from src.domain.risk_delivery import RiskDeliveryMode, validate_risk_delivery_mode
+
+
+@dataclass(frozen=True, slots=True)
+class EnabledNotificationTarget:
+    telegram_id: int
+    field_id: int
+    field_name: str
+    latitude: float
+    longitude: float
+    timezone: str
+    elevation_m: float | None
+    elevation_source: str | None
+    selected_crop: str
+    season_start_date: date | None
+    phenological_phase: str | None
+    daily_digest_enabled: bool
+    frost_alerts_enabled: bool
+    risk_delivery_mode: RiskDeliveryMode
+    quiet_hours_start: int | None
+    quiet_hours_end: int | None
 
 
 async def list_enabled_notification_targets(
@@ -12,7 +35,7 @@ async def list_enabled_notification_targets(
     *,
     daily_digest_only: bool = False,
     frost_alerts_only: bool = False,
-) -> list[NotificationTarget]:
+) -> list[EnabledNotificationTarget]:
     """Return every field enabled for the requested background notification.
 
     ``Field.is_active`` is intentionally not used here. The active field is a
@@ -32,6 +55,9 @@ async def list_enabled_notification_targets(
             Field.elevation_source,
             Field.daily_digest_enabled,
             Field.frost_alerts_enabled,
+            Field.risk_delivery_mode,
+            Field.quiet_hours_start,
+            Field.quiet_hours_end,
             CropSeason.crop_key,
             CropSeason.season_start_date,
             CropSeason.phenological_phase,
@@ -52,11 +78,11 @@ async def list_enabled_notification_targets(
         statement = statement.where(Field.frost_alerts_enabled.is_(True))
 
     result = await session.execute(statement)
-    targets: dict[int, NotificationTarget] = {}
+    targets: dict[int, EnabledNotificationTarget] = {}
     for row in result.all():
         targets.setdefault(
             row.field_id,
-            NotificationTarget(
+            EnabledNotificationTarget(
                 telegram_id=row.telegram_id,
                 field_id=row.field_id,
                 field_name=row.field_name,
@@ -72,6 +98,11 @@ async def list_enabled_notification_targets(
                 phenological_phase=row.phenological_phase,
                 daily_digest_enabled=bool(row.daily_digest_enabled),
                 frost_alerts_enabled=bool(row.frost_alerts_enabled),
+                risk_delivery_mode=validate_risk_delivery_mode(
+                    row.risk_delivery_mode or "immediate"
+                ),
+                quiet_hours_start=row.quiet_hours_start,
+                quiet_hours_end=row.quiet_hours_end,
             ),
         )
     return list(targets.values())
