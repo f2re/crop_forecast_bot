@@ -22,10 +22,12 @@ from src.application.ports.risk import RiskForecastProvider
 from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
 from src.bot.risk_alerts import (
     format_ensemble_data_unavailable,
-    format_ensemble_risk_alert,
+    format_ensemble_risk_digest,
 )
-from src.database.crud import NotificationTarget
-from src.database.notification_targets import list_enabled_notification_targets
+from src.database.notification_targets import (
+    EnabledNotificationTarget,
+    list_enabled_notification_targets,
+)
 from src.database.risk_history import (
     StoredRiskRun,
     prune_risk_runs_before,
@@ -33,6 +35,7 @@ from src.database.risk_history import (
     set_signal_delivery,
 )
 from src.domain.risk import EnsembleForecastMeta, RiskOutlook
+from src.domain.risk_delivery import is_quiet_time, plan_risk_delivery
 from src.infrastructure.coordination import (
     CoordinationBackend,
     LeaseLostError,
@@ -95,6 +98,17 @@ def _daily_digest_is_due(
     return _DAILY_DIGEST_LOCAL_START_HOUR <= local_hour < _DAILY_DIGEST_LOCAL_END_HOUR
 
 
+def _risk_delivery_preferences(
+    target: object,
+) -> tuple[str, int | None, int | None]:
+    """Read new preferences while keeping old test/compatibility targets usable."""
+    return (
+        str(getattr(target, "risk_delivery_mode", "immediate")),
+        getattr(target, "quiet_hours_start", None),
+        getattr(target, "quiet_hours_end", None),
+    )
+
+
 async def start_scheduler(
     bot: Bot,
     session_factory: SessionFactory,
@@ -143,7 +157,7 @@ async def _targets(
     *,
     daily_digest_only: bool = False,
     frost_alerts_only: bool = False,
-) -> list[NotificationTarget]:
+) -> list[EnabledNotificationTarget]:
     async with session_factory() as session:
         return await list_enabled_notification_targets(
             session,
@@ -178,6 +192,22 @@ async def _set_risk_delivery(
     async with session_factory() as session:
         return await set_signal_delivery(
             session,
+            signal_id=signal_id,
+            state=state,
+            notified_at=notified_at,
+        )
+
+
+async def _set_many_risk_deliveries(
+    session_factory: SessionFactory,
+    *,
+    signal_ids: tuple[int, ...],
+    state: str,
+    notified_at: datetime | None = None,
+) -> None:
+    for signal_id in signal_ids:
+        await _set_risk_delivery(
+            session_factory,
             signal_id=signal_id,
             state=state,
             notified_at=notified_at,
@@ -226,7 +256,7 @@ async def check_weather_risk_alerts(
     job_lock_ttl_seconds: int = _ENSEMBLE_JOB_LOCK_TTL,
     renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
-    """Screen all enabled fields and persist accepted ensemble runs."""
+    """Screen all enabled fields, persist accepted runs and send one compact digest."""
 
     job_guard = await RenewingLease.acquire(
         coordination,
@@ -251,22 +281,34 @@ async def check_weather_risk_alerts(
             for target in targets:
                 job_guard.ensure_owned()
                 try:
+                    local_now = _local_datetime(target.timezone)
+                    delivery_mode, quiet_start, quiet_end = (
+                        _risk_delivery_preferences(target)
+                    )
                     forecast = await job_guard.run(
                         risk_provider.fetch(target.latitude, target.longitude)
                     )
                     outlook = calc_ensemble_risks(
                         forecast,
-                        as_of_date=_local_datetime(target.timezone).date(),
+                        as_of_date=local_now.date(),
                     )
                     if not outlook.available:
+                        if is_quiet_time(local_now, quiet_start, quiet_end):
+                            logger.info(
+                                "Risk-data-unavailable notice deferred by quiet hours "
+                                "for user %s field %s",
+                                target.telegram_id,
+                                target.field_id,
+                            )
+                            continue
                         unavailable_key = (
                             "notification:weather-risk-data-unavailable:"
                             f"{target.telegram_id}:{target.field_id}:"
-                            f"{_local_date(target.timezone)}"
+                            f"{local_now.date().isoformat()}"
                         )
 
                         async def send_unavailable(
-                            target: NotificationTarget = target,
+                            target=target,
                             reason: str = outlook.status,
                         ) -> object:
                             return await bot.send_message(
@@ -296,7 +338,27 @@ async def check_weather_risk_alerts(
                             outlook=outlook,
                         )
                     )
-                    for event in outlook.events[:_MAX_RISK_ALERTS_PER_FIELD]:
+                    decision = plan_risk_delivery(
+                        outlook.events,
+                        mode=delivery_mode,
+                        local_datetime=local_now,
+                        quiet_hours_start=quiet_start,
+                        quiet_hours_end=quiet_end,
+                        max_events=_MAX_RISK_ALERTS_PER_FIELD,
+                    )
+                    if decision.deferred:
+                        logger.info(
+                            "Weather-risk delivery deferred for user %s field %s: %s",
+                            target.telegram_id,
+                            target.field_id,
+                            decision.reason,
+                        )
+                        continue
+                    if not decision.events or decision.dedup_token is None:
+                        continue
+
+                    signal_ids: list[int] = []
+                    for event in decision.events:
                         signal_id = stored_run.signal_ids.get(
                             (event.risk_type, event.event_date)
                         )
@@ -304,66 +366,68 @@ async def check_weather_risk_alerts(
                             raise RuntimeError(
                                 "Persisted risk signal is missing from the run"
                             )
-                        alert_key = (
-                            "notification:weather-risk:"
-                            f"{target.telegram_id}:{target.field_id}:"
-                            f"{event.risk_type}:{event.event_date.isoformat()}:"
-                            f"{event.level}"
+                        signal_ids.append(signal_id)
+                    selected_signal_ids = tuple(signal_ids)
+                    alert_key = (
+                        "notification:weather-risk-digest:"
+                        f"{target.telegram_id}:{target.field_id}:"
+                        f"{decision.dedup_token}"
+                    )
+
+                    async def send_digest(
+                        target=target,
+                        events=decision.events,
+                        priority_bypass: bool = decision.priority_bypass,
+                    ) -> object:
+                        return await bot.send_message(
+                            target.telegram_id,
+                            format_ensemble_risk_digest(
+                                events,
+                                outlook,
+                                field_name=target.field_name,
+                                crop=target.selected_crop,
+                                phase=target.phenological_phase,
+                                delivery_mode=delivery_mode,
+                                priority_bypass=priority_bypass,
+                            ),
                         )
 
-                        async def send(
-                            event=event,
-                            outlook=outlook,
-                            target: NotificationTarget = target,
-                        ) -> object:
-                            return await bot.send_message(
-                                target.telegram_id,
-                                format_ensemble_risk_alert(
-                                    event,
-                                    outlook,
-                                    field_name=target.field_name,
-                                    crop=target.selected_crop,
-                                    phase=target.phenological_phase,
-                                ),
-                            )
-
-                        await job_guard.run(
-                            _set_risk_delivery(
-                                session_factory,
-                                signal_id=signal_id,
-                                state="sending",
+                    await job_guard.run(
+                        _set_many_risk_deliveries(
+                            session_factory,
+                            signal_ids=selected_signal_ids,
+                            state="sending",
+                        )
+                    )
+                    try:
+                        sent = await job_guard.run(
+                            _send_once(
+                                coordination,
+                                alert_key,
+                                _ENSEMBLE_RISK_DEDUP_TTL,
+                                send_digest,
                             )
                         )
-                        try:
-                            sent = await job_guard.run(
-                                _send_once(
-                                    coordination,
-                                    alert_key,
-                                    _ENSEMBLE_RISK_DEDUP_TTL,
-                                    send,
-                                )
-                            )
-                        except LeaseLostError:
-                            raise
-                        except Exception:
-                            await job_guard.run(
-                                _set_risk_delivery(
-                                    session_factory,
-                                    signal_id=signal_id,
-                                    state="failed",
-                                )
-                            )
-                            raise
+                    except LeaseLostError:
+                        raise
+                    except Exception:
                         await job_guard.run(
-                            _set_risk_delivery(
+                            _set_many_risk_deliveries(
                                 session_factory,
-                                signal_id=signal_id,
-                                state="sent" if sent else "deduplicated",
-                                notified_at=(
-                                    datetime.now(timezone.utc) if sent else None
-                                ),
+                                signal_ids=selected_signal_ids,
+                                state="failed",
                             )
                         )
+                        raise
+                    notified_at = datetime.now(timezone.utc) if sent else None
+                    await job_guard.run(
+                        _set_many_risk_deliveries(
+                            session_factory,
+                            signal_ids=selected_signal_ids,
+                            state="sent" if sent else "deduplicated",
+                            notified_at=notified_at,
+                        )
+                    )
                 except LeaseLostError:
                     raise
                 except OpenMeteoEnsembleError as exc:
@@ -447,7 +511,7 @@ async def check_frost_alerts(
                         )
 
                         async def send_unavailable(
-                            target: NotificationTarget = target,
+                            target=target,
                             reason: str = str(risk["status_note"]),
                         ) -> object:
                             return await bot.send_message(
@@ -474,7 +538,7 @@ async def check_frost_alerts(
 
                         async def send(
                             event: dict = event,
-                            target: NotificationTarget = target,
+                            target=target,
                         ) -> object:
                             return await bot.send_message(
                                 target.telegram_id,
@@ -558,7 +622,7 @@ async def send_daily_digest(
 
                     async def send(
                         report_text: str = report.text,
-                        target: NotificationTarget = target,
+                        target=target,
                     ) -> object:
                         return await bot.send_message(target.telegram_id, report_text)
 
