@@ -265,7 +265,7 @@ jobs:
             --longitude 37.62 \
             --season-start "${season_start}" | tee operational-smoke.json
 
-      - name: Homogeneous ERA5-Land current/reference contract
+      - name: Homogeneous ERA5 current/reference contract
         if: steps.changes.outputs.run == 'true'
         shell: bash
         run: |
