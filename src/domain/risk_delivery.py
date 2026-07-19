@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from hashlib import sha256
-from typing import Literal
+from typing import Literal, cast
 
 from src.domain.risk import RiskEvent
 
@@ -29,7 +29,7 @@ class RiskDeliveryDecision:
 def validate_risk_delivery_mode(value: str) -> RiskDeliveryMode:
     if value not in _DELIVERY_MODES:
         raise ValueError("Неизвестный режим доставки погодных рисков.")
-    return value  # type: ignore[return-value]
+    return cast(RiskDeliveryMode, value)
 
 
 def risk_delivery_mode_label(value: str) -> str:
@@ -72,9 +72,15 @@ def is_quiet_time(
     return hour >= start_hour or hour < end_hour
 
 
+def _fraction_bucket(event: RiskEvent) -> int:
+    """Ten-percentage-point bucket matching the user-visible trend threshold."""
+    return min(10, max(0, int(event.member_fraction * 10)))
+
+
 def _state_token(events: tuple[RiskEvent, ...]) -> str:
     signature = "|".join(
-        f"{event.risk_type}:{event.event_date.isoformat()}:{event.level}"
+        f"{event.risk_type}:{event.event_date.isoformat()}:{event.level}:"
+        f"{_fraction_bucket(event)}"
         for event in events
     )
     digest = sha256(signature.encode("utf-8")).hexdigest()[:16]
@@ -90,7 +96,7 @@ def plan_risk_delivery(
     quiet_hours_end: int | None = None,
     max_events: int = 5,
 ) -> RiskDeliveryDecision:
-    """Choose a compact delivery without pretending to calibrate event probability.
+    """Choose a compact delivery without pretending to calibrate probability.
 
     Quiet hours defer watch/elevated signals. A high signal bypasses quiet hours.
     Daily digest mode is normally sent once per local date; a high signal bypasses
