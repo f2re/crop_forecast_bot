@@ -14,20 +14,23 @@ RELEASES_DIR="${RELEASES_DIR:-${APP_ROOT}/releases}"
 CURRENT_LINK="${CURRENT_LINK:-${APP_ROOT}/current}"
 PREVIOUS_LINK="${PREVIOUS_LINK:-${APP_ROOT}/previous}"
 STATE_ROOT="${STATE_ROOT:-/var/lib/crop-forecast-bot}"
+VENV_ROOT="${VENV_ROOT:-${STATE_ROOT}/venvs}"
 CACHE_ROOT="${CACHE_ROOT:-/var/cache/crop-forecast-bot}"
 LOG_ROOT="${LOG_ROOT:-/var/log/crop-forecast-bot}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/crop-forecast-bot}"
 ENV_FILE="${ENV_FILE:-/etc/crop-forecast-bot.env}"
 REPO_URL="${REPO_URL:-https://github.com/f2re/crop_forecast_bot.git}"
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-f2re/crop_forecast_bot}"
 BRANCH="${BRANCH:-main}"
 SERVICE_NAME="${SERVICE_NAME:-crop-forecast-bot.service}"
 UPDATE_TIMER_NAME="${UPDATE_TIMER_NAME:-crop-forecast-bot-update.timer}"
 LOCK_FILE="${LOCK_FILE:-/run/lock/crop-forecast-bot-deploy.lock}"
-KEEP_RELEASES="${KEEP_RELEASES:-4}"
-KEEP_BACKUPS="${KEEP_BACKUPS:-7}"
+KEEP_RELEASES="${KEEP_RELEASES:-2}"
+KEEP_BACKUPS="${KEEP_BACKUPS:-3}"
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 JOURNALCTL_BIN="${JOURNALCTL_BIN:-journalctl}"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 HEALTHCHECK_ATTEMPTS="${HEALTHCHECK_ATTEMPTS:-45}"
 HEALTHCHECK_INTERVAL_SECONDS="${HEALTHCHECK_INTERVAL_SECONDS:-2}"
 
@@ -94,6 +97,22 @@ load_runtime_env() {
   set +a
 }
 
+validate_boolean_env() {
+  local name="$1"
+  local value="$2"
+  case "${value}" in
+    true|false|1|0|yes|no|on|off) ;;
+    *) fail "${name} must be a boolean value" ;;
+  esac
+}
+
+is_true_value() {
+  case "${1:-false}" in
+    true|1|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 validate_runtime_env() {
   load_runtime_env
   [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] || fail "TELEGRAM_BOT_TOKEN is empty in ${ENV_FILE}"
@@ -102,13 +121,22 @@ validate_runtime_env() {
   [[ "${DATABASE_URL}" == postgresql+asyncpg://* ]] || \
     fail "Native production deployment requires postgresql+asyncpg:// DATABASE_URL"
   [[ -n "${REDIS_URL:-}" ]] || fail "REDIS_URL is empty in ${ENV_FILE}"
-  case "${RAG_ENABLED:-false}" in
-    true|false|1|0|yes|no|on|off) ;;
-    *) fail "RAG_ENABLED must be a boolean value" ;;
-  esac
-  if [[ "${RAG_ENABLED:-false}" =~ ^(true|1|yes|on)$ ]] && \
+
+  validate_boolean_env "RAG_ENABLED" "${RAG_ENABLED:-false}"
+  validate_boolean_env \
+    "CLIMATE_REFERENCE_ENABLED" "${CLIMATE_REFERENCE_ENABLED:-false}"
+  validate_boolean_env "AUTO_UPDATE_ENABLED" "${AUTO_UPDATE_ENABLED:-true}"
+  validate_boolean_env \
+    "AUTO_UPDATE_REQUIRE_GREEN_CI" "${AUTO_UPDATE_REQUIRE_GREEN_CI:-true}"
+  validate_boolean_env "RISK_CHECK_ON_STARTUP" "${RISK_CHECK_ON_STARTUP:-true}"
+
+  if is_true_value "${RAG_ENABLED:-false}" && \
      [[ "${INSTALL_RAG_PROFILE:-0}" != "1" ]]; then
     fail "RAG_ENABLED requires INSTALL_RAG_PROFILE=1"
+  fi
+  if is_true_value "${AUTO_UPDATE_REQUIRE_GREEN_CI:-true}"; then
+    [[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || \
+      fail "GITHUB_REPOSITORY must use owner/name format"
   fi
 }
 
@@ -127,7 +155,7 @@ run_as_app_in_release() {
 }
 
 prepare_runtime_directories() {
-  install -d -m 0755 "${APP_ROOT}" "${RELEASES_DIR}"
+  install -d -m 0755 "${APP_ROOT}" "${RELEASES_DIR}" "${VENV_ROOT}"
   install -d -m 0750 -o "${APP_USER}" -g "${APP_GROUP}" \
     "${STATE_ROOT}" "${STATE_ROOT}/data" "${STATE_ROOT}/data/literature" \
     "${STATE_ROOT}/models" "${CACHE_ROOT}" "${CACHE_ROOT}/pip" \
@@ -156,6 +184,16 @@ prepare_release_layout() {
   link_persistent_directory "${release}" logs "${LOG_ROOT}"
 }
 
+remote_branch_sha() {
+  local branch="${1:-${BRANCH}}"
+  local output sha
+  output="$(git ls-remote --exit-code --heads "${REPO_URL}" "refs/heads/${branch}")" || \
+    return 1
+  sha="$(printf '%s\n' "${output}" | awk 'NR == 1 {print $1}')"
+  [[ "${sha}" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+  printf '%s\n' "${sha,,}"
+}
+
 create_release() {
   local branch="${1:-${BRANCH}}"
   local timestamp staging final
@@ -179,19 +217,45 @@ create_release() {
 build_release() {
   local release="$1"
   local requirements_file="${release}/requirements.txt"
+  local python_version requirements_hash shared_venv staging_venv
+  local -a fingerprint_files=("${release}/requirements.txt")
+
   if [[ "${INSTALL_RAG_PROFILE:-0}" == "1" ]]; then
     requirements_file="${release}/requirements-rag.txt"
+    fingerprint_files+=("${release}/requirements-rag.txt")
     log "Optional RAG dependency profile is enabled"
   fi
 
-  log "Creating isolated Python environment"
-  python3 -m venv "${release}/.venv"
-  PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
-    "${release}/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-  PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
-    "${release}/.venv/bin/python" -m pip install -r "${requirements_file}"
+  python_version="$("${PYTHON_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+  requirements_hash="$({
+    printf 'python=%s\n' "${python_version}"
+    cat "${fingerprint_files[@]}"
+  } | sha256sum | awk '{print $1}')"
+  shared_venv="${VENV_ROOT}/py${python_version}-${requirements_hash:0:20}"
 
-  "${release}/.venv/bin/python" -m pip check
+  if [[ ! -x "${shared_venv}/bin/python" ]]; then
+    staging_venv="${VENV_ROOT}/.staging-${requirements_hash:0:20}-$$"
+    rm -rf "${staging_venv}"
+    log "Creating shared Python environment ${shared_venv}"
+    "${PYTHON_BIN}" -m venv "${staging_venv}"
+    PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
+      PIP_DISABLE_PIP_VERSION_CHECK=1 \
+      PIP_PREFER_BINARY=1 \
+      "${staging_venv}/bin/python" -m pip install --upgrade pip setuptools wheel
+    PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
+      PIP_DISABLE_PIP_VERSION_CHECK=1 \
+      PIP_PREFER_BINARY=1 \
+      "${staging_venv}/bin/python" -m pip install --prefer-binary --no-input \
+      -r "${requirements_file}"
+    "${staging_venv}/bin/python" -m pip check
+    mv "${staging_venv}" "${shared_venv}"
+  else
+    log "Reusing shared Python environment ${shared_venv}"
+    "${shared_venv}/bin/python" -m pip check
+  fi
+
+  rm -rf "${release}/.venv"
+  ln -s "${shared_venv}" "${release}/.venv"
   "${release}/.venv/bin/python" -m compileall -q \
     "${release}/alembic" "${release}/config" "${release}/src"
 }
@@ -357,6 +421,29 @@ prune_backups() {
   done
 }
 
+venv_is_referenced() {
+  local candidate="$1"
+  local link target
+  for link in "${RELEASES_DIR}"/*/.venv; do
+    [[ -L "${link}" ]] || continue
+    target="$(readlink -f "${link}" 2>/dev/null || true)"
+    [[ "${target}" == "${candidate}" ]] && return 0
+  done
+  return 1
+}
+
+prune_shared_venvs() {
+  local candidate
+  rm -rf "${VENV_ROOT}"/.staging-* 2>/dev/null || true
+  for candidate in "${VENV_ROOT}"/*; do
+    [[ -d "${candidate}" ]] || continue
+    if ! venv_is_referenced "${candidate}"; then
+      log "Removing unused shared Python environment ${candidate}"
+      rm -rf "${candidate}"
+    fi
+  done
+}
+
 prune_releases() {
   local current previous index release
   local -a releases=()
@@ -375,6 +462,7 @@ prune_releases() {
     log "Removing old release ${release}"
     rm -rf "${release}"
   done
+  prune_shared_venvs
 }
 
 render_template() {
