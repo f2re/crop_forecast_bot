@@ -54,6 +54,18 @@ def test_update_checks_remote_and_green_ci_before_clone() -> None:
     assert "keeping ${old_sha:0:12}" in update
 
 
+def test_update_backs_up_only_for_schema_change_or_explicit_request() -> None:
+    update = _read("scripts/update.sh")
+
+    assert "schema_revision_for_release" in update
+    assert 'old_schema_revision="$(schema_revision_for_release' in update
+    assert 'new_schema_revision="$(schema_revision_for_release' in update
+    assert 'is_true_value "${FORCE_DATABASE_BACKUP:-false}"' in update
+    assert "skipping pre-update backup" in update
+    assert "backup_created=true" in update
+    assert "the schema was unchanged, so no new backup was required" in update
+
+
 def test_dependency_environment_is_reused_until_requirements_change() -> None:
     common = _read("scripts/common.sh")
 
