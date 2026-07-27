@@ -1,10 +1,11 @@
 [Unit]
-Description=Weekly update check for Crop Forecast Bot
+Description=Check GitHub main for a green Crop Forecast Bot release
 Documentation=https://github.com/f2re/crop_forecast_bot
 
 [Timer]
-OnCalendar=Sun *-*-* 04:15:00
-RandomizedDelaySec=45m
+OnCalendar=*:0/15
+AccuracySec=1m
+RandomizedDelaySec=90s
 Persistent=true
 Unit=crop-forecast-bot-update.service
 
