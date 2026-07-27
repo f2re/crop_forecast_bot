@@ -22,7 +22,11 @@ from src.api.open_meteo import close_open_meteo_resources
 from src.api.open_meteo_ensemble import close_open_meteo_ensemble_resources
 from src.bot.errors import handle_runtime_error
 from src.bot.middlewares import CallbackIdempotencyMiddleware
-from src.bot.scheduler import start_scheduler, stop_scheduler
+from src.bot.scheduler import (
+    check_weather_risk_alerts,
+    start_scheduler,
+    stop_scheduler,
+)
 from src.database import Database, init_db
 from src.database.schema import require_current_schema
 from src.infrastructure.coordination import CoordinationBackend, create_coordination
@@ -102,6 +106,25 @@ def build_dispatcher(
 
         dispatcher.include_router(copy.deepcopy(rag_router))
     return dispatcher
+
+
+async def _run_startup_risk_check(
+    bot: Bot,
+    session_factory: Callable[[], Any],
+    coordination: CoordinationBackend,
+    delay_seconds: int,
+) -> None:
+    """Evaluate every saved alert-enabled field shortly after a healthy startup."""
+
+    await asyncio.sleep(delay_seconds)
+    try:
+        await check_weather_risk_alerts(bot, session_factory, coordination)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # A provider outage must not terminate Telegram polling. The scheduler
+        # will retry at the next configured cycle and records controlled errors.
+        logger.exception("Startup weather-risk screening failed")
 
 
 async def run(*, startup_smoke: bool = False) -> None:
@@ -186,8 +209,19 @@ async def run(*, startup_smoke: bool = False) -> None:
             run_heartbeat(settings.heartbeat_file),
             name="runtime-heartbeat",
         )
+        startup_risk_task: asyncio.Task[None] | None = None
         try:
             await start_scheduler(bot, database.get_session, coordination)
+            if settings.risk_check_on_startup:
+                startup_risk_task = asyncio.create_task(
+                    _run_startup_risk_check(
+                        bot,
+                        database.get_session,
+                        coordination,
+                        settings.risk_check_startup_delay_seconds,
+                    ),
+                    name="startup-weather-risk-check",
+                )
             logger.info("Crop Forecast Bot started with aiogram")
             notify_ready()
             await dispatcher.start_polling(
@@ -197,6 +231,10 @@ async def run(*, startup_smoke: bool = False) -> None:
             )
         finally:
             notify_stopping()
+            if startup_risk_task is not None:
+                startup_risk_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await startup_risk_task
             await stop_scheduler()
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
