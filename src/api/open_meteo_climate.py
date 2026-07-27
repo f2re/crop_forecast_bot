@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pandas as pd
 
+from config.settings import get_settings
 from src.api.open_meteo import (
     ARCHIVE_URL,
     _REQUEST_SEMAPHORE,
@@ -53,6 +54,11 @@ class OpenMeteoClimateProvider(ClimateProvider):
         timezone: str,
         season_start: date,
     ) -> ClimateReferenceData:
+        settings = get_settings()
+        if settings.app_env == "production" and not settings.climate_reference_enabled:
+            raise OpenMeteoClimateError(
+                "ERA5 climate comparison is disabled in the low-resource MVP profile"
+            )
         if not -90 <= latitude <= 90:
             raise ValueError(f"Latitude outside [-90, 90]: {latitude}")
         if not -180 <= longitude <= 180:
