@@ -33,17 +33,6 @@ def _env_int(name: str, default: int) -> int:
         raise RuntimeError(f"{name} must be an integer value") from exc
 
 
-def _env_cron_hours(name: str, default: str) -> str:
-    raw_value = os.getenv(name, default).strip()
-    try:
-        hours = sorted({int(part.strip()) for part in raw_value.split(",")})
-    except ValueError as exc:
-        raise RuntimeError(f"{name} must be a comma-separated list of hours") from exc
-    if not hours or any(hour < 0 or hour > 23 for hour in hours):
-        raise RuntimeError(f"{name} hours must be in the range 0..23")
-    return ",".join(str(hour) for hour in hours)
-
-
 @dataclass(frozen=True, slots=True)
 class Settings:
     telegram_bot_token: str
@@ -59,7 +48,6 @@ class Settings:
     risk_history_retention_days: int
     climate_reference_enabled: bool = False
     blocking_io_workers: int = 2
-    weather_risk_cron_hours: str = "0,6,12,18"
     risk_check_on_startup: bool = True
     risk_check_startup_delay_seconds: int = 120
 
@@ -81,13 +69,6 @@ class Settings:
             errors.append(
                 "RISK_CHECK_STARTUP_DELAY_SECONDS must be between 30 and 3600"
             )
-        try:
-            _env_cron_hours(
-                "WEATHER_RISK_CRON_HOURS",
-                self.weather_risk_cron_hours,
-            )
-        except RuntimeError as exc:
-            errors.append(str(exc))
         try:
             ZoneInfo(self.scheduler_timezone)
         except ZoneInfoNotFoundError:
@@ -147,10 +128,6 @@ def get_settings() -> Settings:
             default=False,
         ),
         blocking_io_workers=_env_int("BLOCKING_IO_WORKERS", 2),
-        weather_risk_cron_hours=_env_cron_hours(
-            "WEATHER_RISK_CRON_HOURS",
-            "0,6,12,18",
-        ),
         risk_check_on_startup=_env_bool(
             "RISK_CHECK_ON_STARTUP",
             default=True,
