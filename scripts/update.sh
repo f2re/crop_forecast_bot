@@ -19,6 +19,14 @@ old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 old_sha=""
 remote_sha=""
 
+schema_revision_for_release() {
+  local release="$1"
+  run_as_app_in_release \
+    "${release}" \
+    "${release}/.venv/bin/python" -c \
+    'from src.database.schema import expected_schema_revision; print(expected_schema_revision())'
+}
+
 [[ -n "${old_release}" && -d "${old_release}" ]] || \
   fail "No active release found. Run scripts/deploy.sh first."
 old_sha="$(git -C "${old_release}" rev-parse HEAD)"
@@ -60,7 +68,14 @@ if [[ "${NEW_RELEASE_SHA}" != "${remote_sha}" ]]; then
 fi
 
 build_release "${NEW_RELEASE}"
-backup_database
+old_schema_revision="$(schema_revision_for_release "${old_release}")"
+new_schema_revision="$(schema_revision_for_release "${NEW_RELEASE}")"
+if [[ "${old_schema_revision}" != "${new_schema_revision}" ]] || \
+   is_true_value "${FORCE_DATABASE_BACKUP:-false}"; then
+  backup_database
+else
+  log "Alembic head is unchanged (${new_schema_revision}); skipping pre-update backup"
+fi
 run_migrations "${NEW_RELEASE}"
 preflight_release "${NEW_RELEASE}"
 render_systemd_units_from_release "${NEW_RELEASE}"
