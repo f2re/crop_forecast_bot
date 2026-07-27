@@ -18,6 +18,7 @@ BRANCH="${1:-${BRANCH}}"
 old_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 old_sha=""
 remote_sha=""
+backup_created=false
 
 schema_revision_for_release() {
   local release="$1"
@@ -73,6 +74,7 @@ new_schema_revision="$(schema_revision_for_release "${NEW_RELEASE}")"
 if [[ "${old_schema_revision}" != "${new_schema_revision}" ]] || \
    is_true_value "${FORCE_DATABASE_BACKUP:-false}"; then
   backup_database
+  backup_created=true
 else
   log "Alembic head is unchanged (${new_schema_revision}); skipping pre-update backup"
 fi
@@ -83,7 +85,10 @@ activate_release "${NEW_RELEASE}"
 
 if ! restart_and_verify; then
   if restore_release_after_failed_activation "${NEW_RELEASE}" "${old_release}"; then
-    fail "Update was rolled back; database backup is available in ${BACKUP_ROOT}"
+    if is_true_value "${backup_created}"; then
+      fail "Update was rolled back; the pre-update backup is available in ${BACKUP_ROOT}"
+    fi
+    fail "Update was rolled back; the schema was unchanged, so no new backup was required"
   fi
   fail "Both the new and previous releases failed; inspect the service journal"
 fi
