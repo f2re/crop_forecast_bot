@@ -90,6 +90,35 @@ def test_latest_exact_sha_run_wins() -> None:
     assert decision.state == "ready"
 
 
+def test_release_gate_queries_ci_and_both_provider_workflows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    urls: list[str] = []
+
+    def fake_fetch(url: str, *, token: str | None, timeout: float) -> dict:
+        assert token is None
+        assert timeout == 10.0
+        urls.append(url)
+        return {
+            "workflow_runs": [
+                _run(status="completed", conclusion="success")
+            ]
+        }
+
+    monkeypatch.setattr(release_gate, "_fetch_json", fake_fetch)
+    decisions = release_gate.check_release(
+        repository="f2re/crop_forecast_bot",
+        sha=_SHA,
+        branch="main",
+    )
+
+    assert len(decisions) == 3
+    assert all(decision.deployable for decision in decisions)
+    assert any("/ci.yml/runs?" in url for url in urls)
+    assert any("/provider-smoke.yml/runs?" in url for url in urls)
+    assert any("/ensemble-provider-smoke.yml/runs?" in url for url in urls)
+
+
 def test_release_gate_cli_is_fail_closed_on_api_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -114,6 +143,7 @@ def test_release_gate_cli_accepts_green_ci_and_optional_absence(
         lambda **kwargs: (
             GateDecision("ready", "CI passed"),
             GateDecision("absent", "provider smoke not required"),
+            GateDecision("absent", "ensemble smoke not required"),
         ),
     )
     assert (
