@@ -65,9 +65,14 @@ jobs:
           redis-cli -n 15 ping | grep -qx PONG
 
       - name: Python static checks
+        shell: bash
         run: |
-          ruff check src config alembic tests
-          python -m compileall -q alembic config src tests
+          set -o pipefail
+          mkdir -p artifacts
+          {
+            ruff check src config alembic tests
+            python -m compileall -q alembic config src tests
+          } 2>&1 | tee artifacts/static-checks.log
 
       - name: Bash syntax
         run: bash -n scripts/*.sh
@@ -151,7 +156,7 @@ jobs:
           mkdir -p artifacts
           python -m pytest -q -m integration 2>&1 | tee artifacts/integration-tests.log
 
-      - name: Upload pytest logs
+      - name: Upload validation logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
