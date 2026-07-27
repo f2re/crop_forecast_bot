@@ -21,7 +21,7 @@ async def test_mvp_dispatcher_does_not_load_rag_by_default() -> None:
     )
     try:
         router_names = {router.name for router in dispatcher.sub_routers}
-        assert {"settings", "risks", "risk_history", "core"}.issubset(router_names)
+        assert {"settings", "risks", "risk-history", "core"}.issubset(router_names)
         assert "rag" not in router_names
     finally:
         await storage.close()
