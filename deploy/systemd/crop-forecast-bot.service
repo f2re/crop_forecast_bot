@@ -1,5 +1,5 @@
 [Unit]
-Description=Crop Forecast Telegram Bot (aiogram)
+Description=Crop Forecast Telegram Bot (aiogram MVP)
 Documentation=https://github.com/f2re/crop_forecast_bot
 Wants=network-online.target
 After=network-online.target postgresql.service redis-server.service
@@ -18,6 +18,11 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=PYTHONPATH=@CURRENT_LINK@
 Environment=HOME=@STATE_ROOT@
 Environment=XDG_CACHE_HOME=@CACHE_ROOT@
+Environment=MALLOC_ARENA_MAX=2
+Environment=OMP_NUM_THREADS=1
+Environment=OPENBLAS_NUM_THREADS=1
+Environment=MKL_NUM_THREADS=1
+Environment=NUMEXPR_NUM_THREADS=1
 ExecStartPre=@CURRENT_LINK@/.venv/bin/python -m src.ops.doctor --runtime
 ExecStart=@CURRENT_LINK@/.venv/bin/python -m src.bot.main
 Restart=always
@@ -27,6 +32,15 @@ TimeoutStartSec=120s
 TimeoutStopSec=30s
 KillSignal=SIGINT
 UMask=0027
+
+# Soft resource controls: the bot is mostly idle and must yield to PostgreSQL,
+# Redis and the operating system on small hosts. No hard MemoryMax is used so a
+# short pandas calculation cannot cause an avoidable restart.
+CPUWeight=50
+IOWeight=50
+MemoryHigh=384M
+TasksMax=64
+OOMScoreAdjust=100
 
 RuntimeDirectory=crop-forecast-bot
 RuntimeDirectoryMode=0750
