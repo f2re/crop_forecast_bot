@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import copy
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack, suppress
 from typing import Any
 
@@ -20,7 +22,11 @@ from src.api.open_meteo import close_open_meteo_resources
 from src.api.open_meteo_ensemble import close_open_meteo_ensemble_resources
 from src.bot.errors import handle_runtime_error
 from src.bot.middlewares import CallbackIdempotencyMiddleware
-from src.bot.scheduler import start_scheduler, stop_scheduler
+from src.bot.scheduler import (
+    check_weather_risk_alerts,
+    start_scheduler,
+    stop_scheduler,
+)
 from src.database import Database, init_db
 from src.database.schema import require_current_schema
 from src.infrastructure.coordination import CoordinationBackend, create_coordination
@@ -73,6 +79,7 @@ def build_dispatcher(
     storage: BaseStorage,
     session_factory: Callable[[], Any],
     coordination: CoordinationBackend,
+    rag_enabled: bool = False,
 ) -> Dispatcher:
     """Build the production router graph without starting external services."""
 
@@ -84,22 +91,43 @@ def build_dispatcher(
     )
 
     from src.bot.handlers.core import router as core_router
-    from src.bot.handlers.rag import router as rag_router
     from src.bot.handlers.risk_history import router as risk_history_router
     from src.bot.handlers.risks import router as risks_router
     from src.bot.handlers.settings import router as settings_router
 
-    # Settings precede the legacy core handlers so old toggle callbacks are
-    # rejected rather than replayed as non-idempotent state inversions.
+    # Settings precede the core handlers so stale toggle callbacks are rejected
+    # rather than replayed as non-idempotent state inversions.
     dispatcher.include_router(copy.deepcopy(settings_router))
     dispatcher.include_router(copy.deepcopy(risks_router))
     dispatcher.include_router(copy.deepcopy(risk_history_router))
     dispatcher.include_router(copy.deepcopy(core_router))
-    dispatcher.include_router(copy.deepcopy(rag_router))
+    if rag_enabled:
+        from src.bot.handlers.rag import router as rag_router
+
+        dispatcher.include_router(copy.deepcopy(rag_router))
     return dispatcher
 
 
-async def run() -> None:
+async def _run_startup_risk_check(
+    bot: Bot,
+    session_factory: Callable[[], Any],
+    coordination: CoordinationBackend,
+    delay_seconds: int,
+) -> None:
+    """Evaluate every saved alert-enabled field shortly after a healthy startup."""
+
+    await asyncio.sleep(delay_seconds)
+    try:
+        await check_weather_risk_alerts(bot, session_factory, coordination)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        # A provider outage must not terminate Telegram polling. The scheduler
+        # will retry at the next configured cycle and records controlled errors.
+        logger.exception("Startup weather-risk screening failed")
+
+
+async def run(*, startup_smoke: bool = False) -> None:
     settings = get_settings()
     settings.validate()
     logging.basicConfig(
@@ -107,7 +135,21 @@ async def run() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # All synchronous provider adapters use asyncio.to_thread(). Bound the shared
+    # executor so a weak server cannot create a large burst of worker threads.
+    loop = asyncio.get_running_loop()
+    blocking_executor = ThreadPoolExecutor(
+        max_workers=settings.blocking_io_workers,
+        thread_name_prefix="cropbot-io",
+    )
+    loop.set_default_executor(blocking_executor)
+
     async with AsyncExitStack() as stack:
+        stack.callback(
+            blocking_executor.shutdown,
+            wait=True,
+            cancel_futures=True,
+        )
         stack.push_async_callback(close_open_meteo_resources)
         stack.push_async_callback(close_open_meteo_ensemble_resources)
         database: Database = init_db(settings.database_url)
@@ -138,6 +180,28 @@ async def run() -> None:
             storage=storage,
             session_factory=database.get_session,
             coordination=coordination,
+            rag_enabled=settings.rag_enabled,
+        )
+
+        if startup_smoke:
+            try:
+                await start_scheduler(bot, database.get_session, coordination)
+                if not dispatcher.resolve_used_update_types():
+                    raise RuntimeError("Dispatcher has no reachable update handlers")
+                logger.info("MVP startup smoke passed")
+                print("MVP startup smoke passed")
+            finally:
+                await stop_scheduler()
+            return
+
+        # Do not report systemd readiness until the real Telegram token and
+        # network path have been accepted by Telegram. This prevents a release
+        # with an invalid token or blocked egress from passing the health check.
+        identity = await bot.get_me()
+        logger.info(
+            "Telegram API verified for bot id=%s username=%s",
+            identity.id,
+            identity.username or "<none>",
         )
         await configure_bot_commands(bot)
 
@@ -145,8 +209,19 @@ async def run() -> None:
             run_heartbeat(settings.heartbeat_file),
             name="runtime-heartbeat",
         )
+        startup_risk_task: asyncio.Task[None] | None = None
         try:
             await start_scheduler(bot, database.get_session, coordination)
+            if settings.risk_check_on_startup:
+                startup_risk_task = asyncio.create_task(
+                    _run_startup_risk_check(
+                        bot,
+                        database.get_session,
+                        coordination,
+                        settings.risk_check_startup_delay_seconds,
+                    ),
+                    name="startup-weather-risk-check",
+                )
             logger.info("Crop Forecast Bot started with aiogram")
             notify_ready()
             await dispatcher.start_polling(
@@ -156,6 +231,10 @@ async def run() -> None:
             )
         finally:
             notify_stopping()
+            if startup_risk_task is not None:
+                startup_risk_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await startup_risk_task
             await stop_scheduler()
             heartbeat_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -163,9 +242,16 @@ async def run() -> None:
             logger.info("Crop Forecast Bot stopped cleanly")
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Crop Forecast Telegram Bot")
+    parser.add_argument(
+        "--startup-smoke",
+        action="store_true",
+        help="assemble the production runtime without contacting Telegram",
+    )
+    args = parser.parse_args(argv)
     try:
-        asyncio.run(run())
+        asyncio.run(run(startup_smoke=args.startup_smoke))
     except (KeyboardInterrupt, SystemExit):
         pass
 

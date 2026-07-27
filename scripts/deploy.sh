@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Native installation for Debian/Ubuntu/Astra-compatible hosts.
-# Installs system packages, PostgreSQL/Redis, an isolated release and systemd.
+# Native minimal installation for Debian/Ubuntu/Astra-compatible hosts.
+# Installs only the runtime stack required by the MVP: aiogram, PostgreSQL,
+# Redis, provider clients and the pull-based systemd update timer.
 
 # shellcheck source=scripts/common.sh
 source "$(cd "$(dirname "$0")" && pwd)/common.sh"
@@ -12,12 +13,11 @@ require_debian_family
 
 install_system_packages() {
   export DEBIAN_FRONTEND=noninteractive
-  log "Installing operating-system dependencies"
+  log "Installing minimal operating-system dependencies"
   apt-get update
   apt-get install -y --no-install-recommends \
-    ca-certificates git openssl curl util-linux rsync \
-    python3 python3-venv python3-dev build-essential \
-    libpq-dev gdal-bin libgdal-dev \
+    ca-certificates git openssl util-linux \
+    python3 python3-venv \
     postgresql postgresql-client redis-server
 }
 
@@ -75,8 +75,18 @@ LOG_LEVEL=INFO
 SCHEDULER_TIMEZONE=Europe/Moscow
 HEARTBEAT_FILE=/run/crop-forecast-bot/heartbeat
 OPEN_METEO_CACHE_PATH=/var/cache/crop-forecast-bot/openmeteo
+RISK_HISTORY_RETENTION_DAYS=30
+BLOCKING_IO_WORKERS=2
+CLIMATE_REFERENCE_ENABLED=false
+RISK_CHECK_ON_STARTUP=true
+RISK_CHECK_STARTUP_DELAY_SECONDS=120
 RAG_ENABLED=false
 INSTALL_RAG_PROFILE=0
+AUTO_UPDATE_ENABLED=true
+AUTO_UPDATE_REQUIRE_GREEN_CI=true
+GITHUB_REPOSITORY=f2re/crop_forecast_bot
+GITHUB_API_URL=https://api.github.com
+GITHUB_API_TOKEN=
 LLM_PROVIDER=groq
 GROQ_API_KEY=
 TOGETHER_API_KEY=
@@ -129,13 +139,16 @@ if ! restart_and_verify; then
   fail "Service failed after deployment and no healthy previous release was available"
 fi
 
-if [[ "${ENABLE_AUTO_UPDATE:-0}" == "1" ]]; then
+auto_update_value="${ENABLE_AUTO_UPDATE:-${AUTO_UPDATE_ENABLED:-true}}"
+validate_boolean_env "AUTO_UPDATE_ENABLED" "${auto_update_value}"
+if is_true_value "${auto_update_value}"; then
   service_control enable --now "${UPDATE_TIMER_NAME}"
-  log "Automatic update timer enabled"
+  log "Automatic green-main update timer enabled"
 else
   service_control disable --now "${UPDATE_TIMER_NAME}" >/dev/null 2>&1 || true
+  log "Automatic update timer disabled by configuration"
 fi
 
 prune_releases
-log "Native deployment completed: ${NEW_RELEASE_SHA}"
+log "Native MVP deployment completed: ${NEW_RELEASE_SHA}"
 service_control --no-pager --full status "${SERVICE_NAME}"

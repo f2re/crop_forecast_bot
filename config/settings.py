@@ -46,6 +46,10 @@ class Settings:
     heartbeat_file: Path
     open_meteo_cache_path: Path
     risk_history_retention_days: int
+    climate_reference_enabled: bool = False
+    blocking_io_workers: int = 2
+    risk_check_on_startup: bool = True
+    risk_check_startup_delay_seconds: int = 120
 
     def validate(self) -> None:
         errors: list[str] = []
@@ -59,6 +63,12 @@ class Settings:
             errors.append("COORDINATION_NAMESPACE must not be empty")
         if not 7 <= self.risk_history_retention_days <= 3650:
             errors.append("RISK_HISTORY_RETENTION_DAYS must be between 7 and 3650")
+        if not 1 <= self.blocking_io_workers <= 8:
+            errors.append("BLOCKING_IO_WORKERS must be between 1 and 8")
+        if not 30 <= self.risk_check_startup_delay_seconds <= 3600:
+            errors.append(
+                "RISK_CHECK_STARTUP_DELAY_SECONDS must be between 30 and 3600"
+            )
         try:
             ZoneInfo(self.scheduler_timezone)
         except ZoneInfoNotFoundError:
@@ -112,6 +122,19 @@ def get_settings() -> Settings:
         risk_history_retention_days=_env_int(
             "RISK_HISTORY_RETENTION_DAYS",
             90,
+        ),
+        climate_reference_enabled=_env_bool(
+            "CLIMATE_REFERENCE_ENABLED",
+            default=False,
+        ),
+        blocking_io_workers=_env_int("BLOCKING_IO_WORKERS", 2),
+        risk_check_on_startup=_env_bool(
+            "RISK_CHECK_ON_STARTUP",
+            default=True,
+        ),
+        risk_check_startup_delay_seconds=_env_int(
+            "RISK_CHECK_STARTUP_DELAY_SECONDS",
+            120,
         ),
     )
 

@@ -1,5 +1,5 @@
 [Unit]
-Description=Update Crop Forecast Bot from Git
+Description=Deploy a new green Crop Forecast Bot commit from GitHub
 Documentation=https://github.com/f2re/crop_forecast_bot
 Wants=network-online.target
 After=network-online.target postgresql.service redis-server.service
@@ -9,8 +9,13 @@ ConditionPathIsSymbolicLink=@CURRENT_LINK@
 Type=oneshot
 ExecStart=/usr/bin/bash @CURRENT_LINK@/scripts/update.sh @BRANCH@
 TimeoutStartSec=3600
-Nice=10
+Nice=15
 IOSchedulingClass=idle
+CPUWeight=20
+IOWeight=20
+OOMScoreAdjust=250
+Environment=MALLOC_ARENA_MAX=2
+Environment=PIP_DISABLE_PIP_VERSION_CHECK=1
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=crop-forecast-bot-update
