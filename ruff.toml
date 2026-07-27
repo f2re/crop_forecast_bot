@@ -1,0 +1,8 @@
+target-version = "py311"
+
+[lint]
+# Keep the established blocking baseline deterministic across Ruff releases.
+# Import sorting, typing, complexity and security families are introduced in
+# controlled slices after the existing codebase is cleaned, not implicitly by a
+# tool upgrade.
+select = ["E4", "E7", "E9", "F"]
