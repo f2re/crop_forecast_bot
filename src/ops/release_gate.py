@@ -131,6 +131,11 @@ def check_release(
     workflows = (
         ("ci.yml", "CI", True),
         ("provider-smoke.yml", "Live provider smoke", False),
+        (
+            "ensemble-provider-smoke.yml",
+            "Ensemble provider smoke",
+            False,
+        ),
     )
     decisions: list[GateDecision] = []
     for workflow, label, required in workflows:
