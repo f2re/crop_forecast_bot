@@ -64,8 +64,12 @@ create_runtime_config() {
   fi
   create_local_database "${db_name}" "${db_user}" "${db_password}"
 
-  umask 0027
-  cat > "${ENV_FILE}" <<EOF
+  # Keep the secret file private without leaking a restrictive umask into venv
+  # creation. A leaked 0027 umask made root-owned console scripts inaccessible
+  # to the unprivileged cropbot runtime user on a fresh installation.
+  (
+    umask 0027
+    cat > "${ENV_FILE}" <<EOF
 APP_ENV=production
 TELEGRAM_BOT_TOKEN=${token}
 DATABASE_URL=postgresql+asyncpg://${db_user}:${db_password}@127.0.0.1:5432/${db_name}
@@ -92,6 +96,7 @@ GROQ_API_KEY=
 TOGETHER_API_KEY=
 OPENAI_API_KEY=
 EOF
+  )
   chown root:"${APP_GROUP}" "${ENV_FILE}"
   chmod 0640 "${ENV_FILE}"
   log "Runtime configuration created at ${ENV_FILE}"
