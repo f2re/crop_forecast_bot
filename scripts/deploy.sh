@@ -102,6 +102,44 @@ EOF
   log "Runtime configuration created at ${ENV_FILE}"
 }
 
+repair_preflight_paths() {
+  local heartbeat_dir cache_dir path
+  local -a writable_paths
+
+  heartbeat_dir="$(dirname "${HEARTBEAT_FILE:-/run/crop-forecast-bot/heartbeat}")"
+  cache_dir="$(dirname "${OPEN_METEO_CACHE_PATH:-${CACHE_ROOT}/openmeteo}")"
+
+  case "${heartbeat_dir}" in
+    /run/crop-forecast-bot|/run/crop-forecast-bot/*) ;;
+    *) fail "HEARTBEAT_FILE must be inside /run/crop-forecast-bot" ;;
+  esac
+  case "${cache_dir}" in
+    "${CACHE_ROOT}"|"${CACHE_ROOT}/"*) ;;
+    *) fail "OPEN_METEO_CACHE_PATH must be inside ${CACHE_ROOT}" ;;
+  esac
+
+  writable_paths=(
+    "${STATE_ROOT}"
+    "${STATE_ROOT}/data"
+    "${STATE_ROOT}/data/literature"
+    "${STATE_ROOT}/models"
+    "${LOG_ROOT}"
+    "${CACHE_ROOT}"
+    "${cache_dir}"
+    "${heartbeat_dir}"
+  )
+
+  # create_release() copies repository seed directories as root. Re-apply the
+  # runtime owner after that copy and create the systemd RuntimeDirectory before
+  # the deployment preflight, which intentionally runs before service start.
+  install -d -m 0750 -o "${APP_USER}" -g "${APP_GROUP}" "${writable_paths[@]}"
+  for path in "${writable_paths[@]}"; do
+    if ! run_as_app /usr/bin/test -w "${path}"; then
+      fail "Runtime path is not writable by ${APP_USER}: ${path}"
+    fi
+  done
+}
+
 install_system_packages
 acquire_deploy_lock
 ensure_service_account
@@ -126,6 +164,7 @@ fi
 validate_runtime_env
 previous_release="$(readlink -f "${CURRENT_LINK}" 2>/dev/null || true)"
 create_release "${BRANCH}"
+repair_preflight_paths
 build_release "${NEW_RELEASE}"
 backup_database
 run_migrations "${NEW_RELEASE}"
