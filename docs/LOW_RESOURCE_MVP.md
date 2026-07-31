@@ -1,6 +1,6 @@
 # Эксплуатация MVP на слабом сервере
 
-Дата актуализации: **2026-07-27**.
+Дата актуализации: **2026-07-31**.
 
 ## Назначение профиля
 
@@ -28,7 +28,7 @@ CLIMATE_REFERENCE_ENABLED=false
 
 ## Минимальная установка
 
-Поддерживаемый путь — Debian 12 или совместимая система с Python 3.11+ и systemd.
+Поддерживаемый путь — Debian 12, Ubuntu 22.04 или совместимая система с Python 3.10+ и systemd.
 
 ```bash
 git clone https://github.com/f2re/crop_forecast_bot.git
@@ -116,7 +116,7 @@ git ls-remote main
 → CI green: shallow clone точного main
 → повторная проверка SHA
 → shared virtualenv или установка изменённых dependencies
-→ backup PostgreSQL
+→ backup PostgreSQL только при изменении Alembic head
 → Alembic upgrade
 → runtime preflight
 → atomic activation
@@ -124,7 +124,7 @@ git ls-remote main
 → при ошибке rollback
 ```
 
-Обязателен успешный push-run workflow `ci.yml` для точного SHA `main`. Если для этого SHA запущен `provider-smoke.yml`, он также должен завершиться успешно.
+Обязателен успешный push-run workflow `ci.yml` для точного SHA `main`. Если для этого SHA зарегистрированы `provider-smoke.yml` или `ensemble-provider-smoke.yml`, они также должны завершиться успешно.
 
 Для публичного репозитория токен GitHub необязателен. При необходимости можно задать read-only token:
 
@@ -161,7 +161,9 @@ sudo systemctl enable --now crop-forecast-bot-update.timer
 
 ## Экономия диска и времени обновления
 
-Virtualenv хранится отдельно от release и определяется содержимым requirements и minor-версией Python. Пока зависимости не изменились, новый release использует уже проверенный environment и не выполняет повторный `pip install`.
+Virtualenv хранится отдельно от release и определяется содержимым requirements, версией layout и minor-версией Python. Он создаётся сразу по окончательному пути: console-script shebang не ломается перемещением каталога. Marker `.cropbot-complete` не позволяет повторно использовать оборванную установку зависимостей.
+
+Пока fingerprint не изменился, новый release использует уже проверенный environment и не выполняет повторный `pip install`.
 
 По умолчанию сохраняются:
 
@@ -214,6 +216,49 @@ sudo systemctl start crop-forecast-bot-update.service
 
 ```bash
 sudo bash /opt/crop-forecast-bot/current/scripts/rollback.sh
+```
+
+### `alembic: Permission denied` во время первого deploy
+
+В release `2ad11ae372c6` причина состояла из двух ошибок установщика:
+
+1. `umask 0027`, применённый при создании `/etc/crop-forecast-bot.env`, оставался активным и делал root-owned virtualenv недоступным пользователю `cropbot`;
+2. virtualenv создавался под временным именем и затем перемещался, хотя console scripts содержат абсолютный shebang.
+
+Проверка старого release:
+
+```bash
+release=/opt/crop-forecast-bot/releases/20260731T131352Z-2ad11ae372c6
+
+namei -l "$release/.venv/bin/alembic"
+readlink -f "$release/.venv"
+stat -c '%A %U:%G %n' \
+  /var/lib/crop-forecast-bot \
+  /var/lib/crop-forecast-bot/venvs \
+  "$(readlink -f "$release/.venv")" \
+  "$release/.venv/bin/python" \
+  "$release/.venv/bin/alembic"
+head -n 1 "$release/.venv/bin/alembic"
+findmnt -no TARGET,OPTIONS -T "$release/.venv/bin/alembic"
+
+sudo -u cropbot "$release/.venv/bin/python" -c \
+  'import sys, alembic; print(sys.executable, alembic.__version__)'
+```
+
+`head -n 1` у повреждённого launcher обычно показывает удалённый путь `.staging-…/bin/python`. Отсутствие `x` на каталогах для `cropbot` или опция `noexec` также видны командами выше.
+
+После попадания исправления в `main` достаточно обновить checkout и повторить deploy. Новый fingerprint создаёт отдельный исправный virtualenv; старый удалять вручную не требуется:
+
+```bash
+git pull --ff-only origin main
+sudo TOKEN_FILE=/root/cropbot-token bash scripts/deploy.sh
+```
+
+Для ручной миграции всегда используется module invocation, не console script:
+
+```bash
+sudo -u cropbot bash -lc \
+  'cd /opt/crop-forecast-bot/current && .venv/bin/python -m alembic current'
 ```
 
 ## Критерии исправной установки
