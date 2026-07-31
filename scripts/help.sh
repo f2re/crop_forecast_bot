@@ -58,9 +58,9 @@ Production startup-smoke без Telegram-сети:
   sudo systemctl restart crop-forecast-bot
 
 База данных:
-  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic current'
-  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic heads'
-  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/alembic upgrade head'
+  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/python -m alembic current'
+  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/python -m alembic heads'
+  sudo -u cropbot bash -lc 'cd ${CURRENT} && .venv/bin/python -m alembic upgrade head'
   sudo bash ${CURRENT}/scripts/verify-backup-restore.sh
 
 Ресурсный профиль по умолчанию:
