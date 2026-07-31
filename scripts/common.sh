@@ -155,11 +155,12 @@ run_as_app_in_release() {
 }
 
 prepare_runtime_directories() {
-  install -d -m 0755 "${APP_ROOT}" "${RELEASES_DIR}" "${VENV_ROOT}"
+  install -d -m 0755 "${APP_ROOT}" "${RELEASES_DIR}"
   install -d -m 0750 -o "${APP_USER}" -g "${APP_GROUP}" \
     "${STATE_ROOT}" "${STATE_ROOT}/data" "${STATE_ROOT}/data/literature" \
     "${STATE_ROOT}/models" "${CACHE_ROOT}" "${CACHE_ROOT}/pip" \
     "${CACHE_ROOT}/huggingface" "${LOG_ROOT}"
+  install -d -m 0755 "${VENV_ROOT}"
   install -d -m 0700 "${BACKUP_ROOT}"
 }
 
@@ -217,7 +218,7 @@ create_release() {
 build_release() {
   local release="$1"
   local requirements_file="${release}/requirements.txt"
-  local python_version requirements_hash shared_venv staging_venv
+  local python_version requirements_hash shared_venv complete_marker
   local -a fingerprint_files=("${release}/requirements.txt")
 
   if [[ "${INSTALL_RAG_PROFILE:-0}" == "1" ]]; then
@@ -229,29 +230,40 @@ build_release() {
   python_version="$("${PYTHON_BIN}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
   requirements_hash="$({
     printf 'python=%s\n' "${python_version}"
+    printf 'venv-layout=2\n'
     cat "${fingerprint_files[@]}"
   } | sha256sum | awk '{print $1}')"
   shared_venv="${VENV_ROOT}/py${python_version}-${requirements_hash:0:20}"
+  complete_marker="${shared_venv}/.cropbot-complete"
 
-  if [[ ! -x "${shared_venv}/bin/python" ]]; then
-    staging_venv="${VENV_ROOT}/.staging-${requirements_hash:0:20}-$$"
-    rm -rf "${staging_venv}"
+  if [[ ! -x "${shared_venv}/bin/python" || ! -s "${complete_marker}" ]]; then
+    rm -rf "${shared_venv}"
     log "Creating shared Python environment ${shared_venv}"
-    "${PYTHON_BIN}" -m venv "${staging_venv}"
-    PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
-      PIP_DISABLE_PIP_VERSION_CHECK=1 \
-      PIP_PREFER_BINARY=1 \
-      "${staging_venv}/bin/python" -m pip install --upgrade pip setuptools wheel
-    PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
-      PIP_DISABLE_PIP_VERSION_CHECK=1 \
-      PIP_PREFER_BINARY=1 \
-      "${staging_venv}/bin/python" -m pip install --prefer-binary --no-input \
-      -r "${requirements_file}"
-    "${staging_venv}/bin/python" -m pip check
-    mv "${staging_venv}" "${shared_venv}"
+    if ! (
+      umask 0022
+      "${PYTHON_BIN}" -m venv "${shared_venv}" &&
+      PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
+        PIP_DISABLE_PIP_VERSION_CHECK=1 \
+        PIP_PREFER_BINARY=1 \
+        "${shared_venv}/bin/python" -m pip install --upgrade pip setuptools wheel &&
+      PIP_CACHE_DIR="${CACHE_ROOT}/pip" \
+        PIP_DISABLE_PIP_VERSION_CHECK=1 \
+        PIP_PREFER_BINARY=1 \
+        "${shared_venv}/bin/python" -m pip install --prefer-binary --no-input \
+        -r "${requirements_file}" &&
+      "${shared_venv}/bin/python" -m pip check &&
+      printf '%s\n' "${requirements_hash}" > "${complete_marker}"
+    ); then
+      rm -rf "${shared_venv}"
+      fail "Failed to create shared Python environment ${shared_venv}"
+    fi
   else
     log "Reusing shared Python environment ${shared_venv}"
     "${shared_venv}/bin/python" -m pip check
+  fi
+
+  if ! run_as_app "${shared_venv}/bin/python" -c 'import alembic'; then
+    fail "Shared Python environment is not executable by ${APP_USER}: ${shared_venv}"
   fi
 
   rm -rf "${release}/.venv"
@@ -273,13 +285,13 @@ run_migrations() {
   local release="$1"
   [[ -f "${release}/alembic.ini" ]] || \
     fail "Release does not contain alembic.ini"
-  [[ -x "${release}/.venv/bin/alembic" ]] || \
-    fail "Release virtualenv does not contain Alembic"
+  [[ -x "${release}/.venv/bin/python" ]] || \
+    fail "Release virtualenv does not contain an executable Python interpreter"
 
   log "Applying Alembic migrations"
   run_as_app_in_release \
     "${release}" \
-    "${release}/.venv/bin/alembic" upgrade head
+    "${release}/.venv/bin/python" -m alembic upgrade head
 }
 
 replace_symlink() {
