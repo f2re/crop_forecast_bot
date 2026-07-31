@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import tempfile
 from pathlib import Path
 
 from redis.asyncio import Redis
@@ -27,6 +28,20 @@ def _check_rag_dependencies() -> list[str]:
     ]
 
 
+def _probe_writable_directory(path: Path) -> None:
+    """Create and remove a unique file without colliding with a stale root probe."""
+
+    path.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix=".write-test-",
+        dir=path,
+    ) as probe:
+        probe.write("ok")
+        probe.flush()
+
+
 async def check_runtime() -> list[str]:
     settings = get_settings()
     errors: list[str] = []
@@ -44,10 +59,7 @@ async def check_runtime() -> list[str]:
     }
     for path in writable_paths:
         try:
-            path.mkdir(parents=True, exist_ok=True)
-            probe = path / ".write-test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink()
+            _probe_writable_directory(path)
         except OSError as exc:
             errors.append(f"Path is not writable: {path}: {exc}")
 
