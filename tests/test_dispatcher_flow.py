@@ -6,7 +6,7 @@ import pytest
 from aiogram.fsm.storage.memory import MemoryStorage
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import src.bot.handlers.core as core_module
+import src.bot.handlers.report as report_module
 from src.bot.main import build_dispatcher
 from src.database.crud import get_field_context
 from src.database.models import Base
@@ -42,7 +42,7 @@ async def test_dispatcher_field_crop_season_phase_report_flow(
             elevation_m=156.0,
         )
 
-    monkeypatch.setattr(core_module, "generate_agro_report", fake_report)
+    monkeypatch.setattr(report_module, "generate_agro_report", fake_report)
 
     storage = MemoryStorage()
     coordination = MemoryCoordination(namespace="dispatcher-flow")
@@ -61,10 +61,11 @@ async def test_dispatcher_field_crop_season_phase_report_flow(
             message_update(3, text="55.7558, 37.6173"),
             callback_update(4, data="crop_pick:sunflower"),
             callback_update(5, data="season_start_set"),
-            message_update(6, text="15.04.2026"),
-            callback_update(7, data="season_phase"),
-            callback_update(8, data="phase_pick:2"),
-            callback_update(9, data="agro_report"),
+            callback_update(6, data="season_calendar:manual"),
+            message_update(7, text="15.04.2026"),
+            callback_update(8, data="season_phase"),
+            callback_update(9, data="phase_pick:2"),
+            callback_update(10, data="agro_report"),
         ]
         for update in updates:
             await dispatcher.feed_update(bot, update)
@@ -77,6 +78,7 @@ async def test_dispatcher_field_crop_season_phase_report_flow(
         assert context.latitude == pytest.approx(55.7558)
         assert context.longitude == pytest.approx(37.6173)
         assert context.crop_key == "sunflower"
+        assert context.season_start_date is not None
         assert context.season_start_date.isoformat() == "2026-04-15"
         assert context.phenological_phase == "Бутонизация"
         assert context.phase_source == "user"
