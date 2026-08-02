@@ -3,6 +3,11 @@ from datetime import date
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from src.database.crops import (
+    add_or_select_crop,
+    list_field_crops,
+    select_field_crop,
+)
 from src.database.crud import (
     activate_field,
     create_field,
@@ -32,6 +37,13 @@ async def test_background_monitoring_includes_every_enabled_field(tmp_path) -> N
             await set_season_start(session, 1001, date(2026, 4, 15))
             north = await get_field_context(session, 1001)
             assert north is not None
+
+            await add_or_select_crop(session, 1001, "potato")
+            north_profiles = await list_field_crops(session, 1001)
+            sunflower = next(
+                profile for profile in north_profiles if profile.crop_key == "sunflower"
+            )
+            await select_field_crop(session, 1001, sunflower.season_id)
             await set_field_notifications(
                 session,
                 1001,
@@ -71,6 +83,11 @@ async def test_background_monitoring_includes_every_enabled_field(tmp_path) -> N
             ]
             assert [target.field_id for target in digest_targets] == [north.field_id]
             assert [target.field_id for target in frost_targets] == [south.field_id]
+            north_target = next(
+                target for target in all_targets if target.field_id == north.field_id
+            )
+            assert north_target.selected_crop == "sunflower"
+            assert north_target.crop_keys == ("sunflower", "potato")
 
             await activate_field(session, 1001, north.field_id)
             assert [
