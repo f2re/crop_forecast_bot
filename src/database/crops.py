@@ -214,16 +214,24 @@ async def remove_field_crop(
     if target is None:
         raise ValueError("Культура не найдена для активного поля.")
 
-    was_selected = bool(target.is_active)
-    await session.delete(target)
     remaining = [item for item in seasons if item.id != season_id]
-    if was_selected:
+    if target.is_active:
+        # Release the partial unique index before selecting the replacement.
+        # SQLAlchemy may otherwise flush UPDATEs before DELETE and temporarily
+        # create two selected rows in PostgreSQL.
+        target.is_active = False
+        target.updated_at = datetime.utcnow()
+        await session.flush()
         selected = remaining[0]
         selected.is_active = True
         selected.updated_at = datetime.utcnow()
     else:
         selected = next((item for item in remaining if item.is_active), remaining[0])
+        if not selected.is_active:
+            selected.is_active = True
+            selected.updated_at = datetime.utcnow()
 
+    await session.delete(target)
     user.selected_crop = selected.crop_key
     user.updated_at = datetime.utcnow()
     await session.commit()
