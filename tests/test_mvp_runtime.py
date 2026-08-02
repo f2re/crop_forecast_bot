@@ -11,7 +11,7 @@ from src.infrastructure.coordination import MemoryCoordination
 
 
 @pytest.mark.asyncio
-async def test_mvp_dispatcher_does_not_load_rag_by_default() -> None:
+async def test_mvp_dispatcher_loads_farmer_flow_without_rag_by_default() -> None:
     storage = MemoryStorage()
     coordination = MemoryCoordination(namespace="mvp-router-test")
     dispatcher = build_dispatcher(
@@ -21,7 +21,16 @@ async def test_mvp_dispatcher_does_not_load_rag_by_default() -> None:
     )
     try:
         router_names = {router.name for router in dispatcher.sub_routers}
-        assert {"settings", "risks", "risk-history", "core"}.issubset(router_names)
+        assert {
+            "settings",
+            "profile",
+            "crops",
+            "season-calendar",
+            "report",
+            "risks",
+            "risk-history",
+            "core",
+        }.issubset(router_names)
         assert "rag" not in router_names
     finally:
         await storage.close()

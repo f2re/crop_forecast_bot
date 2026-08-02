@@ -20,7 +20,11 @@ class FakeRiskProvider:
         return self.data
 
 
-def _forecast(*, rain_members: int = 20) -> EnsembleForecastData:
+def _forecast(
+    *,
+    rain_members: int = 20,
+    convection_members: int = 0,
+) -> EnsembleForecastData:
     rows: list[dict] = []
     for day_offset in range(3):
         local_day = date(2026, 7, 19 + day_offset)
@@ -35,7 +39,11 @@ def _forecast(*, rain_members: int = 20) -> EnsembleForecastData:
                         40.0 if day_offset == 1 and member < rain_members else 2.0
                     ),
                     "wind_gust_ms": 7.0,
-                    "cape_j_kg": 150.0,
+                    "cape_j_kg": (
+                        1400.0
+                        if day_offset == 2 and member < convection_members
+                        else 150.0
+                    ),
                 }
             )
     return EnsembleForecastData(
@@ -56,7 +64,7 @@ def _forecast(*, rain_members: int = 20) -> EnsembleForecastData:
 
 
 @pytest.mark.asyncio
-async def test_generate_and_format_manual_risk_overview() -> None:
+async def test_generate_and_format_manual_risk_overview_for_farmer() -> None:
     provider = FakeRiskProvider(_forecast(rain_members=20))
 
     overview = await generate_risk_overview(
@@ -68,18 +76,47 @@ async def test_generate_and_format_manual_risk_overview() -> None:
     text = format_risk_overview(
         overview,
         field_name="Северное",
-        crop="wheat",
-        phase="Колошение",
+        crop="tomato",
+        crops=("tomato", "potato"),
+        phase="Цветение",
     )
 
     assert provider.calls == [(55.75, 37.62)]
-    assert "Погодные риски на 16 суток" in text
-    assert "20/31 сценариев" in text
-    assert "сильные осадки" in text
-    assert "сырая доля модельных сценариев" in text
-    assert "не является прогнозом грозы или града" in text
+    assert "Погодные условия, требующие внимания" in text
+    assert "Сильные осадки" in text
+    assert "20 из 31 вариантов модели" in text
+    assert "суточная сумма осадков" in text
+    assert "согласованность" in text
+    assert "Культуры на точке" in text
+    assert "Томат" in text
+    assert "Картофель" in text
+    assert "не процент повреждения культуры" in text
+    assert "пересекли" not in text
+    assert "P10" not in text
     assert "Что делать сейчас" in text
     assert len(text) <= 4096
+
+
+@pytest.mark.asyncio
+async def test_manual_overview_explains_convection_without_hail_claim() -> None:
+    overview = await generate_risk_overview(
+        55.75,
+        37.62,
+        provider=FakeRiskProvider(
+            _forecast(rain_members=0, convection_members=20)
+        ),
+        as_of_date=date(2026, 7, 18),
+    )
+    text = format_risk_overview(
+        overview,
+        field_name="Поле 1",
+        crop="sunflower",
+    )
+
+    assert "Неустойчивая атмосфера" in text
+    assert "CAPE" in text
+    assert "не доказывает грозу или град" in text
+    assert "вероятность града" not in text
 
 
 @pytest.mark.asyncio
@@ -98,8 +135,8 @@ async def test_manual_overview_distinguishes_valid_no_signal() -> None:
 
     assert overview.outlook.available is True
     assert overview.outlook.events == ()
-    assert "сигналы выше операционных порогов уведомления не выявлены" in text
-    assert "отсутствие сигнала не исключает локальное явление" in text
+    assert "общие погодные пороги внимания не достигнуты" in text
+    assert "Локальные явления всё равно возможны" in text
 
 
 @pytest.mark.asyncio
@@ -120,4 +157,4 @@ async def test_manual_overview_fails_closed_for_unavailable_outlook() -> None:
     )
 
     assert "Анализ не выполнен" in text
-    assert "Отсутствие полного ансамбля не означает отсутствие локального риска" in text
+    assert "Отсутствие полного ансамбля" in text

@@ -86,16 +86,21 @@ async def test_core_fsm_branches_continue_after_storage_reopen(tmp_path) -> None
         await dispatcher.feed_update(bot, message_update(6, text="Северное поле"))
         await dispatcher.feed_update(bot, callback_update(7, data="crop_pick:sunflower"))
         await dispatcher.feed_update(bot, callback_update(8, data="season_start_set"))
+        await dispatcher.feed_update(
+            bot,
+            callback_update(9, data="season_calendar:manual"),
+        )
 
-        # waiting_for_start_date survives restart.
+        # Manual calendar input state survives RedisStorage/client reopen.
         await reopen_storage()
-        await dispatcher.feed_update(bot, message_update(9, text="15.04.2026"))
+        await dispatcher.feed_update(bot, message_update(10, text="15.04.2026"))
 
         async with sessions() as session:
             restored = await get_field_context(session, 1001)
         assert restored is not None
         assert restored.field_name == "Северное поле"
         assert restored.crop_key == "sunflower"
+        assert restored.season_start_date is not None
         assert restored.season_start_date.isoformat() == "2026-04-15"
     finally:
         await current_storage.close()

@@ -386,6 +386,7 @@ async def check_weather_risk_alerts(
                                 outlook,
                                 field_name=target.field_name,
                                 crop=target.selected_crop,
+                                crops=target.crop_keys,
                                 phase=target.phenological_phase,
                                 delivery_mode=delivery_mode,
                                 priority_bypass=priority_bypass,

@@ -2,6 +2,36 @@
 
 Все существенные изменения фиксируются здесь. Проект пока не использует стабильную SemVer-линейку.
 
+## 2026-08-02 — farmer-facing crop, calendar and weather-risk UX
+
+### Added
+
+- inline calendar for sowing/season dates with month/year navigation, past-year support and manual fallback;
+- multiple crop profiles on one coordinate point without duplicate weather requests;
+- separate sowing date and observed phase for each selected crop profile;
+- `/crops` and `/report` commands and narrow feature Routers;
+- global `SafeHtmlBot` sanitizer and plain-text retry for Telegram entity errors;
+- grouped weather periods, physical threshold descriptions and lead-aware action priority;
+- explicit multi-crop context in manual and automatic risk summaries;
+- Python 3.10, calendar, multi-crop, safe-HTML and farmer-language regression tests;
+- `docs/FARMER_UX.md`.
+
+### Fixed
+
+- report text such as `осадки <1 мм/сут` no longer breaks the whole Telegram message as an unsupported HTML tag;
+- long lists of daily heat/rain/wind signals are grouped into readable periods;
+- percentages and “пересекли порог” are removed from the primary farmer-facing risk copy;
+- a far-lead member agreement is no longer described as temporal forecast stability;
+- CAPE is described as potential convective energy, not a hail or thunderstorm forecast;
+- deleting the selected crop releases the partial unique index before another profile becomes selected.
+
+### Scientific guards
+
+- ensemble member count is model agreement for one run, not calibrated event or damage probability;
+- weather conditions are common to the coordinate point, while crop damage remains unmodelled;
+- crop, cultivar, phase, soil moisture and management sensitivity are not inferred from a generic weather threshold;
+- expensive or irreversible actions still require a fresher local forecast, official warnings and field observations.
+
 ## 2026-07-13 — release rollback, restore evidence and live provider gates
 
 ### Fixed

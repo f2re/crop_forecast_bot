@@ -27,6 +27,7 @@ from src.bot.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from src.bot.telegram_text import SafeHtmlBot
 from src.database import Database, init_db
 from src.database.schema import require_current_schema
 from src.infrastructure.coordination import CoordinationBackend, create_coordination
@@ -66,8 +67,10 @@ async def configure_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Открыть главное меню"),
-            BotCommand(command="risks", description="Проверить погодные риски"),
-            BotCommand(command="history", description="Показать историю рисков"),
+            BotCommand(command="crops", description="Культуры активного поля"),
+            BotCommand(command="report", description="Агроотчёт выбранной культуры"),
+            BotCommand(command="risks", description="Проверить погодные условия"),
+            BotCommand(command="history", description="Показать историю сигналов"),
             BotCommand(command="help", description="Показать справку"),
             BotCommand(command="cancel", description="Отменить текущий ввод"),
         ]
@@ -91,13 +94,22 @@ def build_dispatcher(
     )
 
     from src.bot.handlers.core import router as core_router
+    from src.bot.handlers.crops import router as crops_router
+    from src.bot.handlers.profile import router as profile_router
+    from src.bot.handlers.report import router as report_router
     from src.bot.handlers.risk_history import router as risk_history_router
     from src.bot.handlers.risks import router as risks_router
+    from src.bot.handlers.season_calendar import router as season_calendar_router
     from src.bot.handlers.settings import router as settings_router
 
-    # Settings precede the core handlers so stale toggle callbacks are rejected
-    # rather than replayed as non-idempotent state inversions.
+    # Narrow feature routers precede the broad legacy core router. They own the
+    # start/field profile, crop, date and report callbacks while the remaining
+    # onboarding flow stays in core until it is split in a separate refactor.
     dispatcher.include_router(copy.deepcopy(settings_router))
+    dispatcher.include_router(copy.deepcopy(profile_router))
+    dispatcher.include_router(copy.deepcopy(crops_router))
+    dispatcher.include_router(copy.deepcopy(season_calendar_router))
+    dispatcher.include_router(copy.deepcopy(report_router))
     dispatcher.include_router(copy.deepcopy(risks_router))
     dispatcher.include_router(copy.deepcopy(risk_history_router))
     dispatcher.include_router(copy.deepcopy(core_router))
@@ -157,7 +169,7 @@ async def run(*, startup_smoke: bool = False) -> None:
         await database.ping()
         await require_current_schema(database.engine)
 
-        bot = Bot(
+        bot = SafeHtmlBot(
             token=settings.telegram_bot_token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )

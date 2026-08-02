@@ -1,30 +1,27 @@
 # Статус разработки
 
-Дата актуализации: **2026-07-27**.
+Дата актуализации: **2026-08-02**.
 
 ## Текущее состояние
 
-Проект переведён в профиль **низкоресурсного code-level полевого пилота**. Основной Telegram-flow, сохранённые поля, агрометеорологические расчёты, ансамблевые риски, история, настройки доставки и native systemd release остаются рабочими.
+Проект находится на уровне **низкоресурсного code-level полевого пилота**. Production запускается одним aiogram-entrypoint, хранит поля и пользовательское состояние в PostgreSQL/Redis, выполняет агрометеорологические расчёты, фоновый GFS Ensemble screening и безопасно обновляется из зелёной ветки `main`.
 
-Новый MVP-контур добавляет:
+Полевой smoke выявил и устранил пользовательские дефекты:
 
-- проверку реального Telegram token до systemd readiness;
-- офлайн production startup-smoke в GitHub CI;
-- один отложенный расчёт всех сохранённых alert-enabled fields после запуска;
-- автоматическую проверку `main` каждые 15 минут;
-- развёртывание только точного SHA с зелёным GitHub Actions CI;
-- shallow clone только после обнаружения нового green commit;
-- повторное использование content-addressed virtualenv;
-- ограниченный executor и один BLAS/OpenMP thread;
-- мягкие systemd resource controls;
-- production MVP без RAG и многолетних ERA5-запросов по умолчанию.
+- Telegram больше не должен терять весь отчёт из-за символов `<`, `>` или `&` в обычном тексте;
+- дата посева выбирается inline-календарём, ручной ввод оставлен резервом;
+- на одной координатной точке можно хранить несколько культур;
+- дата и фактическая фаза сохраняются отдельно для каждой культуры;
+- погодные сигналы объединяются по периодам и объясняются физическими величинами без выдачи доли ансамбля за вероятность ущерба;
+- дальний сигнал используется для планирования, а не называется устойчивым прогнозом;
+- CAPE не выдаётся за прогноз грозы или града.
 
-Проект всё ещё не принят как самостоятельный источник критических полевых решений: внешняя установка, реальный Telegram-flow и станционная проверка остаются обязательными gates.
+Проект не является самостоятельным источником критических решений: локальная станция, официальные предупреждения, осмотр поля и региональная валидация остаются обязательными.
 
 ## Production-контур MVP
 
 ```text
-aiogram 3.x
+aiogram 3.x + SafeHtmlBot
 PostgreSQL + SQLAlchemy 2 async + Alembic
 Redis FSM / callback idempotency / renewable leases / deduplication
 Open-Meteo Forecast Best Match + Historical Weather
@@ -34,152 +31,136 @@ systemd service + update timer + heartbeat + rollback
 GitHub Actions green-main release gate
 ```
 
-Опционально:
+Опционально и выключено по умолчанию:
 
 ```text
 ERA5 current season + 1991–2020 reference
 RAG / LLM advisor
 ```
 
-Обе опции отключены в production MVP по умолчанию.
+## Подтверждённые пользовательские возможности
 
-## Подтверждённые возможности
+### Поля и культуры
 
-### Telegram
+- [x] несколько полей в одном Telegram-профиле;
+- [x] геолокация и ручные координаты;
+- [x] несколько культур на одной координатной точке;
+- [x] выбор культуры для текущего отчёта и редактирования;
+- [x] отдельные дата посева и фактическая фаза каждой культуры;
+- [x] inline-календарь с переходом по месяцам и годам;
+- [x] запрет будущих дат и поддержка прошлого года для озимых;
+- [x] ручной ввод даты и `/cancel` как резервный сценарий;
+- [x] команды `/crops` и `/report`.
+
+### Отчёт и Telegram UX
 
 - [x] один entrypoint `python -m src.bot.main`;
-- [x] несколько полей;
-- [x] геолокация и ручные координаты;
-- [x] культура, дата сезона и наблюдаемая фаза;
-- [x] ручной агроотчёт;
-- [x] ручной 16-суточный обзор рисков через `/risks`;
-- [x] история и тренд через `/history`;
-- [x] настройки уведомлений по полю;
-- [x] режимы `immediate / digest / high_only`;
-- [x] тихие часы `off / 22:00–07:00 / 23:00–06:00`;
-- [x] высокий риск обходит тихие часы и обычный digest;
-- [x] Redis FSM restart и replay-safe callbacks;
-- [x] optional RAG router не загружается при `RAG_ENABLED=false`.
+- [x] ручной агроотчёт выбранной культуры;
+- [x] глобальное экранирование Telegram HTML;
+- [x] повтор отправки без разметки при ошибке entities;
+- [x] ошибка Telegram-разметки не подменяется сообщением об ошибке расчёта;
+- [x] Redis FSM переживает рестарт;
+- [x] replay-safe callbacks;
+- [x] optional RAG Router не загружается при `RAG_ENABLED=false`.
 
 ### Данные и расчёты
 
 - [x] раздельные `reanalysis / operational_past / forecast`;
 - [x] GDD от локальной даты сезона с crop-specific `Tbase`;
-- [x] сезонный ГТК только при непрерывном завершённом ряду;
+- [x] сезонный ГТК только при непрерывном завершённом ряде;
 - [x] provider ET₀ и `P−ET₀` без фиктивных нулей;
 - [x] накопленные осадки/ET₀, сухие серии и Rx1day/Rx5day;
-- [x] ERA5 current/reference одной моделью, база 1991–2020;
-- [x] общий полный current climate prefix для `Tmean/P/ET₀`;
-- [x] empirical percentiles без выдачи за probability/SPI/SPEI;
+- [x] optional ERA5 current/reference одной моделью;
 - [x] climate section fail-soft;
-- [x] `CLIMATE_REFERENCE_ENABLED=false` предотвращает большие ERA5-запросы в production MVP.
+- [x] `CLIMATE_REFERENCE_ENABLED=false` предотвращает тяжёлые ERA5-запросы в production MVP.
 
-### Расчёты сохранённых полей
+### Ансамблевые погодные сигналы
 
-- [x] source of truth — PostgreSQL `fields` и active `crop_seasons`;
-- [x] scheduler выбирает все поля с включённым типом уведомления, а не только активное поле;
-- [x] первый weather-risk cycle запускается после здорового старта с задержкой 120 секунд;
-- [x] дальнейший GFS Ensemble screening выполняется каждые 6 часов;
-- [x] все поля обрабатываются последовательно, без всплеска параллельных запросов;
-- [x] Redis lease исключает параллельный cycle двух workers;
+- [x] GFS Ensemble Seamless до 16 суток;
+- [x] Tmin, Tmax, суточные осадки, порывы и CAPE;
+- [x] минимум 20 валидных вариантов по всем диагностическим переменным;
+- [x] неполные сутки исключаются fail-closed;
+- [x] соседние дни одного явления объединяются в период;
+- [x] показываются физическое условие, число вариантов и основной разброс;
+- [x] число вариантов не называется вероятностью события или повреждения;
+- [x] приоритет действия учитывает заблаговременность;
+- [x] все культуры точки перечисляются, но повреждение каждой отдельно не заявляется;
+- [x] CAPE называется признаком неустойчивой атмосферы, а не прогнозом града;
+- [x] ручной обзор `/risks`, история `/history`, compact digest и quiet hours.
+
+### Сохранённые поля и scheduler
+
+- [x] source of truth — PostgreSQL `fields / crop_seasons`;
+- [x] scheduler выбирает все alert-enabled fields, а не только активное;
+- [x] погодный запрос выполняется на координатную точку, а не отдельно на каждую культуру;
+- [x] первый risk cycle запускается после здорового старта;
+- [x] дальнейший screening выполняется каждые 6 часов;
+- [x] поля обрабатываются последовательно для слабого сервера;
+- [x] Redis lease исключает параллельный цикл двух workers;
 - [x] accepted run сохраняется до Telegram side effect;
-- [x] state/daily deduplication защищает от повторного сообщения после рестарта.
+- [x] state/daily deduplication защищает от повторной доставки.
 
-### Ансамблевые риски
+## Запуск, обновление и ресурсы
 
-- [x] GFS Ensemble Seamless, до 16 суток;
-- [x] Tmin, Tmax, осадки, порывы и CAPE;
-- [x] холод, жара, сильные осадки, ветер и конвективная неустойчивость;
-- [x] минимум 20 валидных членов по всем диагностическим переменным;
-- [x] fail-closed exclusion неполных суток;
-- [x] `k/n`, P10, медиана, P90 и заблаговременность;
-- [x] `k/n` не называется откалиброванной вероятностью;
-- [x] CAPE не называется прогнозом грозы или града;
-- [x] один compact digest на поле вместо серии сообщений;
-- [x] persistent risk history и delivery states.
-
-### Запуск и healthcheck
-
-- [x] runtime environment валидируется до запуска;
-- [x] PostgreSQL ping и Alembic head обязательны;
-- [x] Redis ping входит в preflight;
-- [x] writable paths проверяются;
+- [x] PostgreSQL, Redis и Alembic head проверяются до запуска;
 - [x] реальный Telegram `getMe` выполняется до `READY=1`;
-- [x] heartbeat начинается только после успешной Telegram-проверки;
-- [x] CI запускает `python -m src.bot.main --startup-smoke` без Telegram-сети;
-- [x] startup-smoke собирает production Router graph, DB, Redis, coordination и scheduler.
-
-### Автоматическое обновление
-
-- [x] update timer включается по умолчанию;
-- [x] интервал проверки `main` — 15 минут плюс небольшой random delay;
-- [x] `git ls-remote` выполняется до clone/build;
-- [x] тот же SHA завершает update без создания release;
-- [x] обязательный `ci.yml` push-run проверяется для точного SHA;
-- [x] optional provider smoke, если зарегистрирован для SHA, также должен быть зелёным;
+- [x] heartbeat начинается после успешной Telegram-проверки;
+- [x] CI выполняет production startup-smoke без Telegram-сети;
+- [x] update timer проверяет `main` каждые 15 минут;
+- [x] устанавливается только точный SHA с зелёным required CI;
 - [x] pending/failed/API error оставляет текущий release активным;
-- [x] branch race обнаруживается повторной проверкой cloned SHA;
-- [x] PostgreSQL backup, Alembic, preflight, activation и rollback сохранены;
-- [x] virtualenv повторно используется до изменения Python minor/requirements.
-
-### Ресурсный профиль
-
-- [x] базовый installer не ставит GDAL, compiler toolchain и RAG dependencies;
-- [x] `BLOCKING_IO_WORKERS=2`;
-- [x] BLAS/OpenMP threads ограничены одним;
-- [x] systemd `MemoryHigh=384M`, `TasksMax=64`, пониженные CPU/IO weights;
-- [x] жёсткий `MemoryMax` отсутствует;
-- [x] default retention risk history — 30 суток;
-- [x] default retention — два release и три backup;
-- [x] PostgreSQL и Redis сохранены как обязательный надёжный минимум.
+- [x] atomic activation и verified rollback;
+- [x] content-addressed shared virtualenv;
+- [x] `BLOCKING_IO_WORKERS=2`, BLAS/OpenMP=1;
+- [x] systemd `MemoryHigh=384M`, `TasksMax=64`, без жёсткого `MemoryMax`;
+- [x] RAG и многолетнее ERA5-сравнение выключены в базовом профиле.
 
 ## Автоматические gates
 
 GitHub CI проверяет:
 
+- Python 3.10 и основной Python runtime;
 - Ruff и `compileall`;
 - Bash syntax и ShellCheck;
 - repository legacy/scientific-claims policies;
 - production MVP startup-smoke;
+- календарь, multi-crop profiles, Telegram HTML и farmer-facing risk language;
 - unit/contract tests;
 - PostgreSQL/Redis integration;
-- pytest log artifacts;
 - backup/restore round trip;
 - Alembic graph;
-- live operational Open-Meteo contract;
-- live homogeneous ERA5 contract;
-- live GFS Ensemble contract.
+- применимые live provider contracts.
 
 ## Научные ограничения
 
 - GFS и ERA5 — модельные сетки, не локальная станция.
-- `k/n` требует архивной калибровки, прежде чем называться вероятностью.
-- Risk history сохраняет threshold-crossing events; для unbiased reliability нужны below-threshold evaluations и observations.
-- Tmin воздуха 2 м не является температурой растения или damage model.
+- Число членов ансамбля требует архивной калибровки, прежде чем называться вероятностью.
+- Доля членов одного запуска не доказывает временную устойчивость сигнала.
+- Tmin/Tmax воздуха 2 м не являются температурой растения или damage model.
 - Crop-specific `Tbase/Tupper` требуют versioned cultivar/region validation.
 - Provider ET₀ не является фактической ET культуры или дозой полива.
-- Валидированный прогноз града, болезней и урожайности отсутствует.
+- CAPE без подъёма, влаги, CIN, сдвига ветра и уровня замерзания не является прогнозом грозы или града.
+- Валидированный прогноз болезней, града, ущерба и урожайности отсутствует.
 - SPI/SPEI по короткому прогнозу не вычисляются.
 
 ## Незакрытые внешние gates
 
-- [ ] clean Debian 12 deploy, migration, reboot и timer evidence;
-- [ ] реальный Telegram smoke для нескольких пользователей и полей;
+- [ ] подтвердить автоматическое получение нового `main` на целевом сервере;
+- [ ] повторить real Telegram smoke для календаря, нескольких культур, отчёта и фонового digest;
+- [ ] clean Debian 12 deploy/reboot/update/rollback evidence;
 - [ ] forced release failure и rollback на реальном systemd host;
-- [ ] проверка автообновления после реального merge в `main` на целевом сервере;
 - [ ] Astra Linux smoke;
 - [ ] station comparison для GFS/ERA5/ET₀/ГТК;
-- [ ] screening-only регламент и независимый официальный канал.
+- [ ] screening-only регламент и независимый официальный warning channel.
 
 ## Следующие приоритеты
 
 ### P0
 
-1. clean-host и real Telegram acceptance;
-2. evidence автоматического green-main update/rollback на целевом сервере;
+1. real Telegram acceptance обновлённого пользовательского сценария;
+2. evidence green-main auto-update/rollback на целевом сервере;
 3. station comparison protocol;
-4. operator runbook;
-5. полевой журнал наблюдений и операций.
+4. полевой журнал наблюдений и операций.
 
 ### P1
 
@@ -190,14 +171,15 @@ GitHub CI проверяет:
 5. station ingestion и forecast matching;
 6. below-threshold evaluations;
 7. переименование `frost_alerts_enabled`;
-8. разделение `scheduler.py` и `handlers/core.py`;
+8. удаление перехваченных legacy crop/season/report handlers после отдельного рефакторинга;
 9. постепенные mypy/Bandit gates.
 
-Подробности эксплуатации: `docs/LOW_RESOURCE_MVP.md`.  
+Подробности UX: `docs/FARMER_UX.md`.  
+Эксплуатация: `docs/LOW_RESOURCE_MVP.md`.  
 Глубокий аудит: `docs/DEEP_AUDIT_2026-07-19.md`.
 
 ## Готовность
 
-**Code-level:** MVP startup, saved-field scheduling, green-main pull-based CD, rollback и low-resource controls покрыты автоматическими контрактами.
+**Code-level:** основной Telegram-flow, календарь, несколько культур, безопасный отчёт, понятные погодные сигналы, scheduler и green-main CD реализованы и должны проходить автоматические gates.
 
-**Полевой продукт:** не принят до clean-host, real Telegram и региональной station validation.
+**Полевой продукт:** требует повторной приёмки на реальном Telegram и региональной station validation.

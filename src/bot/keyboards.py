@@ -29,7 +29,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚠️ Погодные риски", callback_data="risk_overview")],
         [InlineKeyboardButton(text="🕘 История рисков", callback_data="risk_history")],
         [InlineKeyboardButton(text="🗺 Мои поля", callback_data="fields")],
-        [InlineKeyboardButton(text="🌱 Выбрать культуру", callback_data="crop_choose")],
+        [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
         [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
     ]
     if get_settings().rag_enabled:
@@ -58,7 +58,7 @@ def get_fields_keyboard(fields: Sequence[FieldKeyboardItem]) -> InlineKeyboardMa
     for field in fields:
         marker = "✅" if field.is_active else "▫️"
         crop_name = get_crop_name(field.crop_key)
-        label = f"{marker} {field.field_name} · {crop_name}"
+        label = f"{marker} {field.field_name} · выбрано: {crop_name}"
         rows.append(
             [
                 InlineKeyboardButton(
@@ -97,6 +97,7 @@ def get_field_actions_keyboard(
                 [InlineKeyboardButton(text="🌦 Агроотчёт", callback_data="agro_report")],
                 [InlineKeyboardButton(text="⚠️ Погодные риски", callback_data="risk_overview")],
                 [InlineKeyboardButton(text="🕘 История рисков", callback_data="risk_history")],
+                [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
                 [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
             ]
         )
@@ -187,11 +188,11 @@ def get_crop_list_keyboard(category_id: str) -> InlineKeyboardMarkup:
 
 
 def get_season_keyboard(*, has_start: bool, has_phase: bool) -> InlineKeyboardMarkup:
-    date_action = "Изменить дату" if has_start else "Указать дату посева"
+    date_action = "Изменить дату" if has_start else "Выбрать дату посева"
     rows = [
         [InlineKeyboardButton(text=f"📅 {date_action}", callback_data="season_start_set")],
         [InlineKeyboardButton(text="🌿 Указать фактическую фазу", callback_data="season_phase")],
-        [InlineKeyboardButton(text="🌱 Изменить культуру", callback_data="crop_choose")],
+        [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
     ]
     if has_phase:
         rows.append(

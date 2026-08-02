@@ -31,9 +31,10 @@ async def test_dispatcher_manual_risk_overview_flow(
         assert as_of_date is not None
         return SimpleNamespace(outlook=object(), meta=object())
 
-    def fake_format(overview, *, field_name, crop, phase=None):
+    def fake_format(overview, *, field_name, crop, crops=(), phase=None):
         assert field_name == "Основное поле"
         assert crop == "sunflower"
+        assert set(crops) == {"wheat", "sunflower"}
         assert phase is None
         return "⚠️ TEST MANUAL RISK OVERVIEW"
 
@@ -61,9 +62,7 @@ async def test_dispatcher_manual_risk_overview_flow(
         for update in updates:
             await dispatcher.feed_update(bot, update)
 
-        assert any(
-            "Проверяю ансамблевые сценарии" in text for text in telegram.texts
-        )
+        assert any("31 вариант прогноза" in text for text in telegram.texts)
         assert any("TEST MANUAL RISK OVERVIEW" in text for text in telegram.texts)
     finally:
         await storage.close()
