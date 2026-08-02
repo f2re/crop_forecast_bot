@@ -15,10 +15,10 @@ _RISK_ORDER: dict[RiskType, int] = {
     "convection": 4,
 }
 _LEVEL_ORDER: dict[RiskLevel, int] = {"watch": 0, "elevated": 1, "high": 2}
-_LEVEL_LABELS: dict[RiskLevel, str] = {
-    "watch": "ранний сигнал — проверить ближе к дате",
-    "elevated": "заметный сигнал — подготовить действия",
-    "high": "устойчивый сигнал — готовиться сейчас",
+_NEAR_TERM_PRIORITY: dict[RiskLevel, str] = {
+    "watch": "наблюдать и проверить следующий запуск",
+    "elevated": "подготовить меры и уточнить локальный прогноз",
+    "high": "подготовиться, сверив официальный и локальный прогноз",
 }
 _RISK_NAMES: dict[RiskType, tuple[str, str]] = {
     "frost": ("🌡", "Холод / возможный заморозок"),
@@ -79,13 +79,13 @@ def period_date_label(period: RiskPeriod) -> str:
 def condition_text(event: RiskEvent) -> str:
     threshold = event.threshold
     if event.risk_type == "frost":
-        return f"минимальная температура воздуха 2 м — {threshold:g}°C или ниже"
+        return f"минимальная температура воздуха на высоте 2 м — {threshold:g}°C или ниже"
     if event.risk_type == "heat":
-        return f"дневной максимум воздуха 2 м — {threshold:g}°C или выше"
+        return f"дневной максимум воздуха на высоте 2 м — {threshold:g}°C или выше"
     if event.risk_type == "heavy_rain":
         return f"суточная сумма осадков — {threshold:g} мм или больше"
     if event.risk_type == "strong_wind":
-        return f"порывы ветра 10 м — {threshold:g} м/с или сильнее"
+        return f"порывы ветра на высоте 10 м — {threshold:g} м/с или сильнее"
     return (
         f"CAPE — {threshold:g} Дж/кг или выше; это запас энергии для конвекции, "
         "а не прогноз грозы или града"
@@ -127,12 +127,30 @@ def _range_text(low: float, high: float, unit: str) -> str:
 
 def agreement_label(fraction: float) -> str:
     if fraction >= 0.80:
-        return "очень высокая согласованность вариантов"
+        return "очень высокая согласованность вариантов текущего запуска"
     if fraction >= 0.60:
-        return "высокая согласованность вариантов"
+        return "высокая согласованность вариантов текущего запуска"
     if fraction >= 0.30:
         return "средняя согласованность; прогноз ещё может заметно измениться"
     return "слабый ранний сигнал; требуется подтверждение следующими запусками"
+
+
+def priority_label(level: RiskLevel, lead_days: int) -> str:
+    """Translate a model signal into a cautious action priority.
+
+    A large member fraction at long lead is not temporal stability. Long-range
+    signals therefore remain planning information even when many members agree.
+    """
+
+    if lead_days > 10:
+        return "дальний сигнал — только предварительное планирование"
+    if lead_days > 7:
+        return "подготовить варианты действий и подтвердить прогноз ближе к дате"
+    if lead_days > 3:
+        if level == "watch":
+            return "следить за обновлениями и проверить ближе к дате"
+        return "заранее подготовить меры и уточнять прогноз"
+    return _NEAR_TERM_PRIORITY[level]
 
 
 def group_risk_events(events: tuple[RiskEvent, ...]) -> tuple[RiskPeriod, ...]:
@@ -209,7 +227,7 @@ def format_risk_period(period: RiskPeriod) -> str:
         f"{_range_text(min(medians), max(medians), unit)}; основной разброс "
         f"вариантов {_range_text(spread_low, spread_high, unit)}.\n"
         f"• {agreement_label(min(fractions)).capitalize()}; срок: {lead_text}.\n"
-        f"• Приоритет: {_LEVEL_LABELS[period.highest_level]}."
+        f"• Приоритет: {priority_label(period.highest_level, lead_min)}."
     )
 
 
@@ -226,6 +244,11 @@ def crop_context_lines(
     if keys:
         names = ", ".join(get_crop_name(key) for key in keys)
         lines.append(f"🌱 Культуры на точке: <b>{html.escape(names)}</b>")
+    if len(keys) > 1:
+        lines.append(
+            "ℹ️ Погодные условия общие для точки. Чувствительность культур "
+            "различается; повреждение каждой культуры отдельно не рассчитано."
+        )
     if selected_crop:
         lines.append(
             f"✅ Для сезонного отчёта выбрана: "
