@@ -4,6 +4,7 @@ import html
 from datetime import date
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
@@ -204,6 +205,17 @@ async def request_manual_season_date(
         "⌨️ Введите дату: <code>ДД.ММ.ГГГГ</code> или "
         "<code>ГГГГ-ММ-ДД</code>.\nДля отмены отправьте /cancel.",
     )
+
+
+@router.message(SeasonCalendarStates.waiting_for_manual_date, Command("cancel"))
+@router.message(
+    SeasonCalendarStates.waiting_for_manual_date,
+    F.text.casefold() == "отмена",
+)
+async def cancel_manual_season_date(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Ввод даты отменён.", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
 
 
 @router.message(SeasonCalendarStates.waiting_for_manual_date, F.text)
