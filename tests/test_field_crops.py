@@ -97,7 +97,9 @@ async def test_adding_existing_crop_selects_it_without_duplicate(tmp_path) -> No
                 selected_again.season_id,
             )
             assert selected_after_remove.crop_key in {"wheat", "potato"}
-            keys = await list_field_crop_keys(session, (await get_field_context(session, 1002)).field_id)  # type: ignore[union-attr]
+            context = await get_field_context(session, 1002)
+            assert context is not None
+            keys = await list_field_crop_keys(session, context.field_id)
             assert "tomato" not in keys
             assert second.season_id in {
                 item.season_id for item in await list_field_crops(session, 1002)
