@@ -37,10 +37,12 @@ def _season_text(context) -> str:
     return (
         "📅 <b>Сезон выбранной культуры</b>\n"
         f"🗺 Поле: {html.escape(context.field_name)}\n"
-        f"🌱 Культура для отчёта: {html.escape(get_crop_name(context.crop_key))}\n"
+        f"🌱 Культура для отчёта: "
+        f"<b>{html.escape(get_crop_name(context.crop_key))}</b>\n"
         f"📆 Посев/начало сезона: {start}\n"
         f"🌿 Фаза: {phase}\n\n"
-        "Дата и фаза задаются отдельно для каждой культуры на этой точке."
+        "Дата и фаза задаются отдельно для каждой культуры на этой точке. "
+        "Переключить культуру можно в разделе «Культуры поля»."
     )
 
 
@@ -56,6 +58,34 @@ async def _save_date(
         today=local_today(timezone_name),
     )
     await set_season_start(session, telegram_id, validated)
+
+
+@router.callback_query(F.data == "season")
+async def show_selected_crop_season(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    await state.clear()
+    context = await get_field_context(session, callback.from_user.id)
+    await callback.answer()
+    if callback.message is None:
+        return
+    if context is None:
+        await edit_html(
+            callback.message,
+            "Сначала добавьте поле.",
+            reply_markup=get_field_keyboard(),
+        )
+        return
+    await edit_html(
+        callback.message,
+        _season_text(context),
+        reply_markup=get_season_keyboard(
+            has_start=context.season_start_date is not None,
+            has_phase=context.phenological_phase is not None,
+        ),
+    )
 
 
 @router.callback_query(F.data == "season_start_set")
