@@ -50,7 +50,10 @@ def format_ensemble_risk_alert(
             f"• Ограничение: {html.escape(event.caveat)}",
         ]
     )
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    if len(text) > 4096:
+        raise ValueError("Risk alert exceeds Telegram message limit")
+    return text
 
 
 def format_ensemble_risk_digest(
@@ -117,7 +120,8 @@ def format_ensemble_risk_digest(
         )
     if priority_bypass:
         lines.append(
-            "• Сообщение отправлено сразу, потому что модельный сигнал устойчивый."
+            "• Сообщение отправлено сразу из-за высокого приоритета текущего "
+            "модельного сигнала."
         )
 
     text = "\n".join(lines)
