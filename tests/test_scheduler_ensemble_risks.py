@@ -36,6 +36,7 @@ def _target(
         risk_delivery_mode=mode,  # type: ignore[arg-type]
         quiet_hours_start=quiet_hours_start,
         quiet_hours_end=quiet_hours_end,
+        crop_keys=("wheat", "potato"),
     )
 
 
@@ -186,10 +187,14 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
     assert len(bot.messages) == 1
     chat_id, text = bot.messages[0]
     assert chat_id == 1001
-    assert "Сводка погодных рисков" in text
+    assert "Погодные условия, требующие внимания" in text
     assert "Сильные осадки" in text
-    assert "22 из 31" in text
-    assert "сырая доля модельных сценариев" in text
+    assert "22 из 31 вариантов модели" in text
+    assert "Пшеница" in text
+    assert "Картофель" in text
+    assert "вероятность повреждения растений" in text
+    assert "пересекли" not in text
+    assert "%" not in text
     assert delivery_states == ["sending", "sent", "sending", "deduplicated"]
 
 
@@ -253,6 +258,6 @@ async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
     assert len(bot.messages) == 1
     text = bot.messages[0][1]
     assert "Сильные осадки" in text
-    assert "Сильный ветер" in text
+    assert "Сильные порывы ветра" in text
     assert "один дайджест в сутки" in text
     assert delivery_states == ["sending", "sending", "sent", "sent"]
