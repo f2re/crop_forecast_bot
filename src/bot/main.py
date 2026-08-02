@@ -67,8 +67,9 @@ async def configure_bot_commands(bot: Bot) -> None:
         [
             BotCommand(command="start", description="Открыть главное меню"),
             BotCommand(command="crops", description="Культуры активного поля"),
-            BotCommand(command="risks", description="Проверить погодные риски"),
-            BotCommand(command="history", description="Показать историю рисков"),
+            BotCommand(command="report", description="Агроотчёт выбранной культуры"),
+            BotCommand(command="risks", description="Проверить погодные условия"),
+            BotCommand(command="history", description="Показать историю сигналов"),
             BotCommand(command="help", description="Показать справку"),
             BotCommand(command="cancel", description="Отменить текущий ввод"),
         ]
@@ -93,16 +94,21 @@ def build_dispatcher(
 
     from src.bot.handlers.core import router as core_router
     from src.bot.handlers.crops import router as crops_router
+    from src.bot.handlers.profile import router as profile_router
+    from src.bot.handlers.report import router as report_router
     from src.bot.handlers.risk_history import router as risk_history_router
     from src.bot.handlers.risks import router as risks_router
     from src.bot.handlers.season_calendar import router as season_calendar_router
     from src.bot.handlers.settings import router as settings_router
 
-    # Feature routers precede the broad legacy core router. They intentionally
-    # own crop/date callbacks while the remaining onboarding flow stays in core.
+    # Narrow feature routers precede the broad legacy core router. They own the
+    # start/field profile, crop, date and report callbacks while the remaining
+    # onboarding flow stays in core until it is split in a separate refactor.
     dispatcher.include_router(copy.deepcopy(settings_router))
+    dispatcher.include_router(copy.deepcopy(profile_router))
     dispatcher.include_router(copy.deepcopy(crops_router))
     dispatcher.include_router(copy.deepcopy(season_calendar_router))
+    dispatcher.include_router(copy.deepcopy(report_router))
     dispatcher.include_router(copy.deepcopy(risks_router))
     dispatcher.include_router(copy.deepcopy(risk_history_router))
     dispatcher.include_router(copy.deepcopy(core_router))
