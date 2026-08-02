@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from aiogram import Bot
+from aiogram.client.default import Default
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, Message
@@ -56,6 +57,60 @@ def _is_entity_error(exc: TelegramBadRequest) -> bool:
     return any(marker in message for marker in _ENTITY_ERROR_MARKERS)
 
 
+def _uses_default_or_explicit_html(method: Any) -> bool:
+    parse_mode = getattr(method, "parse_mode", None)
+    return parse_mode == ParseMode.HTML or isinstance(parse_mode, Default)
+
+
+def _prepare_method_text(method: Any, *, plain: bool = False) -> Any:
+    """Copy an aiogram method with safe text/caption without mutating caller state."""
+
+    updates: dict[str, Any] = {}
+    for field_name in ("text", "caption"):
+        value = getattr(method, field_name, None)
+        if isinstance(value, str):
+            updates[field_name] = (
+                html_to_plain_text(value) if plain else sanitize_telegram_html(value)
+            )
+    if plain:
+        updates["parse_mode"] = None
+        if hasattr(method, "entities"):
+            updates["entities"] = None
+        if hasattr(method, "caption_entities"):
+            updates["caption_entities"] = None
+    if not updates:
+        return method
+    return method.model_copy(update=updates)
+
+
+class SafeHtmlBot(Bot):
+    """Bot that prevents one malformed report line from breaking Telegram UX.
+
+    The application uses HTML as its default parse mode. Every text/caption is
+    sanitized immediately before the API request. If Telegram still rejects
+    entities, the same request is retried once as plain text. This also protects
+    background scheduler messages that are not sent through handler helpers.
+    """
+
+    async def __call__(self, method: Any, request_timeout: int | None = None) -> Any:
+        prepared = method
+        if _uses_default_or_explicit_html(method):
+            prepared = _prepare_method_text(method)
+        try:
+            return await super().__call__(prepared, request_timeout=request_timeout)
+        except TelegramBadRequest as exc:
+            if not _is_entity_error(exc):
+                raise
+            logger.warning(
+                "Telegram rejected message entities; retrying once as plain text",
+                exc_info=True,
+            )
+            return await super().__call__(
+                _prepare_method_text(method, plain=True),
+                request_timeout=request_timeout,
+            )
+
+
 async def edit_html(
     message: Message,
     text: str,
@@ -74,7 +129,7 @@ async def edit_html(
     except TelegramBadRequest as exc:
         if not _is_entity_error(exc):
             raise
-        logger.exception("Telegram rejected sanitized HTML; retrying as plain text")
+        logger.warning("Telegram rejected sanitized HTML; retrying as plain text")
         return await message.edit_text(
             html_to_plain_text(text),
             reply_markup=reply_markup,
@@ -100,7 +155,7 @@ async def answer_html(
     except TelegramBadRequest as exc:
         if not _is_entity_error(exc):
             raise
-        logger.exception("Telegram rejected sanitized HTML reply; retrying as plain text")
+        logger.warning("Telegram rejected sanitized HTML reply; retrying as plain text")
         return await message.answer(
             html_to_plain_text(text),
             reply_markup=reply_markup,
@@ -128,7 +183,7 @@ async def send_html(
     except TelegramBadRequest as exc:
         if not _is_entity_error(exc):
             raise
-        logger.exception("Telegram rejected sanitized HTML alert; retrying as plain text")
+        logger.warning("Telegram rejected sanitized HTML alert; retrying as plain text")
         return await bot.send_message(
             chat_id,
             html_to_plain_text(text),
