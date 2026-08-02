@@ -4,7 +4,7 @@ from src.bot.risk_alerts import format_ensemble_risk_alert
 from src.domain.risk import RiskEvent, RiskOutlook
 
 
-def test_alert_explains_raw_fraction_and_hail_limit() -> None:
+def test_alert_explains_model_agreement_and_hail_limit() -> None:
     event = RiskEvent(
         risk_type="convection",
         event_date=date(2026, 7, 29),
@@ -42,13 +42,18 @@ def test_alert_explains_raw_fraction_and_hail_limit() -> None:
         event,
         outlook,
         field_name="Поле 1",
-        crop="wheat",
-        phase="Колошение",
+        crop="tomato",
+        crops=("tomato", "potato"),
+        phase="Цветение",
     )
 
-    assert "22 из 31" in text
-    assert "сырая доля модельных сценариев" in text
+    assert "22 из 31 вариантов модели" in text
+    assert "согласованность модельного сигнала" in text
+    assert "не откалиброванная вероятность" in text
     assert "не прогноз града" in text
     assert "через 12 сут." in text
     assert "15 из 16" in text
-    assert "исключено из-за неполных данных: 1" in text
+    assert "Томат" in text
+    assert "Картофель" in text
+    assert "пересекли" not in text
+    assert "%" not in text
