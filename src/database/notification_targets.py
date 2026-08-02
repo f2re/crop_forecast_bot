@@ -28,6 +28,7 @@ class EnabledNotificationTarget:
     risk_delivery_mode: RiskDeliveryMode
     quiet_hours_start: int | None
     quiet_hours_end: int | None
+    crop_keys: tuple[str, ...] = ()
 
 
 async def list_enabled_notification_targets(
@@ -78,8 +79,27 @@ async def list_enabled_notification_targets(
         statement = statement.where(Field.frost_alerts_enabled.is_(True))
 
     result = await session.execute(statement)
+    rows = result.all()
+    field_ids = tuple(dict.fromkeys(row.field_id for row in rows))
+    crop_map: dict[int, list[str]] = {field_id: [] for field_id in field_ids}
+    if field_ids:
+        crop_result = await session.execute(
+            select(CropSeason.field_id, CropSeason.crop_key)
+            .where(CropSeason.field_id.in_(field_ids))
+            .order_by(
+                CropSeason.field_id.asc(),
+                CropSeason.is_active.desc(),
+                CropSeason.created_at.asc(),
+            )
+        )
+        for field_id, crop_key in crop_result.all():
+            if crop_key not in crop_map[field_id]:
+                crop_map[field_id].append(crop_key)
+
     targets: dict[int, EnabledNotificationTarget] = {}
-    for row in result.all():
+    for row in rows:
+        selected_crop = row.crop_key or row.legacy_crop or "wheat"
+        crops = tuple(crop_map.get(row.field_id, ())) or (selected_crop,)
         targets.setdefault(
             row.field_id,
             EnabledNotificationTarget(
@@ -93,7 +113,7 @@ async def list_enabled_notification_targets(
                     float(row.elevation_m) if row.elevation_m is not None else None
                 ),
                 elevation_source=row.elevation_source,
-                selected_crop=row.crop_key or row.legacy_crop or "wheat",
+                selected_crop=selected_crop,
                 season_start_date=row.season_start_date,
                 phenological_phase=row.phenological_phase,
                 daily_digest_enabled=bool(row.daily_digest_enabled),
@@ -103,6 +123,7 @@ async def list_enabled_notification_targets(
                 ),
                 quiet_hours_start=row.quiet_hours_start,
                 quiet_hours_end=row.quiet_hours_end,
+                crop_keys=crops,
             ),
         )
     return list(targets.values())
