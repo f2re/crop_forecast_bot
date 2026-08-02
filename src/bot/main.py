@@ -66,6 +66,7 @@ async def configure_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
         [
             BotCommand(command="start", description="Открыть главное меню"),
+            BotCommand(command="crops", description="Культуры активного поля"),
             BotCommand(command="risks", description="Проверить погодные риски"),
             BotCommand(command="history", description="Показать историю рисков"),
             BotCommand(command="help", description="Показать справку"),
@@ -91,13 +92,17 @@ def build_dispatcher(
     )
 
     from src.bot.handlers.core import router as core_router
+    from src.bot.handlers.crops import router as crops_router
     from src.bot.handlers.risk_history import router as risk_history_router
     from src.bot.handlers.risks import router as risks_router
+    from src.bot.handlers.season_calendar import router as season_calendar_router
     from src.bot.handlers.settings import router as settings_router
 
-    # Settings precede the core handlers so stale toggle callbacks are rejected
-    # rather than replayed as non-idempotent state inversions.
+    # Feature routers precede the broad legacy core router. They intentionally
+    # own crop/date callbacks while the remaining onboarding flow stays in core.
     dispatcher.include_router(copy.deepcopy(settings_router))
+    dispatcher.include_router(copy.deepcopy(crops_router))
+    dispatcher.include_router(copy.deepcopy(season_calendar_router))
     dispatcher.include_router(copy.deepcopy(risks_router))
     dispatcher.include_router(copy.deepcopy(risk_history_router))
     dispatcher.include_router(copy.deepcopy(core_router))
