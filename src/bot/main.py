@@ -27,6 +27,7 @@ from src.bot.scheduler import (
     start_scheduler,
     stop_scheduler,
 )
+from src.bot.telegram_text import SafeHtmlBot
 from src.database import Database, init_db
 from src.database.schema import require_current_schema
 from src.infrastructure.coordination import CoordinationBackend, create_coordination
@@ -168,7 +169,7 @@ async def run(*, startup_smoke: bool = False) -> None:
         await database.ping()
         await require_current_schema(database.engine)
 
-        bot = Bot(
+        bot = SafeHtmlBot(
             token=settings.telegram_bot_token,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
