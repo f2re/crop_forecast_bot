@@ -44,6 +44,19 @@ require_file() {
   [[ -s "${path}" ]] || fail "${name} is empty: ${path}"
 }
 
+file_mode() {
+  local path="$1"
+  if stat -c '%a' "${path}" >/dev/null 2>&1; then
+    stat -c '%a' "${path}"
+    return
+  fi
+  if stat -f '%Lp' "${path}" >/dev/null 2>&1; then
+    stat -f '%Lp' "${path}"
+    return
+  fi
+  fail "cannot determine file mode for ${path}"
+}
+
 command -v "${GH_BIN}" >/dev/null 2>&1 || \
   fail "GitHub CLI is required: https://cli.github.com/"
 "${GH_BIN}" auth status >/dev/null 2>&1 || \
@@ -62,7 +75,7 @@ require_value "DEPLOY_USER" "${DEPLOY_USER}"
 require_file "DEPLOY_SSH_KEY_FILE" "${DEPLOY_SSH_KEY_FILE}"
 require_file "DEPLOY_KNOWN_HOSTS_FILE" "${DEPLOY_KNOWN_HOSTS_FILE}"
 
-private_key_mode="$(stat -c '%a' "${DEPLOY_SSH_KEY_FILE}" 2>/dev/null || true)"
+private_key_mode="$(file_mode "${DEPLOY_SSH_KEY_FILE}")"
 case "${private_key_mode}" in
   400|600) ;;
   *) fail "DEPLOY_SSH_KEY_FILE must have mode 0400 or 0600" ;;
