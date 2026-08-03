@@ -16,9 +16,19 @@ from src.bot.calendar import (
     parse_calendar_date,
     parse_calendar_month,
 )
-from src.bot.keyboards import get_field_keyboard, get_main_keyboard, get_season_keyboard
+from src.bot.keyboards import (
+    get_date_basis_keyboard,
+    get_field_keyboard,
+    get_main_keyboard,
+    get_season_keyboard,
+)
 from src.bot.telegram_text import answer_html, edit_html
-from src.database.crud import get_field_context, set_season_start
+from src.database.crud import get_field_context
+from src.database.phenology import (
+    get_active_crop_phenology,
+    set_season_date_with_basis,
+)
+from src.domain.phenology import date_basis_label, validate_date_basis
 from src.domain.season import local_today, parse_season_date
 
 router = Router(name="season-calendar")
@@ -26,39 +36,58 @@ router = Router(name="season-calendar")
 
 class SeasonCalendarStates(StatesGroup):
     waiting_for_manual_date = State()
+    waiting_for_date_basis = State()
 
 
-def _season_text(context) -> str:
+def _season_text(context, phenology) -> str:
     start = (
         context.season_start_date.strftime("%d.%m.%Y")
         if context.season_start_date
         else "не задана"
     )
-    phase = html.escape(context.phenological_phase) if context.phenological_phase else "не указана"
+    phase = (
+        html.escape(context.phenological_phase)
+        if context.phenological_phase
+        else "не указана"
+    )
+    basis = date_basis_label(
+        phenology.date_basis if phenology is not None else "season_start"
+    )
+    confirmation = ""
+    if phenology is not None and phenology.phase_confirmed_at is not None:
+        confirmation = "\n✅ Дата последнего подтверждения стадии сохранена."
     return (
-        "📅 <b>Сезон выбранной культуры</b>\n"
+        "📅 <b>Дата и стадия выбранной культуры</b>\n"
         f"🗺 Поле: {html.escape(context.field_name)}\n"
         f"🌱 Культура для отчёта: "
         f"<b>{html.escape(get_crop_name(context.crop_key))}</b>\n"
-        f"📆 Посев/начало сезона: {start}\n"
-        f"🌿 Фаза: {phase}\n\n"
-        "Дата и фаза задаются отдельно для каждой культуры на этой точке. "
-        "Переключить культуру можно в разделе «Культуры поля»."
+        f"📆 Указанная дата: {start}\n"
+        f"🧭 Что означает дата: {html.escape(basis)}\n"
+        f"🌿 Наблюдаемая стадия: {phase}{confirmation}\n\n"
+        "Дата, её смысл и стадия хранятся отдельно для каждой культуры. "
+        "Бот не меняет стадию без подтверждения после осмотра растений."
     )
 
 
-async def _save_date(
-    session: AsyncSession,
-    telegram_id: int,
-    value: date,
+async def _show_date_basis_choice(
+    message: Message,
+    state: FSMContext,
     *,
-    timezone_name: str,
+    value: date,
+    field_name: str,
+    crop_key: str,
 ) -> None:
-    validated = parse_season_date(
-        value.isoformat(),
-        today=local_today(timezone_name),
+    await state.update_data(pending_season_date=value.isoformat())
+    await state.set_state(SeasonCalendarStates.waiting_for_date_basis)
+    await edit_html(
+        message,
+        f"📅 <b>Дата: {value:%d.%m.%Y}</b>\n"
+        f"Поле: {html.escape(field_name)}\n"
+        f"Культура: {html.escape(get_crop_name(crop_key))}\n\n"
+        "Что произошло в эту дату? Это важно: посев, всходы и высадка "
+        "рассады — разные точки отсчёта.",
+        reply_markup=get_date_basis_keyboard(),
     )
-    await set_season_start(session, telegram_id, validated)
 
 
 @router.callback_query(F.data == "season")
@@ -69,6 +98,7 @@ async def show_selected_crop_season(
 ) -> None:
     await state.clear()
     context = await get_field_context(session, callback.from_user.id)
+    phenology = await get_active_crop_phenology(session, callback.from_user.id)
     await callback.answer()
     if callback.message is None:
         return
@@ -81,7 +111,7 @@ async def show_selected_crop_season(
         return
     await edit_html(
         callback.message,
-        _season_text(context),
+        _season_text(context, phenology),
         reply_markup=get_season_keyboard(
             has_start=context.season_start_date is not None,
             has_phase=context.phenological_phase is not None,
@@ -107,10 +137,11 @@ async def open_season_calendar(
         return
     await edit_html(
         callback.message,
-        "📅 <b>Выберите дату посева или начала сезона</b>\n"
+        "📅 <b>Выберите исходную дату</b>\n"
         f"Поле: {html.escape(context.field_name)}\n"
         f"Культура: {html.escape(get_crop_name(context.crop_key))}\n\n"
-        "Будущие даты недоступны. Для озимых можно перейти к прошлому году.",
+        "После выбора бот спросит, что означает дата: посев, всходы, "
+        "высадка рассады или начало наблюдений. Будущие даты недоступны.",
         reply_markup=build_season_calendar(
             display,
             today=today,
@@ -120,6 +151,7 @@ async def open_season_calendar(
 
 
 @router.callback_query(F.data == "season_calendar:noop")
+@router.callback_query(F.data == "phenology:noop")
 async def calendar_noop(callback: CallbackQuery) -> None:
     await callback.answer()
 
@@ -163,31 +195,69 @@ async def pick_season_date(
         return
     try:
         value = parse_calendar_date(callback.data or "")
-        await _save_date(
-            session,
-            callback.from_user.id,
-            value,
-            timezone_name=context.timezone,
+        value = parse_season_date(
+            value.isoformat(),
+            today=local_today(context.timezone),
         )
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
+    await callback.answer()
+    if callback.message is None:
+        return
+    await _show_date_basis_choice(
+        callback.message,
+        state,
+        value=value,
+        field_name=context.field_name,
+        crop_key=context.crop_key,
+    )
+
+
+@router.callback_query(F.data.startswith("season_basis:"))
+async def save_date_basis(
+    callback: CallbackQuery,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    raw_basis = (callback.data or "").partition(":")[2]
+    try:
+        basis = validate_date_basis(raw_basis)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    data = await state.get_data()
+    raw_date = data.get("pending_season_date")
+    if not isinstance(raw_date, str):
+        await callback.answer(
+            "Дата не найдена. Откройте календарь ещё раз.",
+            show_alert=True,
+        )
+        return
+    try:
+        value = date.fromisoformat(raw_date)
+        saved = await set_season_date_with_basis(
+            session,
+            callback.from_user.id,
+            value,
+            basis,
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
     await state.clear()
-    await callback.answer("Дата сохранена")
-    updated = await get_field_context(session, callback.from_user.id)
-    if callback.message is None or updated is None:
+    await callback.answer("Дата и её смысл сохранены")
+    if callback.message is None:
         return
     await edit_html(
         callback.message,
         f"✅ <b>Дата сохранена: {value:%d.%m.%Y}</b>\n"
-        f"Поле: {html.escape(updated.field_name)}\n"
-        f"Культура: {html.escape(get_crop_name(updated.crop_key))}\n\n"
-        "ГДД и сезонные накопления будут считаться от этой даты при полном "
-        "покрытии метеорологического ряда.",
-        reply_markup=get_season_keyboard(
-            has_start=True,
-            has_phase=updated.phenological_phase is not None,
-        ),
+        f"Культура: {html.escape(get_crop_name(saved.crop_key))}\n"
+        f"Смысл даты: <b>{html.escape(date_basis_label(saved.date_basis))}</b>.\n\n"
+        "Накопленное тепло и сезонные суммы считаются от этой даты. "
+        "Прежняя стадия очищена: подтвердите фактическую стадию после осмотра.",
+        reply_markup=get_season_keyboard(has_start=True, has_phase=False),
     )
 
 
@@ -236,17 +306,21 @@ async def receive_manual_season_date(
             message.text or "",
             today=local_today(context.timezone),
         )
-        await set_season_start(session, message.from_user.id, value)
     except ValueError as exc:
         await message.answer(f"❌ {exc}")
         return
-    await state.clear()
+
+    await state.update_data(pending_season_date=value.isoformat())
+    await state.set_state(SeasonCalendarStates.waiting_for_date_basis)
     await message.answer(
-        f"✅ Дата для культуры «{get_crop_name(context.crop_key)}»: "
-        f"{value:%d.%m.%Y}",
+        f"✅ Дата принята: <b>{value:%d.%m.%Y}</b>.\n"
+        "Теперь укажите, что произошло в эту дату.",
         reply_markup=ReplyKeyboardRemove(),
     )
-    await message.answer("Выберите действие:", reply_markup=get_main_keyboard())
+    await message.answer(
+        "Выберите смысл даты:",
+        reply_markup=get_date_basis_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "season_calendar:cancel")
@@ -257,6 +331,7 @@ async def close_season_calendar(
 ) -> None:
     await state.clear()
     context = await get_field_context(session, callback.from_user.id)
+    phenology = await get_active_crop_phenology(session, callback.from_user.id)
     await callback.answer()
     if callback.message is None:
         return
@@ -269,7 +344,7 @@ async def close_season_calendar(
         return
     await edit_html(
         callback.message,
-        _season_text(context),
+        _season_text(context, phenology),
         reply_markup=get_season_keyboard(
             has_start=context.season_start_date is not None,
             has_phase=context.phenological_phase is not None,
