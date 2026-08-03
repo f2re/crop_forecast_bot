@@ -59,6 +59,7 @@ async def test_delivery_state_round_trip_including_empty_clear(tmp_path) -> None
                 session,
                 field_id=field_id,
                 model="gfs_seamless",
+                delivery_mode="immediate",
                 episodes=episodes,
                 observed_at=observed,
                 notified_at=notified,
@@ -68,9 +69,11 @@ async def test_delivery_state_round_trip_including_empty_clear(tmp_path) -> None
                 session,
                 field_id=field_id,
                 model="gfs_seamless",
+                delivery_mode="immediate",
             )
 
         assert loaded is not None
+        assert loaded.delivery_mode == "immediate"
         assert loaded.episodes == episodes
         assert loaded.last_observed_at == observed.replace(tzinfo=None)
         assert loaded.last_notified_at == notified.replace(tzinfo=None)
@@ -80,6 +83,7 @@ async def test_delivery_state_round_trip_including_empty_clear(tmp_path) -> None
                 session,
                 field_id=field_id,
                 model="gfs_seamless",
+                delivery_mode="immediate",
                 episodes=(),
                 observed_at=observed.replace(hour=12),
             )
@@ -88,18 +92,27 @@ async def test_delivery_state_round_trip_including_empty_clear(tmp_path) -> None
                 session,
                 field_id=field_id,
                 model="gfs_seamless",
+                delivery_mode="immediate",
             )
 
         assert cleared is not None
         assert cleared.episodes == ()
         assert cleared.last_notified_at == notified.replace(tzinfo=None)
         async with sessions() as session:
-            mismatch = await load_risk_delivery_state(
+            model_mismatch = await load_risk_delivery_state(
                 session,
                 field_id=field_id,
                 model="other_model",
+                delivery_mode="immediate",
             )
-        assert mismatch is None
+            mode_mismatch = await load_risk_delivery_state(
+                session,
+                field_id=field_id,
+                model="gfs_seamless",
+                delivery_mode="digest",
+            )
+        assert model_mismatch is None
+        assert mode_mismatch is None
     finally:
         await engine.dispose()
 
@@ -120,6 +133,7 @@ async def test_corrupt_delivery_state_fails_closed(tmp_path) -> None:
                 insert(risk_delivery_states).values(
                     field_id=field_id,
                     model="gfs_seamless",
+                    delivery_mode="immediate",
                     state_version=1,
                     state_json="[]",
                     last_observed_at=datetime(2026, 8, 3),
@@ -139,6 +153,7 @@ async def test_corrupt_delivery_state_fails_closed(tmp_path) -> None:
                     session,
                     field_id=field_id,
                     model="gfs_seamless",
+                    delivery_mode="immediate",
                 )
     finally:
         await engine.dispose()
