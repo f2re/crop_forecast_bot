@@ -23,6 +23,7 @@ def upgrade() -> None:
         "risk_delivery_states",
         sa.Column("field_id", sa.Integer(), nullable=False),
         sa.Column("model", sa.String(length=80), nullable=False),
+        sa.Column("delivery_mode", sa.String(length=16), nullable=False),
         sa.Column(
             "state_version",
             sa.Integer(),
@@ -32,6 +33,10 @@ def upgrade() -> None:
         sa.Column("state_json", sa.Text(), nullable=False),
         sa.Column("last_observed_at", sa.DateTime(), nullable=False),
         sa.Column("last_notified_at", sa.DateTime(), nullable=True),
+        sa.CheckConstraint(
+            "delivery_mode IN ('immediate', 'digest', 'high_only')",
+            name="ck_risk_delivery_states_mode",
+        ),
         sa.ForeignKeyConstraint(
             ["field_id"],
             ["fields.id"],
