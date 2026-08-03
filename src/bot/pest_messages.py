@@ -86,9 +86,9 @@ def format_pest_model_intro(
     lines.extend(
         [
             "",
-            "Чтобы начать расчёт, отметьте дату первой реально найденной "
-            "кладки яиц. Без этой находки бот не пытается угадать появление "
-            "вредителя по одной погоде.",
+            f"Чтобы начать расчёт, отметьте дату события «{html.escape(model.biofix_label)}». "
+            "Без фактической находки бот не пытается угадать появление вредителя "
+            "по одной погоде.",
         ]
     )
     return "\n".join(lines)
@@ -122,12 +122,14 @@ def format_pest_outlook(
         return "\n".join(lines)
 
     assert outlook.current_stage is not None
+    assert outlook.accumulated_dd_c is not None
     lines.extend(
         [
             "<b>Что показывает температура</b>",
             f"• Накоплено: <b>{outlook.accumulated_dd_c:.1f} °C·сут</b> "
             f"выше {model.lower_threshold_c:.1f} °C.",
-            f"• Текущее расчётное окно: <b>{html.escape(outlook.current_stage.label)}</b>.",
+            f"• Текущее расчётное окно: "
+            f"<b>{html.escape(outlook.current_stage.label)}</b>.",
             f"• Что проверить: {html.escape(outlook.current_stage.scouting_action)}",
         ]
     )
@@ -141,8 +143,7 @@ def format_pest_outlook(
         else:
             remaining = max(
                 0.0,
-                float(outlook.next_stage.start_dd_c)
-                - float(outlook.accumulated_dd_c or 0.0),
+                float(outlook.next_stage.start_dd_c) - outlook.accumulated_dd_c,
             )
             lines.append(
                 f"• До следующего окна по шкале модели остаётся около "
@@ -167,15 +168,7 @@ def format_pest_outlook(
 
 
 def format_pest_help(model: PestModel) -> str:
-    stage_lines = [
-        f"• {stage.start_dd_c:.0f}–"
-        f"{stage.end_dd_c:.0f if stage.end_dd_c is not None else 'далее'} °C·сут: "
-        f"{html.escape(stage.label)}"
-        for stage in model.stages
-    ]
-    # Python's conditional formatting syntax is deliberately avoided below to
-    # keep the generated text compatible with Python 3.10.
-    stage_lines = []
+    stage_lines: list[str] = []
     for stage in model.stages:
         end = "далее" if stage.end_dd_c is None else f"{stage.end_dd_c:.0f}"
         stage_lines.append(
@@ -183,14 +176,16 @@ def format_pest_help(model: PestModel) -> str:
             f"{html.escape(stage.label)}"
         )
 
+    threshold = str(model.lower_threshold_c).replace(".", ",")
     return "\n".join(
         [
             f"ℹ️ <b>Как считается {html.escape(model.name_ru)}</b>",
             "",
             f"Точка отсчёта: <b>{html.escape(model.biofix_label)}</b>.",
-            f"Нижний температурный порог: <b>{model.lower_threshold_c:.1f} °C</b>.",
+            f"Нижний температурный порог: "
+            f"<b>{model.lower_threshold_c:.1f} °C</b>.",
             "За каждые завершённые местные сутки:",
-            "<code>тепло = max(0, (Tмакс + Tмин) / 2 − 11,1)</code>",
+            f"<code>тепло = max(0, (Tмакс + Tмин) / 2 − {threshold})</code>",
             "Затем суточные значения складываются. Будущий прогноз показывается "
             "отдельно и не входит в уже накопленное значение.",
             "",
@@ -222,13 +217,13 @@ def format_pest_notification(
     ]
     if notification.kind == "approaching_window":
         lines.append(
-            f"По текущему температурному прогнозу около "
+            "По текущему температурному прогнозу около "
             f"<b>{_format_date(notification.expected_date)}</b> ожидается вход "
             f"в расчётное окно «{html.escape(notification.stage.label)}»."
         )
     else:
         lines.append(
-            f"Накопленная температура вошла в расчётное окно "
+            "Накопленная температура вошла в расчётное окно "
             f"«{html.escape(notification.stage.label)}»."
         )
     lines.extend(
