@@ -182,16 +182,16 @@ COLORADO_POTATO_BEETLE = PestModel(
 
 BLACK_CUTWORM = PestModel(
     key="black_cutworm",
-    name_ru="Озимая совка: чёрная совка кукурузы",
+    name_ru="Совка ипсилон (чёрная совка)",
     scientific_name="Agrotis ipsilon",
     crop_keys=("corn",),
     biofix_type="significant_moth_catch",
     biofix_mode="user_observation",
     biofix_label="значимый улов бабочек в феромонной ловушке",
     biofix_help=(
-        "Укажите вторую ночь периода, когда в ловушке суммарно отмечено не "
-        "менее восьми бабочек за две последовательные ночи. Без ловушки и "
-        "идентификации вида расчёт не запускается."
+        "Укажите дату, на которую в ловушке суммарно отмечено не менее восьми "
+        "бабочек за две последовательные ночи. Без ловушки и идентификации "
+        "вида расчёт не запускается."
     ),
     temperature_driver="air_2m",
     temperature_label="минимальная и максимальная температура воздуха на 2 м",
