@@ -19,7 +19,11 @@ from src.api.open_meteo_ensemble import (
 )
 from src.application.agro_report import generate_agro_report
 from src.application.ports.risk import RiskForecastProvider
-from src.application.risk_notification_delivery import send_risk_transition_once
+from src.application.risk_notification_delivery import (
+    accepted_notification_time,
+    send_risk_transition_once,
+    was_notified_on_local_date,
+)
 from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
 from src.bot.report_presentation import compact_agro_report
 from src.bot.risk_alerts import (
@@ -31,6 +35,7 @@ from src.database.notification_targets import (
     list_enabled_notification_targets,
 )
 from src.database.risk_delivery_state import (
+    StoredRiskDeliveryState,
     load_risk_delivery_state,
     save_risk_delivery_state,
 )
@@ -198,15 +203,14 @@ async def _load_delivery_state(
     field_id: int,
     model: str,
     delivery_mode: str,
-) -> tuple[RiskEpisodeState, ...]:
+) -> StoredRiskDeliveryState | None:
     async with session_factory() as session:
-        state = await load_risk_delivery_state(
+        return await load_risk_delivery_state(
             session,
             field_id=field_id,
             model=model,
             delivery_mode=delivery_mode,
         )
-    return () if state is None else state.episodes
 
 
 async def _store_delivery_state(
@@ -387,13 +391,16 @@ async def check_weather_risk_alerts(
                             outlook=outlook,
                         )
                     )
-                    previous_state = await job_guard.run(
+                    delivery_state = await job_guard.run(
                         _load_delivery_state(
                             session_factory,
                             field_id=target.field_id,
                             model=forecast.meta.model,
                             delivery_mode=delivery_mode,
                         )
+                    )
+                    previous_state = (
+                        () if delivery_state is None else delivery_state.episodes
                     )
                     decision = plan_risk_delivery(
                         outlook.events,
@@ -436,6 +443,30 @@ async def check_weather_risk_alerts(
                             )
                         signal_ids.append(signal_id)
                     selected_signal_ids = tuple(signal_ids)
+
+                    if (
+                        decision.daily_quota_token is not None
+                        and delivery_state is not None
+                        and was_notified_on_local_date(
+                            delivery_state.last_notified_at,
+                            local_now,
+                        )
+                    ):
+                        await job_guard.run(
+                            _set_many_risk_deliveries(
+                                session_factory,
+                                signal_ids=selected_signal_ids,
+                                state="deferred",
+                            )
+                        )
+                        logger.info(
+                            "Weather-risk digest change retained by durable "
+                            "local-day quota for user %s field %s",
+                            target.telegram_id,
+                            target.field_id,
+                        )
+                        continue
+
                     transition_key = (
                         "notification:weather-risk-transition:"
                         f"{target.telegram_id}:{target.field_id}:"
@@ -505,10 +536,11 @@ async def check_weather_risk_alerts(
                         )
                         raise
 
-                    notified_at = (
-                        datetime.now(timezone.utc) if outcome == "sent" else None
+                    accepted_at = accepted_notification_time(
+                        outcome,
+                        now=datetime.now(timezone.utc),
                     )
-                    delivery_state = {
+                    delivery_label = {
                         "sent": "sent",
                         "already_delivered": "deduplicated",
                         "deferred_daily": "deferred",
@@ -517,8 +549,8 @@ async def check_weather_risk_alerts(
                         _set_many_risk_deliveries(
                             session_factory,
                             signal_ids=selected_signal_ids,
-                            state=delivery_state,
-                            notified_at=notified_at,
+                            state=delivery_label,
+                            notified_at=accepted_at,
                         )
                     )
                     if outcome != "deferred_daily":
@@ -530,7 +562,7 @@ async def check_weather_risk_alerts(
                                 delivery_mode=delivery_mode,
                                 episodes=decision.current_state,
                                 observed_at=forecast.meta.retrieved_at,
-                                notified_at=notified_at,
+                                notified_at=accepted_at,
                             )
                         )
                     else:
