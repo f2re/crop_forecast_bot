@@ -137,9 +137,11 @@ def _patch_common(
         *,
         field_id: int,
         model: str,
+        delivery_mode: str,
     ) -> tuple[RiskEpisodeState, ...]:
         assert field_id == 42
         assert model == "gfs_seamless"
+        assert delivery_mode == target.risk_delivery_mode
         return baseline
 
     async def fake_store(
@@ -147,6 +149,7 @@ def _patch_common(
         *,
         field_id: int,
         model: str,
+        delivery_mode: str,
         episodes: tuple[RiskEpisodeState, ...],
         observed_at: datetime,
         notified_at: datetime | None = None,
@@ -154,6 +157,7 @@ def _patch_common(
         nonlocal baseline
         assert field_id == 42
         assert model == "gfs_seamless"
+        assert delivery_mode == target.risk_delivery_mode
         assert observed_at.tzinfo is not None
         baseline = episodes
         semantic_states.append(episodes)
