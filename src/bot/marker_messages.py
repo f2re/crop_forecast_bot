@@ -7,9 +7,9 @@ from src.domain.marker_catalog import (
     AGROMETEOROLOGICAL_HAZARDS,
     METEOROLOGICAL_HAZARD_SOURCE,
     METEOROLOGICAL_HAZARDS,
-    PEST_MARKERS,
     HazardType,
     PestMarker,
+    get_pest_marker,
     pest_markers_by_status,
 )
 from src.domain.pests import PEST_MODELS
@@ -131,21 +131,11 @@ def format_operational_pest_markers() -> str:
         "",
     ]
     lines.extend(_short_marker_line(marker) for marker in implemented)
-    lines.extend(
-        [
-            "",
-            "<b>Проверка связей</b>",
-        ]
-    )
+    lines.extend(["", "<b>Проверка связей</b>"])
     for model in PEST_MODELS.values():
-        weather_markers = [
-            marker.name_ru
-            for marker in (get_marker for get_marker in ())
-        ]
-        del weather_markers
         marker_names = [
-            next(marker.name_ru for marker in PEST_MARKERS if marker.key == key)
-            for key in model.marker_keys
+            get_pest_marker(marker_key).name_ru
+            for marker_key in model.marker_keys
         ]
         lines.append(
             f"• {html.escape(model.name_ru)} — "
@@ -177,12 +167,7 @@ def format_candidate_pest_markers() -> str:
         f"{html.escape(marker.description)}"
         for marker in candidates
     )
-    lines.extend(
-        [
-            "",
-            "<b>Контекст, который не заменяет погоду</b>",
-        ]
-    )
+    lines.extend(["", "<b>Контекст, который не заменяет погоду</b>"])
     lines.extend(
         f"• <b>{html.escape(marker.name_ru)}</b> — "
         f"{html.escape(marker.description)}"
