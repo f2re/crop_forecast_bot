@@ -6,6 +6,7 @@ from datetime import date, datetime, timezone
 from typing import Any, cast
 
 from sqlalchemy import (
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -23,7 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import Base
 from src.domain.risk import RiskLevel, RiskType
-from src.domain.risk_delivery import RiskEpisodeState
+from src.domain.risk_delivery import (
+    RiskDeliveryMode,
+    RiskEpisodeState,
+    validate_risk_delivery_mode,
+)
 
 _STATE_VERSION = 1
 _RISK_TYPES = frozenset(
@@ -46,6 +51,7 @@ def _register_table(metadata: MetaData) -> Table:
             primary_key=True,
         ),
         Column("model", String(80), nullable=False),
+        Column("delivery_mode", String(16), nullable=False),
         Column(
             "state_version",
             Integer,
@@ -56,6 +62,10 @@ def _register_table(metadata: MetaData) -> Table:
         Column("state_json", Text, nullable=False),
         Column("last_observed_at", DateTime, nullable=False),
         Column("last_notified_at", DateTime, nullable=True),
+        CheckConstraint(
+            "delivery_mode IN ('immediate', 'digest', 'high_only')",
+            name="ck_risk_delivery_states_mode",
+        ),
         Index(
             "ix_risk_delivery_states_observed_at",
             "last_observed_at",
@@ -70,6 +80,7 @@ risk_delivery_states = _register_table(Base.metadata)
 class StoredRiskDeliveryState:
     field_id: int
     model: str
+    delivery_mode: RiskDeliveryMode
     episodes: tuple[RiskEpisodeState, ...]
     last_observed_at: datetime
     last_notified_at: datetime | None
@@ -140,7 +151,9 @@ async def load_risk_delivery_state(
     *,
     field_id: int,
     model: str,
+    delivery_mode: str,
 ) -> StoredRiskDeliveryState | None:
+    resolved_mode = validate_risk_delivery_mode(delivery_mode)
     result = await session.execute(
         select(risk_delivery_states).where(
             risk_delivery_states.c.field_id == field_id
@@ -149,7 +162,11 @@ async def load_risk_delivery_state(
     row = result.mappings().one_or_none()
     if row is None:
         return None
-    if row["model"] != model or row["state_version"] != _STATE_VERSION:
+    if (
+        row["model"] != model
+        or row["delivery_mode"] != resolved_mode
+        or row["state_version"] != _STATE_VERSION
+    ):
         return None
     try:
         episodes = _deserialize(row["state_json"])
@@ -160,6 +177,7 @@ async def load_risk_delivery_state(
     return StoredRiskDeliveryState(
         field_id=field_id,
         model=row["model"],
+        delivery_mode=resolved_mode,
         episodes=episodes,
         last_observed_at=row["last_observed_at"],
         last_notified_at=row["last_notified_at"],
@@ -171,21 +189,31 @@ async def save_risk_delivery_state(
     *,
     field_id: int,
     model: str,
+    delivery_mode: str,
     episodes: tuple[RiskEpisodeState, ...],
     observed_at: datetime,
     notified_at: datetime | None = None,
 ) -> StoredRiskDeliveryState:
+    resolved_mode = validate_risk_delivery_mode(delivery_mode)
     observed_value = _utc_naive(observed_at)
     notified_value = None if notified_at is None else _utc_naive(notified_at)
     result = await session.execute(
         select(
             risk_delivery_states.c.field_id,
+            risk_delivery_states.c.model,
+            risk_delivery_states.c.delivery_mode,
             risk_delivery_states.c.last_notified_at,
         ).where(risk_delivery_states.c.field_id == field_id)
     )
     existing = result.mappings().one_or_none()
+    compatible_existing = (
+        existing is not None
+        and existing["model"] == model
+        and existing["delivery_mode"] == resolved_mode
+    )
     values = {
         "model": model,
+        "delivery_mode": resolved_mode,
         "state_version": _STATE_VERSION,
         "state_json": _serialize(episodes),
         "last_observed_at": observed_value,
@@ -194,7 +222,7 @@ async def save_risk_delivery_state(
             if notified_value is not None
             else (
                 existing["last_notified_at"]
-                if existing is not None
+                if compatible_existing
                 else None
             )
         ),
@@ -216,6 +244,7 @@ async def save_risk_delivery_state(
     return StoredRiskDeliveryState(
         field_id=field_id,
         model=model,
+        delivery_mode=resolved_mode,
         episodes=episodes,
         last_observed_at=observed_value,
         last_notified_at=values["last_notified_at"],
