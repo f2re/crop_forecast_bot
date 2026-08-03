@@ -10,6 +10,7 @@ from src.bot.scheduler import check_weather_risk_alerts
 from src.database.notification_targets import EnabledNotificationTarget
 from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
+from src.domain.risk_delivery import RiskEpisodeState
 from src.infrastructure.coordination import MemoryCoordination
 
 _EVENT_DATE = date(2026, 7, 29)
@@ -98,6 +99,7 @@ async def test_scheduler_calculates_each_saved_enabled_field(
     ]
     stored_fields: list[int] = []
     delivery_states: list[tuple[int, str]] = []
+    semantic_states: dict[int, tuple[RiskEpisodeState, ...]] = {}
 
     async def fake_targets(
         session_factory,
@@ -118,6 +120,32 @@ async def test_scheduler_calculates_each_saved_enabled_field(
             created=True,
         )
 
+    async def fake_load(
+        session_factory,
+        *,
+        field_id: int,
+        model: str,
+        delivery_mode: str,
+    ) -> tuple[RiskEpisodeState, ...]:
+        assert model == "gfs_seamless"
+        assert delivery_mode == "immediate"
+        return semantic_states.get(field_id, ())
+
+    async def fake_store(
+        session_factory,
+        *,
+        field_id: int,
+        model: str,
+        delivery_mode: str,
+        episodes: tuple[RiskEpisodeState, ...],
+        observed_at: datetime,
+        notified_at: datetime | None = None,
+    ) -> None:
+        assert model == "gfs_seamless"
+        assert delivery_mode == "immediate"
+        assert observed_at.tzinfo is not None
+        semantic_states[field_id] = episodes
+
     async def fake_delivery(
         session_factory,
         *,
@@ -133,6 +161,8 @@ async def test_scheduler_calculates_each_saved_enabled_field(
 
     monkeypatch.setattr(scheduler_module, "_targets", fake_targets)
     monkeypatch.setattr(scheduler_module, "_record_risk_run", fake_record)
+    monkeypatch.setattr(scheduler_module, "_load_delivery_state", fake_load)
+    monkeypatch.setattr(scheduler_module, "_store_delivery_state", fake_store)
     monkeypatch.setattr(scheduler_module, "_set_risk_delivery", fake_delivery)
     monkeypatch.setattr(scheduler_module, "_prune_risk_history", fake_prune)
     monkeypatch.setattr(
@@ -165,6 +195,8 @@ async def test_scheduler_calculates_each_saved_enabled_field(
     assert len(bot.messages) == 2
     assert "Северное" in bot.messages[0][1]
     assert "Южное" in bot.messages[1][1]
+    assert semantic_states[42][0].risk_type == "heavy_rain"
+    assert semantic_states[43][0].risk_type == "heavy_rain"
     assert delivery_states == [
         (420, "sending"),
         (420, "sent"),
