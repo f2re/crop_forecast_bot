@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-PestCalculationMethod = Literal["daily_average"]
-PestBiofixType = Literal["first_eggs"]
+PestCalculationMethod = Literal["daily_average", "single_sine_horizontal"]
+PestBiofixType = Literal[
+    "first_eggs",
+    "significant_moth_catch",
+    "calendar_jan1",
+]
+PestBiofixMode = Literal["user_observation", "calendar"]
+PestTemperatureDriver = Literal["air_2m", "soil_0_to_7cm"]
 PestNotificationKind = Literal["current_window", "approaching_window"]
 
 
@@ -25,13 +31,18 @@ class PestModel:
     scientific_name: str
     crop_keys: tuple[str, ...]
     biofix_type: PestBiofixType
+    biofix_mode: PestBiofixMode
     biofix_label: str
+    biofix_help: str
+    temperature_driver: PestTemperatureDriver
+    temperature_label: str
     lower_threshold_c: float
     upper_threshold_c: float | None
     calculation_method: PestCalculationMethod
     model_version: str
     source_title: str
     source_url: str
+    supporting_source_urls: tuple[str, ...]
     validation_note: str
     stages: tuple[PestStage, ...]
 
@@ -70,7 +81,14 @@ COLORADO_POTATO_BEETLE = PestModel(
     scientific_name="Leptinotarsa decemlineata",
     crop_keys=("potato",),
     biofix_type="first_eggs",
+    biofix_mode="user_observation",
     biofix_label="первая найденная кладка яиц",
+    biofix_help=(
+        "Укажите дату первой кладки, которую действительно нашли на этом поле. "
+        "Дата посадки картофеля не заменяет наблюдение вредителя."
+    ),
+    temperature_driver="air_2m",
+    temperature_label="минимальная и максимальная температура воздуха на 2 м",
     lower_threshold_c=11.1,
     upper_threshold_c=None,
     calculation_method="daily_average",
@@ -81,6 +99,7 @@ COLORADO_POTATO_BEETLE = PestModel(
     source_url=(
         "https://vegento.russell.wisc.edu/pests/colorado-potato-beetle/"
     ),
+    supporting_source_urls=(),
     validation_note=(
         "Пороговые суммы опубликованы для Верхнего Среднего Запада США. "
         "В боте они используются только как окно осмотра после подтверждённой "
@@ -161,8 +180,176 @@ COLORADO_POTATO_BEETLE = PestModel(
 )
 
 
+BLACK_CUTWORM = PestModel(
+    key="black_cutworm",
+    name_ru="Озимая совка: чёрная совка кукурузы",
+    scientific_name="Agrotis ipsilon",
+    crop_keys=("corn",),
+    biofix_type="significant_moth_catch",
+    biofix_mode="user_observation",
+    biofix_label="значимый улов бабочек в феромонной ловушке",
+    biofix_help=(
+        "Укажите вторую ночь периода, когда в ловушке суммарно отмечено не "
+        "менее восьми бабочек за две последовательные ночи. Без ловушки и "
+        "идентификации вида расчёт не запускается."
+    ),
+    temperature_driver="air_2m",
+    temperature_label="минимальная и максимальная температура воздуха на 2 м",
+    lower_threshold_c=10.0,
+    upper_threshold_c=None,
+    calculation_method="daily_average",
+    model_version="black-cutworm-mn-2026-v1",
+    source_title="University of Minnesota Extension: Black cutworm in corn",
+    source_url=(
+        "https://extension.umn.edu/corn-pest-management/black-cutworm-corn"
+    ),
+    supporting_source_urls=(),
+    validation_note=(
+        "Модель создана для кукурузы и значимого улова в ловушке. Сам улов "
+        "хорошо задаёт сроки развития, но может завышать риск повреждения поля. "
+        "Сообщение используется только для выбора времени обследования."
+    ),
+    stages=(
+        PestStage(
+            key="eggs",
+            label="яйцекладка и развитие яиц",
+            start_dd_c=0.0,
+            end_dd_c=50.0,
+            scouting_action=(
+                "Проверьте всходы и сорняки, но не считайте улов доказательством "
+                "наличия личинок на поле."
+            ),
+        ),
+        PestStage(
+            key="larvae_1_3",
+            label="личинки 1–3-го возрастов; питание листьями",
+            start_dd_c=50.0,
+            end_dd_c=173.3,
+            scouting_action=(
+                "Ищите небольшие отверстия и объедание листьев, осматривайте "
+                "растения и поверхность почвы рядом с повреждениями."
+            ),
+        ),
+        PestStage(
+            key="larva_4",
+            label="личинки 4-го возраста; начинается подгрызание растений",
+            start_dd_c=173.3,
+            end_dd_c=202.8,
+            scouting_action=(
+                "Начните целевой осмотр на увядающие и частично подрезанные "
+                "растения, особенно в засорённых и пониженных местах."
+            ),
+        ),
+        PestStage(
+            key="larva_5",
+            label="личинки 5-го возраста; основное окно подгрызания",
+            start_dd_c=202.8,
+            end_dd_c=239.4,
+            scouting_action=(
+                "Осмотрите поле без задержки и запишите долю повреждённых и "
+                "подрезанных растений. Решение зависит от фактического учёта."
+            ),
+        ),
+        PestStage(
+            key="larvae_6_7",
+            label="личинки 6–7-го возрастов; подгрызание ослабевает",
+            start_dd_c=239.4,
+            end_dd_c=356.1,
+            scouting_action=(
+                "Продолжайте учёт свежих повреждений; отделяйте старые следы от "
+                "продолжающегося питания."
+            ),
+        ),
+        PestStage(
+            key="pupae",
+            label="окукливание; питание прекращается",
+            start_dd_c=356.1,
+            end_dd_c=549.4,
+            scouting_action=(
+                "Проверьте, появляются ли новые повреждения. Температурный расчёт "
+                "не заменяет осмотр и определение причины выпадения растений."
+            ),
+        ),
+        PestStage(
+            key="cycle_complete",
+            label="опубликованное окно первого цикла завершено",
+            start_dd_c=549.4,
+            end_dd_c=None,
+            scouting_action=(
+                "Для нового цикла используйте свежий значимый улов в ловушке; "
+                "не продолжайте старую точку отсчёта автоматически."
+            ),
+        ),
+    ),
+)
+
+
+SEEDCORN_MAGGOT_SOIL = PestModel(
+    key="seedcorn_maggot_soil",
+    name_ru="Ростковая муха",
+    scientific_name="Delia platura",
+    crop_keys=("corn", "soy"),
+    biofix_type="calendar_jan1",
+    biofix_mode="calendar",
+    biofix_label="календарное начало накопления 1 января",
+    biofix_help=(
+        "Дата устанавливается автоматически на 1 января текущего года. "
+        "Пользовательская дата посадки не используется как начало развития "
+        "перезимовавших куколок."
+    ),
+    temperature_driver="soil_0_to_7cm",
+    temperature_label="температура модельного слоя почвы 0–7 см",
+    lower_threshold_c=3.9,
+    upper_threshold_c=29.0,
+    calculation_method="single_sine_horizontal",
+    model_version="seedcorn-maggot-soil-uc-2026-v1",
+    source_title="UC IPM Phenology Model Database: Seedcorn Maggot",
+    source_url=(
+        "https://ipm.ucanr.edu/weather/phenology-models-description/"
+        "seedcorn-maggot/"
+    ),
+    supporting_source_urls=(
+        "https://agweather.cals.wisc.edu/thermal-models/scm",
+        "https://extension.umn.edu/corn-pest-management/seedcorn-maggot",
+    ),
+    validation_note=(
+        "Порог 206 °C·сут относится к 50% весеннего выхода взрослых мух и "
+        "температуре почвы около 5,7 см в исследованиях Верхнего Среднего "
+        "Запада США. Open-Meteo даёт модельный слой 0–7 см. Это окно осмотра "
+        "для кукурузы и сои, а не оценка численности или ущерба."
+    ),
+    stages=(
+        PestStage(
+            key="overwintering_pupae",
+            label="развитие перезимовавших куколок до весеннего выхода",
+            start_dd_c=0.0,
+            end_dd_c=206.0,
+            scouting_action=(
+                "Учитывайте историю поля, недавнюю заделку навоза или зелёной "
+                "массы и состояние посевного слоя; одна температура не задаёт риск."
+            ),
+        ),
+        PestStage(
+            key="spring_emergence",
+            label="достигнуто расчётное окно 50% весеннего выхода взрослых мух",
+            start_dd_c=206.0,
+            end_dd_c=None,
+            scouting_action=(
+                "Проверьте высокорисковые участки и всходы. Наличие повреждений "
+                "подтверждают по семенам, проросткам и фактическим личинкам."
+            ),
+        ),
+    ),
+)
+
+
 PEST_MODELS: dict[str, PestModel] = {
-    COLORADO_POTATO_BEETLE.key: COLORADO_POTATO_BEETLE,
+    model.key: model
+    for model in (
+        COLORADO_POTATO_BEETLE,
+        BLACK_CUTWORM,
+        SEEDCORN_MAGGOT_SOIL,
+    )
 }
 
 
@@ -184,6 +371,12 @@ def validate_pest_for_crop(pest_key: str, crop_key: str) -> PestModel:
     if crop_key not in model.crop_keys:
         raise ValueError("Эта модель не применяется к выбранной культуре.")
     return model
+
+
+def automatic_biofix_date(model: PestModel, today: date) -> date | None:
+    if model.biofix_type == "calendar_jan1":
+        return date(today.year, 1, 1)
+    return None
 
 
 def stage_for_accumulation(model: PestModel, accumulated_dd_c: float) -> PestStage:
