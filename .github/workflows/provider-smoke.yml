@@ -9,8 +9,12 @@ on:
       - "src/agro/climate_reference.py"
       - "src/api/open_meteo.py"
       - "src/api/open_meteo_climate.py"
+      - "src/api/open_meteo_soil.py"
+      - "src/application/ports/soil_temperature.py"
+      - "src/domain/soil_temperature.py"
       - "src/ops/provider_smoke.py"
       - "src/ops/climate_smoke.py"
+      - "src/ops/soil_temperature_smoke.py"
   push:
     branches: [main]
     paths:
@@ -19,8 +23,12 @@ on:
       - "src/agro/climate_reference.py"
       - "src/api/open_meteo.py"
       - "src/api/open_meteo_climate.py"
+      - "src/api/open_meteo_soil.py"
+      - "src/application/ports/soil_temperature.py"
+      - "src/domain/soil_temperature.py"
       - "src/ops/provider_smoke.py"
       - "src/ops/climate_smoke.py"
+      - "src/ops/soil_temperature_smoke.py"
   schedule:
     - cron: "17 4 * * 1"
 
@@ -35,7 +43,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}
       OPEN_METEO_CACHE_PATH: ${{ github.workspace }}/.cache/openmeteo
@@ -52,7 +60,7 @@ jobs:
               sha: process.env.STATUS_SHA,
               state: "pending",
               context: "live-provider-smoke",
-              description: "Open-Meteo and ERA5 contract smoke is running",
+              description: "Open-Meteo weather, climate and soil contracts are running",
               target_url: process.env.RUN_URL,
             });
 
@@ -80,6 +88,16 @@ jobs:
             --longitude 37.62 \
             --season-start "${season_start}" | tee operational-smoke.json
 
+      - name: Near-surface soil-temperature contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          soil_start="$(date -u -d '45 days ago' +%F)"
+          python -m src.ops.soil_temperature_smoke \
+            --latitude 55.75 \
+            --longitude 37.62 \
+            --start "${soil_start}" | tee soil-temperature-smoke.json
+
       - name: Homogeneous ERA5 current/reference contract
         shell: bash
         run: |
@@ -98,6 +116,7 @@ jobs:
           name: live-provider-smoke-${{ github.run_id }}
           path: |
             operational-smoke.json
+            soil-temperature-smoke.json
             climate-smoke.json
           if-no-files-found: warn
           retention-days: 14
@@ -117,7 +136,7 @@ jobs:
               state: succeeded ? "success" : "failure",
               context: "live-provider-smoke",
               description: succeeded
-                ? "Open-Meteo and ERA5 live contracts passed"
+                ? "Weather, climate and soil live contracts passed"
                 : "A live provider contract failed; inspect the run",
               target_url: process.env.RUN_URL,
             });

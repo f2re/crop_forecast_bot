@@ -29,6 +29,13 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⚠️ Погодные условия", callback_data="risk_overview")],
         [
             InlineKeyboardButton(
+                text="🌡 Температура почвы",
+                callback_data="soil_temperature",
+            ),
+            InlineKeyboardButton(text="🐛 Вредители", callback_data="pest_overview"),
+        ],
+        [
+            InlineKeyboardButton(
                 text="🕘 История предупреждений",
                 callback_data="risk_history",
             )
@@ -110,6 +117,16 @@ def get_field_actions_keyboard(
                         text="⚠️ Погодные условия",
                         callback_data="risk_overview",
                     )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🌡 Температура почвы",
+                        callback_data="soil_temperature",
+                    ),
+                    InlineKeyboardButton(
+                        text="🐛 Вредители",
+                        callback_data="pest_overview",
+                    ),
                 ],
                 [
                     InlineKeyboardButton(

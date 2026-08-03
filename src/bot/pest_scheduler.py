@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -15,6 +16,7 @@ from src.application.pest_monitoring import (
     PestMonitorRequest,
     evaluate_pest_monitors,
 )
+from src.application.ports.soil_temperature import SoilTemperatureProvider
 from src.application.ports.weather import WeatherProvider
 from src.bot.pest_messages import format_pest_notification
 from src.database.pest_monitoring import (
@@ -22,7 +24,8 @@ from src.database.pest_monitoring import (
     list_enabled_pest_targets,
     mark_pest_monitor_checked,
 )
-from src.domain.pests import validate_pest_for_crop
+from src.database.pest_rollover import rollover_calendar_pest_monitor
+from src.domain.pests import automatic_biofix_date, validate_pest_for_crop
 from src.infrastructure.coordination import (
     CoordinationBackend,
     LeaseLostError,
@@ -116,6 +119,22 @@ async def _mark_checked(
         )
 
 
+async def _rollover_calendar(
+    session_factory: SessionFactory,
+    target: PestMonitoringTarget,
+    *,
+    model,
+    biofix_date: date,
+) -> bool:
+    async with session_factory() as session:
+        return await rollover_calendar_pest_monitor(
+            session,
+            target.monitor_id,
+            model=model,
+            biofix_date=biofix_date,
+        )
+
+
 async def _send_once(
     coordination: CoordinationBackend,
     key: str,
@@ -156,6 +175,7 @@ async def check_pest_monitoring(
     due_only: bool = True,
     *,
     provider: WeatherProvider | None = None,
+    soil_provider: SoilTemperatureProvider | None = None,
     now_utc: datetime | None = None,
     job_lock_ttl_seconds: int = _PEST_JOB_LOCK_TTL,
     renew_interval_seconds: float = _PEST_LEASE_RENEW_SECONDS,
@@ -192,7 +212,8 @@ async def check_pest_monitoring(
 
                 valid_targets: list[PestMonitoringTarget] = []
                 requests: list[PestMonitorRequest] = []
-                for target in due_targets:
+                for original_target in due_targets:
+                    target = original_target
                     try:
                         model = validate_pest_for_crop(
                             target.pest_key,
@@ -205,6 +226,35 @@ async def check_pest_monitoring(
                             exc,
                         )
                         continue
+
+                    local_day = _local_datetime(
+                        target.timezone,
+                        now_utc,
+                    ).date()
+                    calendar_start = automatic_biofix_date(model, local_day)
+                    if calendar_start is not None and (
+                        target.biofix_date != calendar_start
+                        or target.biofix_type != model.biofix_type
+                        or target.model_version != model.model_version
+                    ):
+                        await job_guard.run(
+                            _rollover_calendar(
+                                session_factory,
+                                target,
+                                model=model,
+                                biofix_date=calendar_start,
+                            )
+                        )
+                        target = replace(
+                            target,
+                            biofix_date=calendar_start,
+                            biofix_type=model.biofix_type,
+                            model_version=model.model_version,
+                            last_checked_local_date=None,
+                            last_notified_stage=None,
+                            last_notified_advance=None,
+                        )
+
                     if target.model_version != model.model_version:
                         logger.warning(
                             "Pest monitor %s uses model version %s; current is %s. "
@@ -237,12 +287,13 @@ async def check_pest_monitoring(
                             first.longitude,
                             tuple(requests),
                             provider=provider,
+                            soil_provider=soil_provider,
                             today=calculation_day,
                         )
                     )
                 except OpenMeteoError as exc:
                     logger.warning(
-                        "Pest weather data unavailable for field %s: %s",
+                        "Pest temperature data unavailable for field %s: %s",
                         first.field_id,
                         exc,
                     )

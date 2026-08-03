@@ -12,12 +12,18 @@ def get_report_result_with_pests_keyboard() -> InlineKeyboardMarkup:
     base = get_report_result_keyboard()
     rows = list(base.inline_keyboard)
     menu_row = rows.pop() if rows else []
-    rows.append(
+    rows.extend(
         [
-            InlineKeyboardButton(
-                text="🐛 Вредители",
-                callback_data="pest_overview",
-            )
+            [
+                InlineKeyboardButton(
+                    text="🌡 Почва 0–7 см",
+                    callback_data="soil_temperature",
+                ),
+                InlineKeyboardButton(
+                    text="🐛 Вредители",
+                    callback_data="pest_overview",
+                ),
+            ]
         ]
     )
     if menu_row:
@@ -41,13 +47,29 @@ def get_pest_models_keyboard(
                 )
             ]
         )
-    rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="menu")])
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="🌡 Температура почвы 0–7 см",
+                    callback_data="soil_temperature",
+                )
+            ],
+            [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_pest_unavailable_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌡 Температура почвы 0–7 см",
+                    callback_data="soil_temperature",
+                )
+            ],
             [
                 InlineKeyboardButton(
                     text="🌱 Выбрать другую культуру",
@@ -57,6 +79,18 @@ def get_pest_unavailable_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
         ]
     )
+
+
+def _setup_label(model: PestModel, *, configured: bool) -> str:
+    if model.biofix_mode == "calendar":
+        return "🔔 Включить расчёт" if not configured else "🔔 Включить напоминания"
+    return "📅 Указать точку отсчёта" if not configured else "🔔 Включить напоминания"
+
+
+def _change_origin_label(model: PestModel) -> str:
+    if model.biofix_mode == "calendar":
+        return "📅 Обновить расчёт с 1 января"
+    return "📅 Изменить точку отсчёта"
 
 
 def get_pest_monitor_keyboard(
@@ -77,7 +111,7 @@ def get_pest_monitor_keyboard(
                 ],
                 [
                     InlineKeyboardButton(
-                        text="📅 Изменить первую находку",
+                        text=_change_origin_label(model),
                         callback_data=f"pest_setup:{model.key}",
                     )
                 ],
@@ -93,12 +127,17 @@ def get_pest_monitor_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=(
-                        "🔔 Включить наблюдение"
-                        if configured
-                        else "📅 Указать первую находку"
-                    ),
+                    text=_setup_label(model, configured=configured),
                     callback_data=f"pest_setup:{model.key}",
+                )
+            ]
+        )
+    if model.temperature_driver == "soil_0_to_7cm":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🌡 Проверить температуру почвы",
+                    callback_data="soil_temperature",
                 )
             ]
         )
@@ -124,14 +163,25 @@ def get_pest_monitor_keyboard(
 
 
 def get_pest_help_keyboard(model: PestModel) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                text="📚 Открыть основной источник",
+                url=model.source_url,
+            )
+        ]
+    ]
+    if model.temperature_driver == "soil_0_to_7cm":
+        rows.append(
             [
                 InlineKeyboardButton(
-                    text="📚 Открыть источник",
-                    url=model.source_url,
+                    text="🌡 Температура почвы",
+                    callback_data="soil_temperature",
                 )
-            ],
+            ]
+        )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="◀️ К расчёту",
@@ -141,3 +191,4 @@ def get_pest_help_keyboard(model: PestModel) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)

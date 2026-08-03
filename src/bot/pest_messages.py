@@ -11,6 +11,46 @@ def _format_date(value: date | None) -> str:
     return "не определена" if value is None else value.strftime("%d.%m.%Y")
 
 
+def _method_label(model: PestModel) -> str:
+    if model.calculation_method == "daily_average":
+        return "среднее суточных минимума и максимума"
+    if model.calculation_method == "single_sine_horizontal":
+        return "одна синусоида с горизонтальным верхним пределом"
+    return model.calculation_method
+
+
+def _method_explanation(model: PestModel) -> list[str]:
+    lower = str(model.lower_threshold_c).replace(".", ",")
+    if model.calculation_method == "daily_average":
+        lines = [
+            "За каждые завершённые местные сутки:",
+            f"<code>тепло = max(0, (Tмакс + Tмин) / 2 − {lower})</code>",
+        ]
+        if model.upper_threshold_c is not None:
+            upper = str(model.upper_threshold_c).replace(".", ",")
+            lines.append(
+                f"Средняя температура предварительно ограничивается {upper} °C."
+            )
+        return lines
+
+    if model.calculation_method == "single_sine_horizontal":
+        upper = (
+            "не задан"
+            if model.upper_threshold_c is None
+            else f"{model.upper_threshold_c:.1f} °C"
+        )
+        return [
+            "Между суточными минимумом и максимумом строится одна условная "
+            "синусоида. В расчёт входит площадь температурной кривой выше "
+            f"{model.lower_threshold_c:.1f} °C.",
+            f"Верхний предел: {upper}; тепло выше него не ускоряет развитие.",
+            "Это метод Single Sine с горизонтальным отсечением, а не простое "
+            "вычитание базовой температуры из среднего значения.",
+        ]
+
+    return ["Метод модели не поддерживается пользовательской справкой."]
+
+
 def format_pest_overview(
     *,
     field_name: str,
@@ -28,31 +68,37 @@ def format_pest_overview(
     if not models:
         lines.extend(
             [
-                "Для этой культуры пока нет включённой и проверяемой модели.",
+                "Для этой культуры пока нет допущенной погодозависимой модели.",
                 "",
-                "Бот не переносит температурные пороги от другой культуры или "
-                "другого вида вредителя. Сначала нужны точный вид, исходное "
-                "наблюдение, метод расчёта и региональная проверка.",
+                "Бот не связывает культуру с вредителем только потому, что он "
+                "может на ней встречаться. Нужны точный вид, температурный или "
+                "погодный метод, точка отсчёта, опубликованные пороги и понятные "
+                "границы применимости.",
             ]
         )
         return "\n".join(lines)
 
-    lines.append("Доступно:")
+    lines.append("Доступные расчёты:")
     for model in models:
-        marker = "✅ настроено" if model.key == active_pest_key else "не настроено"
+        marker = "✅ включено" if model.key == active_pest_key else "не настроено"
+        driver = (
+            "температура почвы"
+            if model.temperature_driver == "soil_0_to_7cm"
+            else "температура воздуха"
+        )
         lines.append(
             f"• {html.escape(model.name_ru)} "
-            f"(<i>{html.escape(model.scientific_name)}</i>) — {marker}."
+            f"(<i>{html.escape(model.scientific_name)}</i>) — {marker}; {driver}."
         )
     lines.extend(
         [
             "",
-            "Сначала пользователь отмечает реальную находку на поле. После "
-            "этого бот считает только температурное развитие и напоминает, "
-            "когда полезно повторить осмотр.",
+            "Наблюдаемая точка отсчёта вводится пользователем. Календарная "
+            "точка используется только там, где она прямо задана опубликованной "
+            "моделью.",
             "",
-            "Расчёт не подтверждает наличие вредителя, численность, ущерб или "
-            "необходимость обработки.",
+            "Расчёт показывает окно обследования. Он не подтверждает наличие, "
+            "численность, ущерб или необходимость обработки.",
         ]
     )
     return "\n".join(lines)
@@ -77,20 +123,23 @@ def format_pest_model_intro(
         f"🗺 Поле: {html.escape(field_name)}",
         f"🌱 Культура: {html.escape(get_crop_name(crop_key))}",
         f"🔔 Наблюдение: {status}",
+        f"🌡 Данные: {html.escape(model.temperature_label)}",
     ]
     if biofix_date is not None:
         lines.append(
             f"📅 Точка отсчёта: {html.escape(model.biofix_label)}, "
             f"{_format_date(biofix_date)}"
         )
-    lines.extend(
-        [
-            "",
-            f"Чтобы начать расчёт, отметьте дату события «{html.escape(model.biofix_label)}». "
-            "Без фактической находки бот не пытается угадать появление вредителя "
-            "по одной погоде.",
-        ]
-    )
+    lines.extend(["", html.escape(model.biofix_help)])
+    if model.biofix_mode == "calendar":
+        lines.append(
+            "Календарная дата задаётся самой опубликованной моделью и "
+            "обновляется для нового года."
+        )
+    else:
+        lines.append(
+            "Без этого полевого наблюдения бот не запускает расчёт по одной погоде."
+        )
     return "\n".join(lines)
 
 
@@ -108,6 +157,7 @@ def format_pest_outlook(
         f"🌱 Культура: {html.escape(get_crop_name(crop_key))}",
         f"📅 Отсчёт от: {html.escape(model.biofix_label)}, "
         f"{_format_date(outlook.biofix_date)}",
+        f"🌡 Используется: {html.escape(model.temperature_label)}",
         "",
     ]
     if not outlook.available:
@@ -115,21 +165,23 @@ def format_pest_outlook(
             [
                 "⚠️ <b>Расчёт не показан</b>",
                 f"• {html.escape(outlook.status)}.",
-                "• Пропуск не заменяется нулём. Проверьте дату или повторите "
-                "расчёт после обновления погодного ряда.",
+                "• Пропуск не заменяется нулём. Проверьте точку отсчёта или "
+                "повторите расчёт после обновления температурного ряда.",
             ]
         )
         return "\n".join(lines)
 
     assert outlook.current_stage is not None
     assert outlook.accumulated_dd_c is not None
+    threshold_text = f"выше {model.lower_threshold_c:.1f} °C"
+    if model.upper_threshold_c is not None:
+        threshold_text += f", с верхним пределом {model.upper_threshold_c:.1f} °C"
     lines.extend(
         [
-            "<b>Что показывает температура</b>",
+            "<b>Что показывает температурная модель</b>",
             f"• Накоплено: <b>{outlook.accumulated_dd_c:.1f} °C·сут</b> "
-            f"выше {model.lower_threshold_c:.1f} °C.",
-            f"• Текущее расчётное окно: "
-            f"<b>{html.escape(outlook.current_stage.label)}</b>.",
+            f"({threshold_text}).",
+            f"• Расчётное окно: <b>{html.escape(outlook.current_stage.label)}</b>.",
             f"• Что проверить: {html.escape(outlook.current_stage.scouting_action)}",
         ]
     )
@@ -156,10 +208,10 @@ def format_pest_outlook(
             f"• Завершённый ряд: {outlook.completed_days} сут.; "
             f"пропусков: {outlook.missing_days}.",
             f"• Источник температуры: {html.escape(source)}.",
+            f"• Метод: {html.escape(_method_label(model))}.",
             f"• Версия правила: {html.escape(model.model_version)}.",
-            "• Это расчёт скорости развития после подтверждённой находки, а "
-            "не прогноз появления, численности, ущерба или необходимости "
-            "обработки.",
+            "• Это расчёт скорости развития от заданной точки отсчёта, а не "
+            "прогноз наличия, численности, ущерба или необходимости обработки.",
             "• Решение принимают после осмотра, учёта местного порога вреда и "
             "проверки действующих правил применения средств защиты растений.",
         ]
@@ -170,34 +222,39 @@ def format_pest_outlook(
 def format_pest_help(model: PestModel) -> str:
     stage_lines: list[str] = []
     for stage in model.stages:
-        end = "далее" if stage.end_dd_c is None else f"{stage.end_dd_c:.0f}"
+        end = "далее" if stage.end_dd_c is None else f"{stage.end_dd_c:.1f}"
         stage_lines.append(
-            f"• {stage.start_dd_c:.0f}–{end} °C·сут: "
+            f"• {stage.start_dd_c:.1f}–{end} °C·сут: "
             f"{html.escape(stage.label)}"
         )
 
-    threshold = str(model.lower_threshold_c).replace(".", ",")
     return "\n".join(
         [
             f"ℹ️ <b>Как считается {html.escape(model.name_ru)}</b>",
             "",
             f"Точка отсчёта: <b>{html.escape(model.biofix_label)}</b>.",
-            f"Нижний температурный порог: "
-            f"<b>{model.lower_threshold_c:.1f} °C</b>.",
-            "За каждые завершённые местные сутки:",
-            f"<code>тепло = max(0, (Tмакс + Tмин) / 2 − {threshold})</code>",
-            "Затем суточные значения складываются. Будущий прогноз показывается "
-            "отдельно и не входит в уже накопленное значение.",
+            html.escape(model.biofix_help),
+            f"Температурный ряд: <b>{html.escape(model.temperature_label)}</b>.",
+            f"Нижний порог: <b>{model.lower_threshold_c:.1f} °C</b>.",
+            *(
+                [f"Верхний порог: <b>{model.upper_threshold_c:.1f} °C</b>."]
+                if model.upper_threshold_c is not None
+                else []
+            ),
             "",
-            "<b>Опубликованные окна после первой кладки</b>",
+            *_method_explanation(model),
+            "Будущий прогноз показывается отдельно и не входит в уже "
+            "накопленное значение.",
+            "",
+            "<b>Опубликованные расчётные окна</b>",
             *stage_lines,
             "",
-            f"Источник: {html.escape(model.source_title)}.",
+            f"Основной источник: {html.escape(model.source_title)}.",
             html.escape(model.validation_note),
             "",
-            "Модель помогает выбрать время повторного осмотра. Она не заменяет "
-            "учёт вредителя и экономический порог вредоносности. Бот не "
-            "назначает препарат, срок обработки или дозу.",
+            "Модель помогает выбрать время обследования. Она не заменяет "
+            "определение вида, фактический учёт и экономический порог "
+            "вредоносности. Бот не назначает препарат, срок обработки или дозу.",
         ]
     )
 
@@ -231,8 +288,8 @@ def format_pest_notification(
             "",
             f"Что сделать: {html.escape(notification.stage.scouting_action)}",
             "",
-            "Это напоминание об осмотре, а не команда на обработку. Наличие, "
-            "численность и необходимость мер подтверждаются на поле.",
+            "Это напоминание об обследовании, а не команда на обработку. "
+            "Наличие, численность и необходимость мер подтверждаются на поле.",
         ]
     )
     return "\n".join(lines)

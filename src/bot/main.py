@@ -72,6 +72,7 @@ async def configure_bot_commands(bot: Bot) -> None:
             BotCommand(command="report", description="Агроотчёт выбранной культуры"),
             BotCommand(command="risks", description="Проверить погодные условия"),
             BotCommand(command="pests", description="Наблюдение за вредителями"),
+            BotCommand(command="soil", description="Температура почвы 0–7 см"),
             BotCommand(
                 command="history",
                 description="Показать историю предупреждений",
@@ -109,15 +110,19 @@ def build_dispatcher(
     from src.bot.handlers.risks import router as risks_router
     from src.bot.handlers.season_calendar import router as season_calendar_router
     from src.bot.handlers.settings import router as settings_router
+    from src.bot.handlers.soil_temperature import router as soil_temperature_router
 
     # Narrow feature routers precede the broad legacy core router. They own the
     # profile, crop, date, stage, report, pest and contextual-help callbacks while
     # the remaining onboarding flow stays in core until it is split separately.
+    # The soil-temperature router precedes the general pest router because it owns
+    # the exact calendar-start setup callback for the seedcorn-maggot model.
     dispatcher.include_router(copy.deepcopy(settings_router))
     dispatcher.include_router(copy.deepcopy(profile_router))
     dispatcher.include_router(copy.deepcopy(crops_router))
     dispatcher.include_router(copy.deepcopy(season_calendar_router))
     dispatcher.include_router(copy.deepcopy(phenology_router))
+    dispatcher.include_router(copy.deepcopy(soil_temperature_router))
     dispatcher.include_router(copy.deepcopy(pests_router))
     dispatcher.include_router(copy.deepcopy(report_help_router))
     dispatcher.include_router(copy.deepcopy(report_router))
