@@ -19,6 +19,14 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # A failed/non-transactional test migration can leave this new extension
+    # table behind while the Alembic marker and its parent tables are reset.
+    # Since revision 0007 is the table's first owner, rebuilding that orphan is
+    # safer than failing the whole next upgrade. Normal production upgrades do
+    # not enter this branch.
+    if sa.inspect(op.get_bind()).has_table("pest_monitors"):
+        op.drop_table("pest_monitors")
+
     op.create_table(
         "pest_monitors",
         sa.Column("id", sa.Integer(), nullable=False),
