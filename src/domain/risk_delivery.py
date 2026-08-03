@@ -223,7 +223,7 @@ def _prioritized(
 
 
 def _canonical(
-    episodes: tuple[RiskEpisodeState, ...],
+    episodes: Sequence[RiskEpisodeState],
 ) -> tuple[RiskEpisodeState, ...]:
     return tuple(
         sorted(
@@ -236,6 +236,21 @@ def _canonical(
             ),
         )
     )
+
+
+def _accepted_priority_state(
+    previous: tuple[RiskEpisodeState, ...],
+    current_high: tuple[RiskEpisodeState, ...],
+    changes: tuple[RiskStateChange, ...],
+) -> tuple[RiskEpisodeState, ...]:
+    """Advance only the hazard types actually included in a priority message."""
+
+    accepted_types = {change.risk_type for change in changes}
+    retained = [
+        episode for episode in previous if episode.risk_type not in accepted_types
+    ]
+    retained.extend(current_high)
+    return _canonical(retained)
 
 
 def _state_signature(episodes: tuple[RiskEpisodeState, ...]) -> str:
@@ -391,7 +406,7 @@ def plan_risk_delivery(
         return RiskDeliveryDecision(
             events=(),
             changes=(),
-            current_state=current_full_state,
+            current_state=previous_full_state,
             deferred=True,
             reason="доставка отложена до окончания тихих часов",
             dedup_token=None,
@@ -401,10 +416,16 @@ def plan_risk_delivery(
         selected_state = current_high_state
         selected_previous_state = previous_high_state
         selected_changes = high_changes
+        accepted_state = _accepted_priority_state(
+            previous_full_state,
+            current_high_state,
+            high_changes,
+        )
     else:
         selected_state = current_state
         selected_previous_state = old_state
         selected_changes = changes
+        accepted_state = current_full_state
 
     selected_events = _events_for_episodes(events, selected_state)
     if resolved_mode == "digest" and not priority_bypass:
@@ -418,7 +439,7 @@ def plan_risk_delivery(
     return RiskDeliveryDecision(
         events=selected_events,
         changes=selected_changes,
-        current_state=current_full_state,
+        current_state=accepted_state,
         deferred=False,
         reason=(
             "высокий риск существенно изменился и доставляется без ожидания"
