@@ -74,6 +74,10 @@ async def configure_bot_commands(bot: Bot) -> None:
             BotCommand(command="pests", description="Наблюдение за вредителями"),
             BotCommand(command="soil", description="Температура почвы 0–7 см"),
             BotCommand(
+                command="markers",
+                description="ОЯ и погодные маркеры вредителей",
+            ),
+            BotCommand(
                 command="history",
                 description="Показать историю предупреждений",
             ),
@@ -101,6 +105,7 @@ def build_dispatcher(
 
     from src.bot.handlers.core import router as core_router
     from src.bot.handlers.crops import router as crops_router
+    from src.bot.handlers.markers import router as marker_catalog_router
     from src.bot.handlers.pests import router as pests_router
     from src.bot.handlers.phenology import router as phenology_router
     from src.bot.handlers.profile import router as profile_router
@@ -124,6 +129,7 @@ def build_dispatcher(
     dispatcher.include_router(copy.deepcopy(phenology_router))
     dispatcher.include_router(copy.deepcopy(soil_temperature_router))
     dispatcher.include_router(copy.deepcopy(pests_router))
+    dispatcher.include_router(copy.deepcopy(marker_catalog_router))
     dispatcher.include_router(copy.deepcopy(report_help_router))
     dispatcher.include_router(copy.deepcopy(report_router))
     dispatcher.include_router(copy.deepcopy(risks_router))
