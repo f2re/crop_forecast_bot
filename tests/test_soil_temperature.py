@@ -3,16 +3,29 @@ from datetime import date, datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
-from src.api.open_meteo_soil import _parse_hourly_payload
+from src.api.open_meteo_soil import (
+    FORECAST_VARIABLE,
+    HISTORY_VARIABLE,
+    _forecast_params,
+    _history_params,
+    _parse_hourly_payload,
+)
 from src.application.soil_temperature import generate_soil_temperature_report
 from src.domain.soil_temperature import (
     SoilTemperatureCoverage,
     SoilTemperatureData,
     SoilTemperatureMeta,
 )
+from src.ops.soil_temperature_smoke import validate_soil_temperature_data
 
 
-def _hourly_payload(start: datetime, hours: int, values: list[float | None]):
+def _hourly_payload(
+    start: datetime,
+    hours: int,
+    values: list[float | None],
+    *,
+    variable: str,
+):
     assert len(values) == hours
     return {
         "latitude": 45.75,
@@ -24,17 +37,38 @@ def _hourly_payload(start: datetime, hours: int, values: list[float | None]):
                 (start + timedelta(hours=offset)).strftime("%Y-%m-%dT%H:%M")
                 for offset in range(hours)
             ],
-            "soil_temperature_0_to_7cm": values,
+            variable: values,
         },
     }
+
+
+def test_open_meteo_endpoints_use_their_exact_soil_variable_names() -> None:
+    assert FORECAST_VARIABLE == "soil_temperature_0_7cm"
+    assert HISTORY_VARIABLE == "soil_temperature_0_to_7cm"
+    assert _forecast_params(45.75, 33.875)["hourly"] == FORECAST_VARIABLE
+    assert (
+        _history_params(
+            45.75,
+            33.875,
+            date(2026, 3, 1),
+            date(2026, 3, 31),
+            "Europe/Simferopol",
+        )["hourly"]
+        == HISTORY_VARIABLE
+    )
 
 
 def test_hourly_soil_temperature_is_aggregated_by_local_day() -> None:
     start = datetime(2026, 4, 1)
     values = [float(hour) for hour in range(24)]
     frame, timezone_name = _parse_hourly_payload(
-        _hourly_payload(start, 24, values),
-        variable="soil_temperature_0_to_7cm",
+        _hourly_payload(
+            start,
+            24,
+            values,
+            variable=HISTORY_VARIABLE,
+        ),
+        variable=HISTORY_VARIABLE,
         source="test",
         history=True,
     )
@@ -56,8 +90,13 @@ def test_incomplete_soil_day_is_not_silently_accepted() -> None:
     for index in range(7):
         values[index] = None
     frame, _ = _parse_hourly_payload(
-        _hourly_payload(start, 24, values),
-        variable="soil_temperature_0_to_7cm",
+        _hourly_payload(
+            start,
+            24,
+            values,
+            variable=FORECAST_VARIABLE,
+        ),
+        variable=FORECAST_VARIABLE,
         source="test",
         history=False,
     )
@@ -132,3 +171,58 @@ async def test_soil_temperature_report_separates_completed_and_forecast_days() -
     ]
     assert report.depth_label == "модельный слой почвы 0–7 см"
     assert report.spatial_resolution_km == pytest.approx(9.0)
+
+
+def test_soil_temperature_smoke_rejects_missing_history_provenance() -> None:
+    data = SoilTemperatureData(
+        meta=SoilTemperatureMeta(
+            latitude=45.75,
+            longitude=33.875,
+            elevation_m=25.0,
+            timezone="UTC",
+            source="Open-Meteo ECMWF",
+            model="test",
+            depth_label="модельный слой почвы 0–7 см",
+            retrieved_at=datetime(2026, 4, 3, tzinfo=timezone.utc),
+            cache_ttl_seconds=3600,
+        ),
+        daily=pd.DataFrame(
+            [
+                {
+                    "date": pd.Timestamp("2026-04-01", tz="UTC"),
+                    "local_date": date(2026, 4, 1),
+                    "t_min": 8.0,
+                    "t_max": 12.0,
+                    "t_mean": 10.0,
+                    "valid_hours": 24,
+                    "data_kind": "reanalysis",
+                    "data_source": "Open-Meteo ERA5-Land",
+                },
+                {
+                    "date": pd.Timestamp("2026-04-02", tz="UTC"),
+                    "local_date": date(2026, 4, 2),
+                    "t_min": 9.0,
+                    "t_max": 13.0,
+                    "t_mean": 11.0,
+                    "valid_hours": 24,
+                    "data_kind": "current_forecast",
+                    "data_source": "Open-Meteo ECMWF",
+                },
+            ]
+        ),
+        forecast_days=1,
+        coverage=SoilTemperatureCoverage(
+            requested_start=date(2026, 4, 1),
+            actual_start=date(2026, 4, 1),
+            actual_end=date(2026, 4, 2),
+            history_source=None,
+            start_covered=True,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="provenance"):
+        validate_soil_temperature_data(
+            data,
+            expected_start=date(2026, 4, 1),
+            as_of=datetime(2026, 4, 2, 12, tzinfo=timezone.utc),
+        )
