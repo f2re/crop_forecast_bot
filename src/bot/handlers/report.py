@@ -11,9 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agro.crop_catalog import get_crop_name
 from src.api.open_meteo import OpenMeteoError
 from src.application.agro_report import generate_agro_report
-from src.bot.keyboards import get_field_keyboard, get_main_keyboard
+from src.bot.keyboards import (
+    get_field_keyboard,
+    get_main_keyboard,
+    get_report_result_keyboard,
+)
+from src.bot.report_presentation import compact_agro_report
 from src.bot.telegram_text import answer_html, edit_html
 from src.database.crud import get_field_context, update_field_metadata
+from src.domain.season import local_today
 
 logger = logging.getLogger(__name__)
 router = Router(name="report")
@@ -43,6 +49,15 @@ async def _generate(session: AsyncSession, telegram_id: int):
     return context, report
 
 
+def _compact(context, report) -> str:
+    return compact_agro_report(
+        report.text,
+        season_start_date=context.season_start_date,
+        today=local_today(report.timezone),
+        source="Open-Meteo",
+    )
+
+
 @router.callback_query(F.data == "agro_report")
 async def agro_report(callback: CallbackQuery, session: AsyncSession) -> None:
     await callback.answer()
@@ -61,11 +76,15 @@ async def agro_report(callback: CallbackQuery, session: AsyncSession) -> None:
         callback.message,
         f"🌐 Поле <b>{html.escape(context.field_name)}</b>\n"
         f"Культура: <b>{html.escape(get_crop_name(context.crop_key))}</b>\n"
-        "Получаю прогноз и проверяю сезонный ряд…",
+        "Получаю данные, считаю осадки и накопленное тепло…",
     )
     try:
-        _, report = await _generate(session, callback.from_user.id)
-        await edit_html(progress, report.text, reply_markup=get_main_keyboard())
+        updated_context, report = await _generate(session, callback.from_user.id)
+        await edit_html(
+            progress,
+            _compact(updated_context, report),
+            reply_markup=get_report_result_keyboard(),
+        )
     except OpenMeteoError:
         logger.warning(
             "Open-Meteo unavailable for user %s field %s",
@@ -74,8 +93,8 @@ async def agro_report(callback: CallbackQuery, session: AsyncSession) -> None:
         )
         await edit_html(
             progress,
-            "⚠️ Оперативные метеоданные сейчас недоступны. "
-            "Бот не подменяет расчёт эвристикой; повторите запрос позже.",
+            "⚠️ Метеоданные сейчас недоступны. Бот не заменяет расчёт догадкой; "
+            "повторите запрос позже.",
             reply_markup=get_main_keyboard(),
         )
     except Exception:
@@ -103,7 +122,7 @@ async def agro_report_command(message: Message, session: AsyncSession) -> None:
         return
     except OpenMeteoError:
         await message.answer(
-            "⚠️ Оперативные метеоданные сейчас недоступны. Повторите позже.",
+            "⚠️ Метеоданные сейчас недоступны. Повторите позже.",
             reply_markup=get_main_keyboard(),
         )
         return
@@ -117,8 +136,6 @@ async def agro_report_command(message: Message, session: AsyncSession) -> None:
 
     await answer_html(
         message,
-        f"{report.text}\n\n"
-        f"ℹ️ Отчёт относится к выбранной культуре: "
-        f"<b>{html.escape(get_crop_name(context.crop_key))}</b>.",
-        reply_markup=get_main_keyboard(),
+        _compact(context, report),
+        reply_markup=get_report_result_keyboard(),
     )
