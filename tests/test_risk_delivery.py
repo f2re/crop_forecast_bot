@@ -113,6 +113,7 @@ def test_high_change_bypasses_quiet_hours_without_consuming_lower_change() -> No
     assert urgent.events == (high,)
     assert urgent.priority_bypass is True
     assert urgent.dedup_token is not None
+    assert urgent.daily_quota_token is None
     assert tuple(episode.risk_type for episode in urgent.current_state) == (
         "heavy_rain",
     )
@@ -133,7 +134,7 @@ def test_high_change_bypasses_quiet_hours_without_consuming_lower_change() -> No
     )
 
 
-def test_daily_digest_uses_one_local_date_token_for_material_change() -> None:
+def test_daily_digest_has_separate_transition_and_local_day_tokens() -> None:
     local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
     decision = plan_risk_delivery(
         (
@@ -145,7 +146,9 @@ def test_daily_digest_uses_one_local_date_token_for_material_change() -> None:
     )
 
     assert len(decision.events) == 2
-    assert decision.dedup_token == "daily:2026-07-19"
+    assert decision.dedup_token is not None
+    assert decision.dedup_token.startswith("transition:")
+    assert decision.daily_quota_token == "daily:2026-07-19"
     assert decision.priority_bypass is False
 
 
@@ -242,6 +245,55 @@ def test_heat_period_extension_creates_one_update() -> None:
     assert decision.changes[0].current[0].end_date == date(2026, 7, 26)
     assert len(decision.events) == 6
     assert decision.dedup_token is not None
+
+
+def test_all_periods_of_one_hazard_are_preserved_beyond_display_limit() -> None:
+    local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
+    events = tuple(
+        _event(
+            risk_type="heat",
+            event_date=date(2026, 7, 20) + timedelta(days=offset * 2),
+        )
+        for offset in range(6)
+    )
+
+    decision = plan_risk_delivery(
+        events,
+        mode="immediate",
+        local_datetime=local_now,
+        max_events=5,
+    )
+
+    assert len(decision.changes) == 1
+    assert len(decision.changes[0].current) == 6
+    assert len(decision.current_state) == 6
+    assert decision.events == events
+
+
+def test_unselected_hazard_type_remains_pending_in_baseline() -> None:
+    local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
+    rain = _event(event_date=date(2026, 7, 21))
+    wind = _event(risk_type="strong_wind", event_date=date(2026, 7, 22))
+
+    first = plan_risk_delivery(
+        (rain, wind),
+        mode="immediate",
+        local_datetime=local_now,
+        max_events=1,
+    )
+    second = plan_risk_delivery(
+        (rain, wind),
+        mode="immediate",
+        local_datetime=local_now,
+        previous_state=first.current_state,
+        max_events=1,
+    )
+
+    assert tuple(change.risk_type for change in first.changes) == ("heavy_rain",)
+    assert tuple(episode.risk_type for episode in first.current_state) == (
+        "heavy_rain",
+    )
+    assert tuple(change.risk_type for change in second.changes) == ("strong_wind",)
 
 
 def test_elapsed_first_day_is_not_a_forecast_change() -> None:
