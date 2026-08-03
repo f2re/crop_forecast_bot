@@ -105,14 +105,27 @@ def _get_json(
         timeout=(5, 45),
         expire_after=expire_after,
     )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        response.raise_for_status()
+        raise OpenMeteoSoilTemperatureError(
+            "Open-Meteo returned a non-JSON response"
+        ) from exc
+
+    # Open-Meteo returns a useful JSON ``reason`` together with HTTP 400. Read
+    # it before ``raise_for_status`` so operator diagnostics retain the actual
+    # rejected variable or parameter instead of only "400 Bad Request".
+    if isinstance(payload, dict) and payload.get("error"):
+        raise OpenMeteoSoilTemperatureError(
+            str(
+                payload.get("reason")
+                or f"Open-Meteo soil-temperature HTTP {response.status_code}"
+            )
+        )
     response.raise_for_status()
-    payload = response.json()
     if not isinstance(payload, dict):
         raise OpenMeteoSoilTemperatureError("Provider returned a non-object JSON payload")
-    if payload.get("error"):
-        raise OpenMeteoSoilTemperatureError(
-            str(payload.get("reason") or "Open-Meteo soil-temperature error")
-        )
     return payload
 
 
