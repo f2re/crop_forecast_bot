@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from src.domain.risk import RiskEvent
 from src.domain.risk_delivery import (
+    RiskEpisodeState,
     is_quiet_time,
     plan_risk_delivery,
     quiet_hours_label,
@@ -47,11 +48,11 @@ def _event(
     )
 
 
-def _local(hour: int, *, fold: int = 0) -> datetime:
+def _local(hour: int, *, day: int = 25, fold: int = 0) -> datetime:
     return datetime(
         2026,
         10,
-        25,
+        day,
         hour,
         tzinfo=ZoneInfo("Europe/Berlin"),
         fold=fold,
@@ -78,7 +79,7 @@ def test_quiet_hours_validation_is_fail_closed() -> None:
         validate_quiet_hours(-1, 7)
 
 
-def test_watch_or_elevated_signal_is_deferred_during_quiet_hours() -> None:
+def test_watch_or_elevated_change_is_deferred_during_quiet_hours() -> None:
     decision = plan_risk_delivery(
         (_event(),),
         mode="immediate",
@@ -92,9 +93,13 @@ def test_watch_or_elevated_signal_is_deferred_during_quiet_hours() -> None:
     assert decision.dedup_token is None
 
 
-def test_high_signal_bypasses_quiet_hours_but_only_high_events_are_sent() -> None:
+def test_high_change_bypasses_quiet_hours_but_only_high_periods_are_sent() -> None:
     high = _event(level="high", fraction=0.70)
-    elevated = _event(risk_type="strong_wind", level="elevated", fraction=0.40)
+    elevated = _event(
+        risk_type="strong_wind",
+        level="elevated",
+        fraction=0.40,
+    )
 
     decision = plan_risk_delivery(
         (high, elevated),
@@ -110,7 +115,7 @@ def test_high_signal_bypasses_quiet_hours_but_only_high_events_are_sent() -> Non
     assert decision.dedup_token is not None
 
 
-def test_daily_digest_uses_one_local_date_token() -> None:
+def test_daily_digest_uses_one_local_date_token_for_material_change() -> None:
     local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
     decision = plan_risk_delivery(
         (
@@ -126,8 +131,12 @@ def test_daily_digest_uses_one_local_date_token() -> None:
     assert decision.priority_bypass is False
 
 
-def test_high_only_mode_filters_lower_levels() -> None:
-    high = _event(event_date=date(2026, 7, 21), level="high", fraction=0.65)
+def test_high_only_mode_filters_lower_periods() -> None:
+    high = _event(
+        event_date=date(2026, 7, 21),
+        level="high",
+        fraction=0.65,
+    )
     watch = _event(
         risk_type="strong_wind",
         event_date=date(2026, 7, 21),
@@ -149,20 +158,124 @@ def test_high_only_mode_filters_lower_levels() -> None:
     assert decision.events == (high,)
 
 
-def test_immediate_dedup_token_changes_after_ten_point_fraction_bucket() -> None:
+def test_fraction_noise_does_not_repeat_the_same_period() -> None:
     local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
+    first_events = tuple(
+        _event(
+            risk_type="heat",
+            event_date=date(2026, 7, 21) + timedelta(days=offset),
+            fraction=0.31,
+        )
+        for offset in range(5)
+    )
     first = plan_risk_delivery(
-        (_event(event_date=date(2026, 7, 21), fraction=0.31),),
+        first_events,
         mode="immediate",
         local_datetime=local_now,
+    )
+    second_events = tuple(
+        _event(
+            risk_type="heat",
+            event_date=date(2026, 7, 21) + timedelta(days=offset),
+            fraction=0.58,
+        )
+        for offset in range(5)
     )
     second = plan_risk_delivery(
-        (_event(event_date=date(2026, 7, 21), fraction=0.41),),
+        second_events,
         mode="immediate",
         local_datetime=local_now,
+        previous_state=first.current_state,
     )
 
-    assert first.dedup_token != second.dedup_token
+    assert first.dedup_token is not None
+    assert second.changes == ()
+    assert second.events == ()
+    assert second.dedup_token is None
+
+
+def test_heat_period_extension_creates_one_update() -> None:
+    local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
+    previous = (
+        RiskEpisodeState(
+            risk_type="heat",
+            start_date=date(2026, 7, 21),
+            end_date=date(2026, 7, 24),
+            highest_level="elevated",
+        ),
+    )
+    current_events = tuple(
+        _event(
+            risk_type="heat",
+            event_date=date(2026, 7, 21) + timedelta(days=offset),
+        )
+        for offset in range(6)
+    )
+
+    decision = plan_risk_delivery(
+        current_events,
+        mode="immediate",
+        local_datetime=local_now,
+        previous_state=previous,
+    )
+
+    assert len(decision.changes) == 1
+    assert decision.changes[0].previous[0].end_date == date(2026, 7, 24)
+    assert decision.changes[0].current[0].end_date == date(2026, 7, 26)
+    assert len(decision.events) == 6
+    assert decision.dedup_token is not None
+
+
+def test_elapsed_first_day_is_not_a_forecast_change() -> None:
+    previous = (
+        RiskEpisodeState(
+            risk_type="heat",
+            start_date=date(2026, 10, 25),
+            end_date=date(2026, 10, 29),
+            highest_level="elevated",
+        ),
+    )
+    current_events = tuple(
+        _event(
+            risk_type="heat",
+            event_date=date(2026, 10, 26) + timedelta(days=offset),
+        )
+        for offset in range(4)
+    )
+
+    decision = plan_risk_delivery(
+        current_events,
+        mode="immediate",
+        local_datetime=_local(10, day=26),
+        previous_state=previous,
+    )
+
+    assert decision.changes == ()
+    assert decision.dedup_token is None
+
+
+def test_removed_future_period_creates_one_clear_update() -> None:
+    previous = (
+        RiskEpisodeState(
+            risk_type="heat",
+            start_date=date(2026, 10, 27),
+            end_date=date(2026, 10, 31),
+            highest_level="elevated",
+        ),
+    )
+
+    decision = plan_risk_delivery(
+        (),
+        mode="immediate",
+        local_datetime=_local(10),
+        previous_state=previous,
+    )
+
+    assert len(decision.changes) == 1
+    assert decision.changes[0].current == ()
+    assert decision.events == ()
+    assert decision.current_state == ()
+    assert decision.dedup_token is not None
 
 
 def test_delivery_mode_validation_rejects_unknown_value() -> None:
