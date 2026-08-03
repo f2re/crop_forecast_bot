@@ -1,6 +1,6 @@
 # Матрица фактических возможностей
 
-Дата актуализации: **2026-08-02**.
+Дата актуализации: **2026-08-03**.
 
 Статусы:
 
@@ -25,6 +25,9 @@
 | Callback idempotency | ✅ | Redis action leases | повтор не выполняет action второй раз |
 | Оперативная погода | ✅ | Open-Meteo Forecast Best Match | явная ошибка без эвристической погоды |
 | Сезонная история | 🟡 | Open-Meteo Historical Weather API | отчёт деградирует до доступного периода |
+| Температура почвы 0–7 см | ✅ | `/soil`, Open-Meteo ECMWF Best Match | температура воздуха не подставляется вместо почвы |
+| История температуры почвы | 🟡 | ERA5-Land 0–7 см через Open-Meteo | ряд скрывает неполные сутки и не заменяет пропуски нулём |
+| Live soil-provider contract | ✅ | отдельный GitHub Actions smoke | изменение имени переменной или структуры API блокирует выпуск |
 | Provider provenance | 🟡 | source/model/retrieval/cache metadata | неизвестные run/resolution не выдумываются |
 | GDD | ✅ | daily-average method, crop `Tbase`, optional `Tupper` | `None` при отсутствии завершённого ряда |
 | Сезонная сумма GDD | 🟡 | строго с локальной даты выбранной культуры | не заявляется без покрытия даты старта |
@@ -61,6 +64,12 @@
 | Delivery state | ✅ | `not_attempted/sending/sent/deduplicated/failed` | `sending` сохраняет ambiguous external outcome |
 | Retention истории | ✅ | `RISK_HISTORY_RETENTION_DAYS` | production MVP default 30 суток |
 | Ежедневный агроотчёт | ✅ | локальное утреннее окно поля | относится к выбранной культуре и выполняется при включении |
+| Строгий каталог вредителей | ✅ | species + crop + biofix + driver + method + thresholds + source | культура без полного договора не получает вредителя в меню |
+| Колорадский жук на картофеле | 🟡 | первая найденная кладка, воздух 2 м, daily average, 11,1°C | без находки расчёт не запускается |
+| Совка ипсилон на кукурузе | 🟡 | значимый улов в ловушке, воздух 2 м, base 10°C | без ловушки и идентификации вида расчёт не запускается |
+| Ростковая муха на кукурузе/сое | 🟡 | Jan 1, soil 0–7 см, single sine horizontal, 3,9/29°C | при неполном почвенном ряде расчёт скрывается |
+| Pest scouting scheduler | ✅ | один local-morning цикл/сутки, renewable lease, event dedup | provider error не создаёт фиктивное окно и не останавливает polling |
+| Pest treatment advice | ⛔ | наличие/численность/ЭПВ/регламент не вычисляются | препарат, срок, кратность и доза не генерируются |
 | Green-main auto-update | ✅ | systemd timer + GitHub Actions gate | pending/failed/API error оставляет active release |
 | Cheap update check | ✅ | `git ls-remote` до clone | тот же SHA не создаёт release |
 | Atomic activation/rollback | ✅ | versioned symlink + heartbeat | восстанавливаются код и systemd units |
@@ -76,7 +85,7 @@
 | Окно полевых работ | ⛔ | operation-specific policy отсутствует | suitability не генерируется |
 | Official CAP warnings | ⛔ | adapters отсутствуют | модельный signal остаётся отдельным screening |
 | Локальная метеостанция | ⛔ | ingestion/matching отсутствуют | bias/calibration не рассчитываются |
-| SoilGrids | ⛔ | adapter отсутствует | почвенные показатели не показываются |
+| SoilGrids | ⛔ | adapter отсутствует | статические почвенные показатели не показываются |
 | Field polygon | ⛔ | поле хранится точкой | spatial monitoring не заявляется |
 | Sentinel/MODIS NDVI/LAI | ⛔ | provider отсутствует | спутниковые индексы не показываются |
 | SPI/SPEI | ⛔ | нет validated long-series distribution pipeline | не вычисляются из короткого прогноза |
@@ -112,6 +121,14 @@
 24. Auto-update не активирует SHA без green required CI.
 25. Branch race после gate завершает update без активации непроверенного SHA.
 26. PostgreSQL и Redis остаются обязательным MVP storage/coordination контуром.
+27. Вредитель связывается с культурой только через версионированный договор «вид — культура — точка отсчёта — показатель — метод — пороги — источник».
+28. Температура воздуха и температура почвы являются разными drivers и не подставляются друг вместо друга.
+29. Температура почвы 0–7 см маркируется как модельный слой, а не датчик на глубине посева.
+30. Прогнозная температура не входит в уже накопленную сумму развития вредителя; она используется только для ориентировочной даты следующего окна.
+31. Неполный завершённый температурный ряд скрывает pest outlook вместо заполнения пропусков.
+32. Calendar pest model ежегодно получает новую дату 1 января и сбрасывает старые delivery tokens.
+33. Pest outlook не называется presence, infestation, damage probability или treatment requirement.
+34. Все модели одной точки используют не более одного запроса на каждый требуемый температурный driver за цикл.
 
 ## Внешние ограничения готовности
 
