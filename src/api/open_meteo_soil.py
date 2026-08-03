@@ -33,10 +33,11 @@ logger = logging.getLogger(__name__)
 
 FORECAST_URL = "https://api.open-meteo.com/v1/ecmwf"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
-# Open-Meteo intentionally uses different identifiers for the first ECMWF
-# layer and the generic Historical Weather API. Keep them explicit and covered
-# by contract tests instead of guessing one universal alias.
-FORECAST_VARIABLE = "soil_temperature_0_7cm"
+# The live ECMWF endpoint currently accepts the same 0-to-7 cm identifier as
+# the Historical Weather API. The public documentation has also exposed the
+# shorter 0_7cm spelling, so a live contract test protects this adapter from
+# silently following stale documentation.
+FORECAST_VARIABLE = "soil_temperature_0_to_7cm"
 HISTORY_VARIABLE = "soil_temperature_0_to_7cm"
 PAST_DAYS = 14
 FORECAST_DAYS = 7
