@@ -85,7 +85,7 @@ async def test_daily_quota_deferral_does_not_advance_postgresql_baseline(
         )
 
     async def fake_load(session_factory, **kwargs):
-        return ()
+        return None
 
     async def fake_store(session_factory, **kwargs):
         stored_baselines.append(kwargs["episodes"])
