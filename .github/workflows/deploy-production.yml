@@ -1,0 +1,65 @@
+name: Trigger production update
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crop-forecast-production-update
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    if: >-
+      vars.DEPLOY_TRIGGER_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+
+    steps:
+      - name: Validate protected deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "${DEPLOY_HOST}"
+          test -n "${DEPLOY_PORT}"
+          test -n "${DEPLOY_USER}"
+          test -n "${DEPLOY_SSH_KEY}"
+          test -n "${DEPLOY_KNOWN_HOSTS}"
+          [[ "${DEPLOY_PORT}" =~ ^[0-9]{1,5}$ ]]
+
+      - name: Prepare pinned SSH identity and host key
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          install -d -m 0700 "${HOME}/.ssh"
+          printf '%s\n' "${DEPLOY_SSH_KEY}" > "${HOME}/.ssh/deploy_key"
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" > "${HOME}/.ssh/known_hosts"
+          chmod 0600 "${HOME}/.ssh/deploy_key" "${HOME}/.ssh/known_hosts"
+
+      - name: Start the server-side green-main updater
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          timeout 45s ssh \
+            -i "${HOME}/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="${HOME}/.ssh/known_hosts" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            trigger-update

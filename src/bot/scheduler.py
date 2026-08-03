@@ -29,6 +29,10 @@ from src.database.notification_targets import (
     EnabledNotificationTarget,
     list_enabled_notification_targets,
 )
+from src.database.risk_delivery_state import (
+    load_risk_delivery_state,
+    save_risk_delivery_state,
+)
 from src.database.risk_history import (
     StoredRiskRun,
     prune_risk_runs_before,
@@ -36,7 +40,11 @@ from src.database.risk_history import (
     set_signal_delivery,
 )
 from src.domain.risk import EnsembleForecastMeta, RiskOutlook
-from src.domain.risk_delivery import is_quiet_time, plan_risk_delivery
+from src.domain.risk_delivery import (
+    RiskEpisodeState,
+    is_quiet_time,
+    plan_risk_delivery,
+)
 from src.infrastructure.coordination import (
     CoordinationBackend,
     LeaseLostError,
@@ -183,6 +191,45 @@ async def _record_risk_run(
         )
 
 
+async def _load_delivery_state(
+    session_factory: SessionFactory,
+    *,
+    field_id: int,
+    model: str,
+    delivery_mode: str,
+) -> tuple[RiskEpisodeState, ...]:
+    async with session_factory() as session:
+        state = await load_risk_delivery_state(
+            session,
+            field_id=field_id,
+            model=model,
+            delivery_mode=delivery_mode,
+        )
+    return () if state is None else state.episodes
+
+
+async def _store_delivery_state(
+    session_factory: SessionFactory,
+    *,
+    field_id: int,
+    model: str,
+    delivery_mode: str,
+    episodes: tuple[RiskEpisodeState, ...],
+    observed_at: datetime,
+    notified_at: datetime | None = None,
+) -> None:
+    async with session_factory() as session:
+        await save_risk_delivery_state(
+            session,
+            field_id=field_id,
+            model=model,
+            delivery_mode=delivery_mode,
+            episodes=episodes,
+            observed_at=observed_at,
+            notified_at=notified_at,
+        )
+
+
 async def _set_risk_delivery(
     session_factory: SessionFactory,
     *,
@@ -257,7 +304,7 @@ async def check_weather_risk_alerts(
     job_lock_ttl_seconds: int = _ENSEMBLE_JOB_LOCK_TTL,
     renew_interval_seconds: float = _JOB_LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
-    """Screen all enabled fields, persist accepted runs and send one compact digest."""
+    """Persist accepted runs and notify only on semantic period changes."""
 
     job_guard = await RenewingLease.acquire(
         coordination,
@@ -339,10 +386,19 @@ async def check_weather_risk_alerts(
                             outlook=outlook,
                         )
                     )
+                    previous_state = await job_guard.run(
+                        _load_delivery_state(
+                            session_factory,
+                            field_id=target.field_id,
+                            model=forecast.meta.model,
+                            delivery_mode=delivery_mode,
+                        )
+                    )
                     decision = plan_risk_delivery(
                         outlook.events,
                         mode=delivery_mode,
                         local_datetime=local_now,
+                        previous_state=previous_state,
                         quiet_hours_start=quiet_start,
                         quiet_hours_end=quiet_end,
                         max_events=_MAX_RISK_ALERTS_PER_FIELD,
@@ -355,7 +411,17 @@ async def check_weather_risk_alerts(
                             decision.reason,
                         )
                         continue
-                    if not decision.events or decision.dedup_token is None:
+                    if not decision.changes or decision.dedup_token is None:
+                        await job_guard.run(
+                            _store_delivery_state(
+                                session_factory,
+                                field_id=target.field_id,
+                                model=forecast.meta.model,
+                                delivery_mode=delivery_mode,
+                                episodes=decision.current_state,
+                                observed_at=forecast.meta.retrieved_at,
+                            )
+                        )
                         continue
 
                     signal_ids: list[int] = []
@@ -378,6 +444,7 @@ async def check_weather_risk_alerts(
                     async def send_digest(
                         target=target,
                         events=decision.events,
+                        changes=decision.changes,
                         priority_bypass: bool = decision.priority_bypass,
                     ) -> object:
                         return await bot.send_message(
@@ -391,6 +458,7 @@ async def check_weather_risk_alerts(
                                 phase=target.phenological_phase,
                                 delivery_mode=delivery_mode,
                                 priority_bypass=priority_bypass,
+                                changes=changes,
                             ),
                         )
 
@@ -427,6 +495,17 @@ async def check_weather_risk_alerts(
                             session_factory,
                             signal_ids=selected_signal_ids,
                             state="sent" if sent else "deduplicated",
+                            notified_at=notified_at,
+                        )
+                    )
+                    await job_guard.run(
+                        _store_delivery_state(
+                            session_factory,
+                            field_id=target.field_id,
+                            model=forecast.meta.model,
+                            delivery_mode=delivery_mode,
+                            episodes=decision.current_state,
+                            observed_at=forecast.meta.retrieved_at,
                             notified_at=notified_at,
                         )
                     )

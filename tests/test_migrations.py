@@ -36,6 +36,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "crop_seasons",
         "risk_forecast_runs",
         "risk_forecast_signals",
+        "risk_delivery_states",
         "pest_monitors",
         "alembic_version",
     }.issubset(inspector.get_table_names())
@@ -144,6 +145,20 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "created_at",
     } == signal_columns
 
+    delivery_columns = {
+        column["name"]
+        for column in inspector.get_columns("risk_delivery_states")
+    }
+    assert {
+        "field_id",
+        "model",
+        "delivery_mode",
+        "state_version",
+        "state_json",
+        "last_observed_at",
+        "last_notified_at",
+    } == delivery_columns
+
     pest_columns = {
         column["name"] for column in inspector.get_columns("pest_monitors")
     }
@@ -195,6 +210,16 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         for constraint in inspector.get_unique_constraints("risk_forecast_signals")
     }
     assert "uq_risk_forecast_signals_event" in signal_unique_constraints
+    delivery_checks = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("risk_delivery_states")
+    }
+    assert "ck_risk_delivery_states_mode" in delivery_checks
+    delivery_indexes = {
+        index["name"]: index
+        for index in inspector.get_indexes("risk_delivery_states")
+    }
+    assert "ix_risk_delivery_states_observed_at" in delivery_indexes
     pest_unique_constraints = {
         constraint["name"]
         for constraint in inspector.get_unique_constraints("pest_monitors")
@@ -209,7 +234,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260803_0007"
+    assert revision == expected_schema_revision() == "20260803_0008"
 
 
 def test_migrations_adopt_legacy_user_and_backfill_field_settings(
@@ -290,7 +315,7 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
     assert season_row[5] == "unknown"
     assert season_row[6] == "unknown"
     assert season_row[7] is None
-    assert revision == "20260803_0007"
+    assert revision == "20260803_0008"
 
 
 def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
