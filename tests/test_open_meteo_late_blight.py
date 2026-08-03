@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+import pytest
+
+from src.api.open_meteo_late_blight import (
+    build_late_blight_request_params,
+    parse_late_blight_payload,
+)
+from src.application.ports.late_blight import LateBlightWeatherProviderError
+
+
+def test_request_uses_only_required_hourly_weather_inputs() -> None:
+    params = build_late_blight_request_params(55.75, 37.62)
+
+    assert params["latitude"] == 55.75
+    assert params["longitude"] == 37.62
+    assert params["hourly"] == "temperature_2m,relative_humidity_2m"
+    assert params["past_days"] == 3
+    assert params["forecast_days"] == 7
+    assert params["timezone"] == "auto"
+    assert params["timeformat"] == "unixtime"
+    assert params["cell_selection"] == "land"
+    assert "models" not in params
+
+
+def test_payload_parser_returns_typed_hourly_series() -> None:
+    retrieved_at = datetime(2026, 8, 3, 12, tzinfo=timezone.utc)
+    payload = {
+        "latitude": 55.75,
+        "longitude": 37.62,
+        "elevation": 152.0,
+        "timezone": "Europe/Moscow",
+        "hourly": {
+            "time": [1785715200, 1785718800],
+            "temperature_2m": [12.5, 12.1],
+            "relative_humidity_2m": [91.0, 94.0],
+        },
+    }
+
+    weather = parse_late_blight_payload(payload, retrieved_at=retrieved_at)
+
+    assert weather.meta.timezone == "Europe/Moscow"
+    assert weather.meta.source == "Open-Meteo Forecast API"
+    assert weather.meta.model == "best_match"
+    assert weather.meta.retrieved_at == retrieved_at
+    assert list(weather.hourly.columns) == [
+        "date",
+        "temperature_2m",
+        "relative_humidity_2m",
+    ]
+    assert str(weather.hourly["date"].dt.tz) == "UTC"
+    assert weather.hourly["relative_humidity_2m"].tolist() == [91.0, 94.0]
+
+
+def test_payload_parser_rejects_different_variable_lengths() -> None:
+    payload = {
+        "timezone": "UTC",
+        "hourly": {
+            "time": [1785715200, 1785718800],
+            "temperature_2m": [12.5],
+            "relative_humidity_2m": [91.0, 94.0],
+        },
+    }
+
+    with pytest.raises(LateBlightWeatherProviderError, match="разную длину"):
+        parse_late_blight_payload(
+            payload,
+            retrieved_at=datetime.now(timezone.utc),
+        )
+
+
+def test_payload_parser_preserves_provider_error() -> None:
+    with pytest.raises(LateBlightWeatherProviderError, match="invalid latitude"):
+        parse_late_blight_payload(
+            {"error": True, "reason": "invalid latitude"},
+            retrieved_at=datetime.now(timezone.utc),
+        )
+
+
+def test_payload_parser_rejects_unknown_timezone() -> None:
+    payload = {
+        "timezone": "Mars/Olympus",
+        "hourly": {
+            "time": [1785715200],
+            "temperature_2m": [12.5],
+            "relative_humidity_2m": [91.0],
+        },
+    }
+
+    with pytest.raises(LateBlightWeatherProviderError, match="часовой пояс"):
+        parse_late_blight_payload(
+            payload,
+            retrieved_at=datetime.now(timezone.utc),
+        )
