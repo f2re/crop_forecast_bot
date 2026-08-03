@@ -10,6 +10,7 @@ from src.bot.scheduler import check_weather_risk_alerts
 from src.database.notification_targets import EnabledNotificationTarget
 from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
+from src.domain.risk_delivery import RiskEpisodeState
 from src.infrastructure.coordination import MemoryCoordination
 
 
@@ -44,6 +45,7 @@ def _ensemble(
     *,
     rain_members: int = 22,
     wind_members: int = 0,
+    retrieved_hour: int = 0,
 ) -> EnsembleForecastData:
     rows = [
         {
@@ -65,7 +67,13 @@ def _ensemble(
             timezone="Europe/Moscow",
             source="test",
             model="gfs_seamless",
-            retrieved_at=datetime(2026, 7, 17, tzinfo=timezone.utc),
+            retrieved_at=datetime(
+                2026,
+                7,
+                17,
+                retrieved_hour,
+                tzinfo=timezone.utc,
+            ),
             member_count=31,
             forecast_days=1,
         ),
@@ -98,9 +106,11 @@ def _patch_common(
     target: EnabledNotificationTarget,
     hour: int,
     signal_ids: dict[tuple[str, date], int],
-) -> tuple[list[str], list[bool]]:
+) -> tuple[list[str], list[bool], list[tuple[RiskEpisodeState, ...]]]:
     stored_flags: list[bool] = []
     delivery_states: list[str] = []
+    semantic_states: list[tuple[RiskEpisodeState, ...]] = []
+    baseline: tuple[RiskEpisodeState, ...] = ()
 
     async def fake_targets(
         session_factory,
@@ -117,10 +127,36 @@ def _patch_common(
         assert outlook.available is True
         stored_flags.append(True)
         return StoredRiskRun(
-            run_id=1,
+            run_id=len(stored_flags),
             signal_ids=signal_ids,  # type: ignore[arg-type]
             created=True,
         )
+
+    async def fake_load(
+        session_factory,
+        *,
+        field_id: int,
+        model: str,
+    ) -> tuple[RiskEpisodeState, ...]:
+        assert field_id == 42
+        assert model == "gfs_seamless"
+        return baseline
+
+    async def fake_store(
+        session_factory,
+        *,
+        field_id: int,
+        model: str,
+        episodes: tuple[RiskEpisodeState, ...],
+        observed_at: datetime,
+        notified_at: datetime | None = None,
+    ) -> None:
+        nonlocal baseline
+        assert field_id == 42
+        assert model == "gfs_seamless"
+        assert observed_at.tzinfo is not None
+        baseline = episodes
+        semantic_states.append(episodes)
 
     async def fake_delivery(
         session_factory,
@@ -139,6 +175,8 @@ def _patch_common(
 
     monkeypatch.setattr(scheduler_module, "_targets", fake_targets)
     monkeypatch.setattr(scheduler_module, "_record_risk_run", fake_record)
+    monkeypatch.setattr(scheduler_module, "_load_delivery_state", fake_load)
+    monkeypatch.setattr(scheduler_module, "_store_delivery_state", fake_store)
     monkeypatch.setattr(scheduler_module, "_set_risk_delivery", fake_delivery)
     monkeypatch.setattr(scheduler_module, "_prune_risk_history", fake_prune)
     monkeypatch.setattr(
@@ -152,14 +190,14 @@ def _patch_common(
             tzinfo=timezone.utc,
         ),
     )
-    return delivery_states, stored_flags
+    return delivery_states, stored_flags, semantic_states
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
+async def test_weather_risk_scheduler_persists_before_sending_and_reuses_db_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    delivery_states, _ = _patch_common(
+    delivery_states, _, semantic_states = _patch_common(
         monkeypatch,
         target=_target(),
         hour=10,
@@ -173,13 +211,13 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
             bot,
             object(),
             coordination,
-            provider=FakeProvider(),
+            provider=FakeProvider(_ensemble(retrieved_hour=0)),
         )
         await check_weather_risk_alerts(
             bot,
             object(),
             coordination,
-            provider=FakeProvider(),
+            provider=FakeProvider(_ensemble(rain_members=24, retrieved_hour=6)),
         )
     finally:
         await coordination.close()
@@ -188,6 +226,7 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
     chat_id, text = bot.messages[0]
     assert chat_id == 1001
     assert "Погодные условия, требующие внимания" in text
+    assert "Что изменилось" in text
     assert "Сильные осадки" in text
     assert "22 из 31 вариантов модели" in text
     assert "Пшеница" in text
@@ -195,14 +234,16 @@ async def test_weather_risk_scheduler_persists_before_sending_and_deduplicates(
     assert "вероятность повреждения растений" in text
     assert "пересекли" not in text
     assert "%" not in text
-    assert delivery_states == ["sending", "sent", "sending", "deduplicated"]
+    assert delivery_states == ["sending", "sent"]
+    assert len(semantic_states) == 2
+    assert semantic_states[0] == semantic_states[1]
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_defers_non_high_signal_in_quiet_hours(
+async def test_weather_risk_scheduler_defers_non_high_change_in_quiet_hours(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    delivery_states, stored_flags = _patch_common(
+    delivery_states, stored_flags, semantic_states = _patch_common(
         monkeypatch,
         target=_target(
             quiet_hours_start=22,
@@ -227,13 +268,14 @@ async def test_weather_risk_scheduler_defers_non_high_signal_in_quiet_hours(
     assert stored_flags == [True]
     assert bot.messages == []
     assert delivery_states == []
+    assert semantic_states == []
 
 
 @pytest.mark.asyncio
 async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    delivery_states, _ = _patch_common(
+    delivery_states, _, semantic_states = _patch_common(
         monkeypatch,
         target=_target(mode="digest"),
         hour=10,
@@ -259,5 +301,48 @@ async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
     text = bot.messages[0][1]
     assert "Сильные осадки" in text
     assert "Сильные порывы ветра" in text
-    assert "один дайджест в сутки" in text
+    assert "один дайджест в сутки при существенном изменении" in text
     assert delivery_states == ["sending", "sending", "sent", "sent"]
+    assert len(semantic_states) == 1
+
+
+@pytest.mark.asyncio
+async def test_weather_risk_scheduler_reports_clear_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivery_states, _, semantic_states = _patch_common(
+        monkeypatch,
+        target=_target(),
+        hour=10,
+        signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+    )
+
+    bot = RecordingBot()
+    coordination = MemoryCoordination(namespace="test-ensemble-clear")
+    try:
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=22, retrieved_hour=0)),
+        )
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=0, retrieved_hour=6)),
+        )
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=0, retrieved_hour=12)),
+        )
+    finally:
+        await coordination.close()
+
+    assert len(bot.messages) == 2
+    assert "больше не подтверждается" in bot.messages[1][1]
+    assert "больше не подтверждаются" in bot.messages[1][1]
+    assert delivery_states == ["sending", "sent"]
+    assert semantic_states[-1] == ()
