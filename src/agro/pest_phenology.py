@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Any
 
 import pandas as pd
 
@@ -118,12 +117,12 @@ def _empty_outlook(
     )
 
 
-def _daily_increment(row: Any, model: PestModel) -> float:
+def _daily_increment(row: pd.Series, model: PestModel) -> float:
     if model.calculation_method != "daily_average":
         raise ValueError("Метод расчёта модели вредителя не поддерживается.")
     return daily_average_degree_days(
-        float(row.t_min),
-        float(row.t_max),
+        float(row["t_min"]),
+        float(row["t_max"]),
         lower_threshold_c=model.lower_threshold_c,
         upper_threshold_c=model.upper_threshold_c,
     )
@@ -137,17 +136,20 @@ def _continuous_forecast_prefix(
 ) -> pd.DataFrame:
     if horizon_days <= 0:
         return forecast.iloc[0:0].copy()
+    by_day = {
+        row["_day"].date(): row
+        for _, row in forecast.sort_values("_day").iterrows()
+    }
     rows: list[pd.Series] = []
-    by_day = {row._day.date(): row for row in forecast.itertuples(index=False)}
     for offset in range(horizon_days):
         day = today + timedelta(days=offset)
         row = by_day.get(day)
-        if row is None or pd.isna(row.t_min) or pd.isna(row.t_max):
+        if row is None or pd.isna(row["t_min"]) or pd.isna(row["t_max"]):
             break
-        rows.append(pd.Series(row._asdict()))
+        rows.append(row)
     if not rows:
         return forecast.iloc[0:0].copy()
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 def calculate_pest_outlook(
@@ -212,8 +214,7 @@ def calculate_pest_outlook(
         completed = completed.iloc[0:0].copy()
 
     accumulated = sum(
-        _daily_increment(row, model)
-        for row in completed.itertuples(index=False)
+        _daily_increment(row, model) for _, row in completed.iterrows()
     )
     current = stage_for_accumulation(model, accumulated)
     upcoming = next_stage(model, current)
@@ -229,7 +230,7 @@ def calculate_pest_outlook(
     forecast_added = 0.0
     if not forecast_prefix.empty:
         running = accumulated
-        for row in forecast_prefix.itertuples(index=False):
+        for _, row in forecast_prefix.iterrows():
             increment = _daily_increment(row, model)
             forecast_added += increment
             running += increment
@@ -238,7 +239,7 @@ def calculate_pest_outlook(
                 and next_threshold is not None
                 and running >= next_threshold
             ):
-                projected_crossing = row._day.date()
+                projected_crossing = row["_day"].date()
 
     return PestOutlook(
         available=True,
@@ -265,7 +266,8 @@ def calculate_pest_outlook(
 def choose_pest_notification(
     outlook: PestOutlook,
     *,
-    last_notified_event: str | None,
+    last_notified_stage: str | None,
+    last_notified_advance: str | None,
     today: date,
     advance_days: int = 3,
 ) -> PestNotification | None:
@@ -278,10 +280,7 @@ def choose_pest_notification(
 
     prefix = f"{outlook.model.model_version}:{outlook.biofix_date.isoformat()}"
     current_key = f"{prefix}:current:{outlook.current_stage.key}"
-    if last_notified_event != current_key and not (
-        last_notified_event
-        and last_notified_event.endswith(f":approaching:{outlook.current_stage.key}")
-    ):
+    if last_notified_stage != current_key:
         return PestNotification(
             event_key=current_key,
             kind="current_window",
@@ -296,7 +295,7 @@ def choose_pest_notification(
         return None
 
     approaching_key = f"{prefix}:approaching:{outlook.next_stage.key}"
-    if last_notified_event == approaching_key:
+    if last_notified_advance == approaching_key:
         return None
     return PestNotification(
         event_key=approaching_key,
