@@ -20,7 +20,7 @@ class FakeProvider:
                 "local_date": date(2026, 8, 5),
                 "member_id": f"m{member:02d}",
                 "t_min_c": 18.0,
-                "t_max_c": 36.0 if member < 20 else 28.0,
+                "t_max_c": 33.0 if member < 10 else 28.0,
                 "precip_mm": 0.0,
                 "wind_gust_ms": 5.0,
                 "cape_j_kg": 100.0,
