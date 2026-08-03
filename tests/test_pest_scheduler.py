@@ -91,7 +91,9 @@ async def test_pest_cycle_sends_once_and_marks_local_day(tmp_path) -> None:
 
     coordination = MemoryCoordination(namespace="pest-scheduler-test")
     bot = _Bot()
-    now = datetime(2026, 6, 5, 5, 30, tzinfo=timezone.utc)
+    # The saved field still has UTC until its first weather metadata update.
+    # 08:30 UTC is inside the local-morning window for that transitional state.
+    now = datetime(2026, 6, 5, 8, 30, tzinfo=timezone.utc)
     try:
         async with sessions() as session:
             await save_coordinates(session, 3001, 45.75, 33.875)
