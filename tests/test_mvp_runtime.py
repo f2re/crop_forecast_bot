@@ -29,6 +29,7 @@ async def test_mvp_dispatcher_loads_farmer_flow_without_rag_by_default() -> None
             "phenology",
             "soil-temperature",
             "pests",
+            "marker-catalog",
             "report-help",
             "report",
             "risks",
