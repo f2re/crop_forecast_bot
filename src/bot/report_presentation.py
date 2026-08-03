@@ -41,6 +41,20 @@ def compact_agro_report(
     """
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+    recognized = any(
+        line.startswith(
+            (
+                "🗺 Поле:",
+                "🌱 Культура:",
+                "• ГДД ",
+                "• Накопленные осадки ",
+            )
+        )
+        for line in lines
+    )
+    if not recognized:
+        return text
+
     result: list[str] = ["🌾 <b>Отчёт по полю</b>"]
 
     for prefix in ("🗺 Поле:", "🌱 Культура:", "📅 Начало сезона/посев:"):
@@ -56,7 +70,11 @@ def compact_agro_report(
                 " — подтверждена пользователем",
             )
         )
-    if season_start_date is not None and today is not None and today >= season_start_date:
+    if (
+        season_start_date is not None
+        and today is not None
+        and today >= season_start_date
+    ):
         age_days = (today - season_start_date).days
         if age_days >= 21:
             result.append(
@@ -79,9 +97,15 @@ def compact_agro_report(
         for line in lines:
             if re.match(r"• \d{2}\.\d{2}\.\d{4}: Tmin воздуха", line):
                 main.append(
-                    line.replace("Tmin воздуха", "минимальная температура воздуха")
+                    line.replace(
+                        "Tmin воздуха",
+                        "минимальная температура воздуха",
+                    )
                 )
-    elif any("температурный риск по заданной политике не выявлен" in line for line in lines):
+    elif any(
+        "температурный риск по заданной политике не выявлен" in line
+        for line in lines
+    ):
         suffix = f" по {checked_days} проверенным суткам" if checked_days else ""
         main.append(
             "✅ Общий порог предупреждения о холоде"
@@ -95,7 +119,8 @@ def compact_agro_report(
         match = htc_pattern.match(line)
         if match:
             main.append(
-                f"• Показатель увлажнения (ГТК): <b>{float(match.group(1)):.2f}</b> "
+                f"• Показатель увлажнения (ГТК): "
+                f"<b>{float(match.group(1)):.2f}</b> "
                 f"по {int(match.group(2))} тёплым суткам."
             )
             break
@@ -106,17 +131,27 @@ def compact_agro_report(
     for line in lines:
         match = balance_pattern.match(line)
         if match:
-            main.append(_water_difference(int(match.group(1)), float(match.group(2))))
+            main.append(
+                _water_difference(
+                    int(match.group(1)),
+                    float(match.group(2)),
+                )
+            )
             break
 
     precip_pattern = re.compile(
-        rf"^• Накопленные осадки (с начала сезона|за доступный завершённый период): "
+        rf"^• Накопленные осадки "
+        rf"(с начала сезона|за доступный завершённый период): "
         rf"{_NUMBER} мм по (\d+) валидным суткам\.$"
     )
     for line in lines:
         match = precip_pattern.match(line)
         if match:
-            scope = "С начала сезона" if match.group(1) == "с начала сезона" else "За доступный период"
+            scope = (
+                "С начала сезона"
+                if match.group(1) == "с начала сезона"
+                else "За доступный период"
+            )
             main.append(
                 f"• {scope} выпало <b>{float(match.group(2)):.1f} мм</b> осадков "
                 f"({int(match.group(3))} суток с данными)."
@@ -143,7 +178,11 @@ def compact_agro_report(
     for line in lines:
         match = gdd_pattern.match(line)
         if match:
-            scope = "С начала сезона" if match.group(1) == "с начала сезона" else "За доступный период"
+            scope = (
+                "С начала сезона"
+                if match.group(1) == "с начала сезона"
+                else "За доступный период"
+            )
             main.append(
                 f"• {scope} накоплено <b>{float(match.group(2)):.1f} °C·сут</b> "
                 f"тепла; базовая температура — {float(match.group(3)):.1f} °C."
@@ -179,7 +218,8 @@ def compact_agro_report(
             [
                 "",
                 "📊 <b>Сравнение с 1991–2020</b>",
-                "• Пока недоступно. Основные показатели выше рассчитаны без этого блока.",
+                "• Пока недоступно. Основные показатели выше рассчитаны "
+                "без этого блока.",
             ]
         )
 
