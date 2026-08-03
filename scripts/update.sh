@@ -63,20 +63,59 @@ repair_preflight_paths() {
   done
 }
 
+service_process_release() {
+  local pid
+  pid="$(service_control show "${SERVICE_NAME}" --property MainPID --value 2>/dev/null || true)"
+  [[ "${pid}" =~ ^[1-9][0-9]*$ ]] || return 1
+  readlink -f "/proc/${pid}/cwd" 2>/dev/null
+}
+
+restart_current_release() {
+  local release="$1"
+  local reason="$2"
+
+  warn "${reason}"
+  repair_preflight_paths
+  run_migrations "${release}"
+  preflight_release "${release}"
+  render_systemd_units_from_release "${release}"
+  if ! restart_and_verify; then
+    fail "Current release ${release} failed its repair restart; inspect the service journal"
+  fi
+  log "Current release restarted and verified: $(git -C "${release}" rev-parse HEAD)"
+}
+
 [[ -n "${old_release}" && -d "${old_release}" ]] || \
   fail "No active release found. Run scripts/deploy.sh first."
 old_sha="$(git -C "${old_release}" rev-parse HEAD)"
 
 validate_runtime_env
+validate_boolean_env "FORCE_REDEPLOY" "${FORCE_REDEPLOY:-false}"
 prepare_runtime_directories
 
 if ! remote_sha="$(remote_branch_sha "${BRANCH}")"; then
   warn "Remote branch ${BRANCH} is unavailable; keeping ${old_sha}"
   exit 0
 fi
-if [[ "${remote_sha}" == "${old_sha}" ]]; then
-  log "Already running commit ${old_sha}; no update required"
+if [[ "${remote_sha}" == "${old_sha}" ]] && \
+   ! is_true_value "${FORCE_REDEPLOY:-false}"; then
+  running_release="$(service_process_release || true)"
+  if [[ "${running_release}" != "${old_release}" ]]; then
+    restart_current_release \
+      "${old_release}" \
+      "Installed SHA is current, but the service process runs from ${running_release:-<no active process>} instead of ${old_release}; repairing runtime"
+  elif ! service_control is-active --quiet "${SERVICE_NAME}" || \
+       ! heartbeat_is_fresh; then
+    restart_current_release \
+      "${old_release}" \
+      "Installed SHA is current, but the service or heartbeat is unhealthy; restarting the current release"
+  else
+    log "Already running commit ${old_sha}; process, service and heartbeat are current"
+  fi
   exit 0
+fi
+if [[ "${remote_sha}" == "${old_sha}" ]]; then
+  log "Forcing a full redeployment of commit ${remote_sha}"
 fi
 
 if [[ "${BRANCH}" == "main" ]] && \
