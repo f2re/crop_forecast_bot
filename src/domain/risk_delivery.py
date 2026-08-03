@@ -238,6 +238,16 @@ def _canonical(
     )
 
 
+def _state_for_changes(
+    episodes: Sequence[RiskEpisodeState],
+    changes: Sequence[RiskStateChange],
+) -> tuple[RiskEpisodeState, ...]:
+    changed_types = {change.risk_type for change in changes}
+    return _canonical(
+        episode for episode in episodes if episode.risk_type in changed_types
+    )
+
+
 def _accepted_priority_state(
     previous: tuple[RiskEpisodeState, ...],
     current_high: tuple[RiskEpisodeState, ...],
@@ -249,7 +259,11 @@ def _accepted_priority_state(
     retained = [
         episode for episode in previous if episode.risk_type not in accepted_types
     ]
-    retained.extend(current_high)
+    retained.extend(
+        episode
+        for episode in current_high
+        if episode.risk_type in accepted_types
+    )
     return _canonical(retained)
 
 
@@ -413,8 +427,11 @@ def plan_risk_delivery(
         )
 
     if priority_bypass:
-        selected_state = current_high_state
-        selected_previous_state = previous_high_state
+        selected_state = _state_for_changes(current_high_state, high_changes)
+        selected_previous_state = _state_for_changes(
+            previous_high_state,
+            high_changes,
+        )
         selected_changes = high_changes
         accepted_state = _accepted_priority_state(
             previous_full_state,
@@ -422,8 +439,8 @@ def plan_risk_delivery(
             high_changes,
         )
     else:
-        selected_state = current_state
-        selected_previous_state = old_state
+        selected_state = _state_for_changes(current_state, changes)
+        selected_previous_state = _state_for_changes(old_state, changes)
         selected_changes = changes
         accepted_state = current_full_state
 
