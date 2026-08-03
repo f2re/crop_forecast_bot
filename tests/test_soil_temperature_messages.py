@@ -65,5 +65,5 @@ def test_soil_temperature_help_explains_provenance_and_use() -> None:
     assert "ECMWF IFS через Open-Meteo" in text
     assert "до 4 раз в сутки" in text
     assert "архив модели, а не измерение метеостанции" in text
-    assert "9–25 км" in text
+    assert "9–28 км" in text
     assert "измерить почву на рабочей глубине" in text
