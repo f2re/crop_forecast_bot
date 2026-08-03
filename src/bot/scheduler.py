@@ -295,6 +295,24 @@ async def _send_once(
     return True
 
 
+def _should_commit_delivery_state(
+    *,
+    sent: bool,
+    delivery_mode: str,
+    priority_bypass: bool,
+) -> bool:
+    """Keep an undelivered normal digest change pending for the next local day.
+
+    Immediate and priority-bypass transitions use state-specific Redis keys. If
+    one of those keys already exists, another worker has accepted the same
+    transition and the PostgreSQL baseline may safely advance. A normal digest
+    uses one key for the whole local day; a later material change must therefore
+    remain pending instead of being consumed by that daily key.
+    """
+
+    return sent or delivery_mode != "digest" or priority_bypass
+
+
 async def check_weather_risk_alerts(
     bot: Bot,
     session_factory: SessionFactory,
@@ -498,17 +516,29 @@ async def check_weather_risk_alerts(
                             notified_at=notified_at,
                         )
                     )
-                    await job_guard.run(
-                        _store_delivery_state(
-                            session_factory,
-                            field_id=target.field_id,
-                            model=forecast.meta.model,
-                            delivery_mode=delivery_mode,
-                            episodes=decision.current_state,
-                            observed_at=forecast.meta.retrieved_at,
-                            notified_at=notified_at,
+                    if _should_commit_delivery_state(
+                        sent=sent,
+                        delivery_mode=delivery_mode,
+                        priority_bypass=decision.priority_bypass,
+                    ):
+                        await job_guard.run(
+                            _store_delivery_state(
+                                session_factory,
+                                field_id=target.field_id,
+                                model=forecast.meta.model,
+                                delivery_mode=delivery_mode,
+                                episodes=decision.current_state,
+                                observed_at=forecast.meta.retrieved_at,
+                                notified_at=notified_at,
+                            )
                         )
-                    )
+                    else:
+                        logger.info(
+                            "Weather-risk digest change retained for the next "
+                            "local day for user %s field %s",
+                            target.telegram_id,
+                            target.field_id,
+                        )
                 except LeaseLostError:
                     raise
                 except OpenMeteoEnsembleError as exc:
