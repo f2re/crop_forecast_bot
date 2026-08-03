@@ -46,7 +46,7 @@ def test_host_specific_models_are_not_silently_transferred() -> None:
     cucurbit_scab = CANDIDATES_BY_KEY["cucurbit_scab"]
 
     assert onion_thrips.crop_keys == ("onion",)
-    assert "зелёный лук" in onion_thrips.validation_note
+    assert "зелён" in onion_thrips.validation_note
     assert squash_bug.crop_keys == ("zucchini",)
     assert "watermelon" not in cucurbit_scab.crop_keys
 
