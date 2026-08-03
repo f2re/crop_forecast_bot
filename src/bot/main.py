@@ -22,6 +22,7 @@ from src.api.open_meteo import close_open_meteo_resources
 from src.api.open_meteo_ensemble import close_open_meteo_ensemble_resources
 from src.bot.errors import handle_runtime_error
 from src.bot.middlewares import CallbackIdempotencyMiddleware
+from src.bot.pest_scheduler import register_pest_monitoring_job
 from src.bot.scheduler import (
     check_weather_risk_alerts,
     start_scheduler,
@@ -70,6 +71,7 @@ async def configure_bot_commands(bot: Bot) -> None:
             BotCommand(command="crops", description="Культуры активного поля"),
             BotCommand(command="report", description="Агроотчёт выбранной культуры"),
             BotCommand(command="risks", description="Проверить погодные условия"),
+            BotCommand(command="pests", description="Наблюдение за вредителями"),
             BotCommand(
                 command="history",
                 description="Показать историю предупреждений",
@@ -98,6 +100,7 @@ def build_dispatcher(
 
     from src.bot.handlers.core import router as core_router
     from src.bot.handlers.crops import router as crops_router
+    from src.bot.handlers.pests import router as pests_router
     from src.bot.handlers.phenology import router as phenology_router
     from src.bot.handlers.profile import router as profile_router
     from src.bot.handlers.report import router as report_router
@@ -108,13 +111,14 @@ def build_dispatcher(
     from src.bot.handlers.settings import router as settings_router
 
     # Narrow feature routers precede the broad legacy core router. They own the
-    # profile, crop, date, stage, report and contextual-help callbacks while the
-    # remaining onboarding flow stays in core until it is split separately.
+    # profile, crop, date, stage, report, pest and contextual-help callbacks while
+    # the remaining onboarding flow stays in core until it is split separately.
     dispatcher.include_router(copy.deepcopy(settings_router))
     dispatcher.include_router(copy.deepcopy(profile_router))
     dispatcher.include_router(copy.deepcopy(crops_router))
     dispatcher.include_router(copy.deepcopy(season_calendar_router))
     dispatcher.include_router(copy.deepcopy(phenology_router))
+    dispatcher.include_router(copy.deepcopy(pests_router))
     dispatcher.include_router(copy.deepcopy(report_help_router))
     dispatcher.include_router(copy.deepcopy(report_router))
     dispatcher.include_router(copy.deepcopy(risks_router))
@@ -200,6 +204,11 @@ async def run(*, startup_smoke: bool = False) -> None:
             session_factory=database.get_session,
             coordination=coordination,
             rag_enabled=settings.rag_enabled,
+        )
+        register_pest_monitoring_job(
+            bot,
+            database.get_session,
+            coordination,
         )
 
         if startup_smoke:
