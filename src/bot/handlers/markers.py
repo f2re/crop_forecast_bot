@@ -8,7 +8,10 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.bot.biological_risk_messages import format_crop_biological_risks
+from src.bot.keyboards import get_field_keyboard
 from src.bot.marker_messages import (
     format_agrometeorological_hazards,
     format_candidate_pest_markers,
@@ -17,6 +20,7 @@ from src.bot.marker_messages import (
     format_operational_pest_markers,
 )
 from src.bot.telegram_text import answer_html, edit_html
+from src.database.crud import get_field_context
 
 router = Router(name="marker-catalog")
 
@@ -30,6 +34,15 @@ _AGROMETEOROLOGICAL_SOURCE_URL = (
 
 def _catalog_keyboard(*, section: str = "overview") -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
+    if section != "biological":
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🦠 Болезни и вредители культуры",
+                    callback_data="marker_catalog:biological",
+                )
+            ]
+        )
     if section != "meteo":
         rows.append(
             [
@@ -128,6 +141,29 @@ async def marker_catalog_overview(callback: CallbackQuery) -> None:
         callback,
         text=format_marker_catalog_overview(),
         section="overview",
+    )
+
+
+@router.callback_query(F.data == "marker_catalog:biological")
+async def marker_catalog_biological(
+    callback: CallbackQuery,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    context = await get_field_context(session, callback.from_user.id)
+    if context is None:
+        await edit_html(
+            callback.message,
+            "Сначала добавьте поле и выберите культуру.",
+            reply_markup=get_field_keyboard(),
+        )
+        return
+    await edit_html(
+        callback.message,
+        format_crop_biological_risks(context.crop_key),
+        reply_markup=_catalog_keyboard(section="biological"),
     )
 
 
