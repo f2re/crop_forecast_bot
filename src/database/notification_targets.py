@@ -22,17 +22,17 @@ class EnabledNotificationTarget:
     elevation_source: str | None
     selected_crop: str
     season_start_date: date | None
-    date_basis: str
-    production_system: str
-    plant_type: str
     phenological_phase: str | None
-    phase_confirmed_at: datetime | None
     daily_digest_enabled: bool
     frost_alerts_enabled: bool
     risk_delivery_mode: RiskDeliveryMode
     quiet_hours_start: int | None
     quiet_hours_end: int | None
     crop_keys: tuple[str, ...] = ()
+    date_basis: str = "season_start"
+    production_system: str = "unknown"
+    plant_type: str = "unknown"
+    phase_confirmed_at: datetime | None = None
 
 
 async def list_enabled_notification_targets(
@@ -123,11 +123,7 @@ async def list_enabled_notification_targets(
                 elevation_source=row.elevation_source,
                 selected_crop=selected_crop,
                 season_start_date=row.season_start_date,
-                date_basis=row.date_basis or "season_start",
-                production_system=row.production_system or "unknown",
-                plant_type=row.plant_type or "unknown",
                 phenological_phase=row.phenological_phase,
-                phase_confirmed_at=row.phase_confirmed_at,
                 daily_digest_enabled=bool(row.daily_digest_enabled),
                 frost_alerts_enabled=bool(row.frost_alerts_enabled),
                 risk_delivery_mode=validate_risk_delivery_mode(
@@ -136,6 +132,10 @@ async def list_enabled_notification_targets(
                 quiet_hours_start=row.quiet_hours_start,
                 quiet_hours_end=row.quiet_hours_end,
                 crop_keys=crops,
+                date_basis=row.date_basis or "season_start",
+                production_system=row.production_system or "unknown",
+                plant_type=row.plant_type or "unknown",
+                phase_confirmed_at=row.phase_confirmed_at,
             ),
         )
     return list(targets.values())
