@@ -22,7 +22,7 @@ from src.database.pest_monitoring import (
     list_enabled_pest_targets,
     mark_pest_monitor_checked,
 )
-from src.domain.pests import get_pest_model, validate_pest_for_crop
+from src.domain.pests import validate_pest_for_crop
 from src.infrastructure.coordination import (
     CoordinationBackend,
     LeaseLostError,
@@ -38,6 +38,29 @@ _PEST_JOB_LOCK_TTL = 4 * 60 * 60
 _PEST_NOTIFICATION_RESERVATION_TTL = 5 * 60
 _PEST_NOTIFICATION_DEDUP_TTL = 120 * 24 * 60 * 60
 _PEST_LEASE_RENEW_SECONDS = 60.0
+
+
+def register_pest_monitoring_job(
+    bot: Bot,
+    session_factory: SessionFactory,
+    coordination: CoordinationBackend,
+) -> None:
+    """Attach one light hourly trigger to the existing APScheduler instance."""
+
+    from src.bot.scheduler import get_scheduler
+
+    get_scheduler().add_job(
+        check_pest_monitoring,
+        trigger="cron",
+        hour="*",
+        minute=35,
+        args=[bot, session_factory, coordination, True],
+        id="pest_monitoring",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
+    )
 
 
 def _local_datetime(
