@@ -10,15 +10,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agro.pest_phenology import choose_pest_notification
 from src.api.open_meteo import OpenMeteoError
 from src.application.pest_monitoring import (
     PestMonitorRequest,
     evaluate_pest_monitors,
 )
+from src.application.pest_notification_policy import (
+    choose_semantic_pest_notification,
+    pest_notification_state_key,
+)
 from src.application.ports.soil_temperature import SoilTemperatureProvider
 from src.application.ports.weather import WeatherProvider
-from src.bot.pest_messages import format_pest_notification
+from src.bot.pest_notification_messages import format_semantic_pest_notification
 from src.database.pest_monitoring import (
     PestMonitoringTarget,
     list_enabled_pest_targets,
@@ -312,7 +315,7 @@ async def check_pest_monitoring(
                         report.timezone,
                         now_utc,
                     ).date()
-                    notification = choose_pest_notification(
+                    notification = choose_semantic_pest_notification(
                         report.outlook,
                         last_notified_stage=target.last_notified_stage,
                         last_notified_advance=target.last_notified_advance,
@@ -341,7 +344,7 @@ async def check_pest_monitoring(
                     ) -> object:
                         return await bot.send_message(
                             target.telegram_id,
-                            format_pest_notification(
+                            format_semantic_pest_notification(
                                 notification,
                                 outlook,
                                 field_name=target.field_name,
@@ -367,7 +370,7 @@ async def check_pest_monitoring(
                         else None
                     )
                     advance_key = (
-                        notification.event_key
+                        pest_notification_state_key(notification)
                         if notification.kind == "approaching_window"
                         else None
                     )
