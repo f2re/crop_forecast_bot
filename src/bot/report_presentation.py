@@ -76,11 +76,10 @@ def compact_agro_report(
         and today >= season_start_date
     ):
         age_days = (today - season_start_date).days
-        if age_days >= 21:
-            result.append(
-                f"🔔 С указанной даты прошло <b>{age_days} сут.</b> Бот не меняет "
-                "стадию без осмотра растений; проверьте её кнопкой ниже."
-            )
+        result.append(
+            f"🔔 С указанной даты прошло <b>{age_days} сут.</b> Проверьте, "
+            "соответствует ли выбранная стадия фактическому состоянию растений."
+        )
 
     main: list[str] = []
     checked_days: int | None = None
