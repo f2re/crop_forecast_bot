@@ -17,12 +17,15 @@ from src.bot.marker_messages import (
     format_operational_pest_markers,
 )
 from src.bot.telegram_text import answer_html, edit_html
-from src.domain.marker_catalog import (
-    AGROMETEOROLOGICAL_HAZARD_REFERENCE,
-    METEOROLOGICAL_HAZARD_SOURCE,
-)
 
 router = Router(name="marker-catalog")
+
+_METEOROLOGICAL_SOURCE_URL = (
+    "https://method.meteorf.ru/norma/document/nast_shf.pdf"
+)
+_AGROMETEOROLOGICAL_SOURCE_URL = (
+    "https://files.stroyinf.ru/Index2/1/4293728/4293728665.htm"
+)
 
 
 def _catalog_keyboard(*, section: str = "overview") -> InlineKeyboardMarkup:
@@ -68,7 +71,7 @@ def _catalog_keyboard(*, section: str = "overview") -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="📄 РД 52.27.724-2019",
-                    url=METEOROLOGICAL_HAZARD_SOURCE.url,
+                    url=_METEOROLOGICAL_SOURCE_URL,
                 )
             ]
         )
@@ -77,7 +80,7 @@ def _catalog_keyboard(*, section: str = "overview") -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(
                     text="📄 Р 52.33.877-2019",
-                    url=AGROMETEOROLOGICAL_HAZARD_REFERENCE.url,
+                    url=_AGROMETEOROLOGICAL_SOURCE_URL,
                 )
             ]
         )
