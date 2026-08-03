@@ -19,6 +19,7 @@ from src.bot.keyboards import (
 from src.bot.report_presentation import compact_agro_report
 from src.bot.telegram_text import answer_html, edit_html
 from src.database.crud import get_field_context, update_field_metadata
+from src.database.phenology import get_active_crop_phenology
 from src.domain.season import local_today
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ async def _generate(session: AsyncSession, telegram_id: int):
     context = await get_field_context(session, telegram_id)
     if context is None:
         raise ValueError("Сначала добавьте поле.")
+    phenology = await get_active_crop_phenology(session, telegram_id)
     await session.rollback()
     report = await generate_agro_report(
         context.latitude,
@@ -46,15 +48,22 @@ async def _generate(session: AsyncSession, telegram_id: int):
         elevation_m=report.elevation_m,
         elevation_source=report.metadata_source,
     )
-    return context, report
+    return context, phenology, report
 
 
-def _compact(context, report) -> str:
+def _compact(context, phenology, report) -> str:
     return compact_agro_report(
         report.text,
         season_start_date=context.season_start_date,
         today=local_today(report.timezone),
         source="Open-Meteo",
+        crop_key=context.crop_key,
+        current_phase=context.phenological_phase,
+        date_basis=(phenology.date_basis if phenology is not None else None),
+        phase_confirmed_at=(
+            phenology.phase_confirmed_at if phenology is not None else None
+        ),
+        timezone_name=report.timezone,
     )
 
 
@@ -79,10 +88,13 @@ async def agro_report(callback: CallbackQuery, session: AsyncSession) -> None:
         "Получаю данные, считаю осадки и накопленное тепло…",
     )
     try:
-        updated_context, report = await _generate(session, callback.from_user.id)
+        updated_context, phenology, report = await _generate(
+            session,
+            callback.from_user.id,
+        )
         await edit_html(
             progress,
-            _compact(updated_context, report),
+            _compact(updated_context, phenology, report),
             reply_markup=get_report_result_keyboard(),
         )
     except OpenMeteoError:
@@ -116,7 +128,7 @@ async def agro_report_command(message: Message, session: AsyncSession) -> None:
     if message.from_user is None:
         return
     try:
-        context, report = await _generate(session, message.from_user.id)
+        context, phenology, report = await _generate(session, message.from_user.id)
     except ValueError as exc:
         await message.answer(str(exc), reply_markup=get_field_keyboard())
         return
@@ -136,6 +148,6 @@ async def agro_report_command(message: Message, session: AsyncSession) -> None:
 
     await answer_html(
         message,
-        _compact(context, report),
+        _compact(context, phenology, report),
         reply_markup=get_report_result_keyboard(),
     )

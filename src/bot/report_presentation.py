@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import date
+from datetime import date, datetime
+
+from src.domain.phenology import date_basis_label, evaluate_stage_review
 
 _NUMBER = r"([+-]?\d+(?:\.\d+)?)"
 
@@ -25,12 +27,72 @@ def _water_difference(days: int, value: float) -> str:
     )
 
 
+def _stage_review_lines(
+    *,
+    crop_key: str,
+    current_phase: str | None,
+    phase_confirmed_at: datetime | None,
+    today: date,
+    timezone_name: str,
+) -> list[str]:
+    review = evaluate_stage_review(
+        crop_key,
+        current_phase=current_phase,
+        phase_confirmed_at=phase_confirmed_at,
+        today=today,
+        timezone_name=timezone_name,
+    )
+    if not review.needs_review:
+        return []
+    if review.status == "stage_missing":
+        return [
+            "🔔 Фактическая стадия ещё не подтверждена. Осмотрите растения и "
+            "укажите её кнопкой ниже."
+        ]
+    if review.status == "confirmation_time_unknown":
+        next_note = (
+            f" При осмотре обратите внимание на следующую стадию: "
+            f"<b>{html.escape(review.next_stage)}</b>."
+            if review.next_stage
+            else ""
+        )
+        return [
+            "🔔 Дата последнего подтверждения стадии неизвестна. "
+            f"Проверьте наблюдение.{next_note}",
+            "ℹ️ Это напоминание по давности записи, а не расчёт стадии.",
+        ]
+    if review.status == "stage_not_in_catalog":
+        return [
+            "🔔 Сохранённая стадия не входит в текущий справочник культуры. "
+            "Выберите её повторно после осмотра."
+        ]
+    if review.days_since_confirmation is None:
+        return []
+    if review.next_stage:
+        action = (
+            "При осмотре проверьте, не появилась ли следующая стадия: "
+            f"<b>{html.escape(review.next_stage)}</b>."
+        )
+    else:
+        action = "Проверьте состояние растений и завершение текущего сезона."
+    return [
+        f"🔔 Стадия подтверждена <b>{review.days_since_confirmation} сут.</b> "
+        f"назад. {action}",
+        "ℹ️ Это календарное напоминание, а не автоматическое определение стадии.",
+    ]
+
+
 def compact_agro_report(
     text: str,
     *,
     season_start_date: date | None = None,
     today: date | None = None,
     source: str | None = None,
+    crop_key: str | None = None,
+    current_phase: str | None = None,
+    date_basis: str | None = None,
+    phase_confirmed_at: datetime | None = None,
+    timezone_name: str = "UTC",
 ) -> str:
     """Turn the full diagnostic report into a short farmer-facing summary.
 
@@ -57,10 +119,15 @@ def compact_agro_report(
 
     result: list[str] = ["🌾 <b>Отчёт по полю</b>"]
 
-    for prefix in ("🗺 Поле:", "🌱 Культура:", "📅 Начало сезона/посев:"):
+    for prefix in ("🗺 Поле:", "🌱 Культура:"):
         line = _find_line(lines, prefix)
         if line:
             result.append(line)
+
+    date_line = _find_line(lines, "📅 Начало сезона/посев:")
+    if date_line:
+        label = date_basis_label(date_basis).capitalize()
+        result.append(date_line.replace("📅 Начало сезона/посев:", f"📅 {label}:"))
 
     phase_line = _find_line(lines, "🌿 Фаза:")
     if phase_line:
@@ -70,7 +137,18 @@ def compact_agro_report(
                 " — подтверждена пользователем",
             )
         )
-    if (
+
+    if crop_key is not None and today is not None:
+        result.extend(
+            _stage_review_lines(
+                crop_key=crop_key,
+                current_phase=current_phase,
+                phase_confirmed_at=phase_confirmed_at,
+                today=today,
+                timezone_name=timezone_name,
+            )
+        )
+    elif (
         season_start_date is not None
         and today is not None
         and today >= season_start_date

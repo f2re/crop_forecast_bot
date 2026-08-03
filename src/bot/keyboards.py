@@ -208,27 +208,119 @@ def get_crop_list_keyboard(category_id: str) -> InlineKeyboardMarkup:
 
 
 def get_season_keyboard(*, has_start: bool, has_phase: bool) -> InlineKeyboardMarkup:
-    date_action = "Изменить дату" if has_start else "Выбрать дату посева"
+    date_action = "Изменить дату и её смысл" if has_start else "Указать дату"
+    phase_action = "Изменить стадию" if has_phase else "Указать фактическую стадию"
     rows = [
         [InlineKeyboardButton(text=f"📅 {date_action}", callback_data="season_start_set")],
         [
             InlineKeyboardButton(
-                text="🌿 Указать фактическую стадию",
+                text=f"🌿 {phase_action}",
                 callback_data="season_phase",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                text="🌾 Условия выращивания",
+                callback_data="crop_growth_context",
             )
         ],
         [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
     ]
     if has_phase:
-        rows.append(
+        rows.extend(
             [
-                InlineKeyboardButton(
-                    text="🧹 Удалить указанную стадию",
-                    callback_data="phase_clear",
-                )
+                [
+                    InlineKeyboardButton(
+                        text="✅ Стадия не изменилась",
+                        callback_data="phase_confirm_current",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🧹 Удалить указанную стадию",
+                        callback_data="phase_clear",
+                    )
+                ],
             ]
         )
     rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def get_date_basis_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌰 Посев семян",
+                    callback_data="season_basis:sowing",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🌱 Появление всходов",
+                    callback_data="season_basis:emergence",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🪴 Высадка рассады",
+                    callback_data="season_basis:transplanting",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📌 Начало наблюдений",
+                    callback_data="season_basis:season_start",
+                )
+            ],
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data="season")],
+        ]
+    )
+
+
+def get_growth_context_keyboard(
+    crop_key: str,
+    *,
+    production_system: str,
+    plant_type: str,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for value, label in (
+        ("open_field", "Открытый грунт"),
+        ("greenhouse", "Защищённый грунт"),
+        ("unknown", "Не указано"),
+    ):
+        marker = "✅ " if production_system == value else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{marker}{label}",
+                    callback_data=f"set_production_system:{value}",
+                )
+            ]
+        )
+
+    if crop_key == "tomato":
+        rows.append(
+            [InlineKeyboardButton(text="— Тип роста томата —", callback_data="phenology:noop")]
+        )
+        for value, label in (
+            ("determinate", "Детерминантный"),
+            ("indeterminate", "Индетерминантный"),
+            ("unknown", "Не указано"),
+        ):
+            marker = "✅ " if plant_type == value else ""
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"{marker}{label}",
+                        callback_data=f"set_plant_type:{value}",
+                    )
+                ]
+            )
+
+    rows.append([InlineKeyboardButton(text="◀️ К дате и стадии", callback_data="season")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

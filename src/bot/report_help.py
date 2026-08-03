@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import html
-from datetime import date
+from datetime import date, datetime
 from typing import Literal
 
 from src.agro.crop_catalog import get_crop, get_crop_name
+from src.domain.phenology import (
+    date_basis_label,
+    evaluate_stage_review,
+    plant_type_label,
+    production_system_label,
+)
 
 ReportHelpTopic = Literal["heat", "water", "htc", "phase", "sources", "risk"]
 
@@ -89,37 +95,97 @@ def format_htc_help() -> str:
     )
 
 
+def _phase_review_explanation(
+    crop_key: str,
+    *,
+    current_phase: str | None,
+    phase_confirmed_at: datetime | None,
+    today: date,
+    timezone_name: str,
+) -> str:
+    review = evaluate_stage_review(
+        crop_key,
+        current_phase=current_phase,
+        phase_confirmed_at=phase_confirmed_at,
+        today=today,
+        timezone_name=timezone_name,
+    )
+    if review.status == "stage_missing":
+        return "Фактическая стадия ещё не указана."
+    if review.status == "confirmation_time_unknown":
+        return "Время последнего подтверждения неизвестно; стадию нужно проверить."
+    if review.status == "stage_not_in_catalog":
+        return "Сохранённая стадия не входит в текущий справочник культуры."
+    if review.days_since_confirmation is None:
+        return "Давность наблюдения не определена."
+    if review.needs_review:
+        next_text = (
+            f" При осмотре можно проверить наличие следующей стадии: "
+            f"«{html.escape(review.next_stage)}»."
+            if review.next_stage
+            else " Проверьте завершение текущего периода развития."
+        )
+        return (
+            f"Стадия подтверждена {review.days_since_confirmation} сут. назад."
+            f"{next_text}"
+        )
+    return f"Стадия подтверждена {review.days_since_confirmation} сут. назад."
+
+
 def format_phase_help(
     crop_key: str,
     *,
     season_start_date: date | None,
     current_phase: str | None,
     today: date,
+    date_basis: str | None = None,
+    production_system: str | None = None,
+    plant_type: str | None = None,
+    phase_confirmed_at: datetime | None = None,
+    timezone_name: str = "UTC",
 ) -> str:
     crop_name = html.escape(get_crop_name(crop_key))
     phase = html.escape(current_phase) if current_phase else "не указана"
+    basis = html.escape(date_basis_label(date_basis))
     if season_start_date is None:
-        age_line = "Дата посева или начала сезона не задана."
+        age_line = "Исходная дата не задана."
     elif today < season_start_date:
         age_line = "Указанная дата находится в будущем и должна быть исправлена."
     else:
         age_line = (
-            f"С указанной даты прошло <b>{(today - season_start_date).days} сут.</b>"
+            f"От даты «{basis}» прошло "
+            f"<b>{(today - season_start_date).days} сут.</b>"
+        )
+    review_line = _phase_review_explanation(
+        crop_key,
+        current_phase=current_phase,
+        phase_confirmed_at=phase_confirmed_at,
+        today=today,
+        timezone_name=timezone_name,
+    )
+    context_lines = [
+        f"Условия: {html.escape(production_system_label(production_system))}.",
+    ]
+    if crop_key == "tomato":
+        context_lines.append(
+            f"Тип роста томата: {html.escape(plant_type_label(plant_type))}."
         )
     return (
         "🌿 <b>Почему бот сам не меняет стадию</b>\n\n"
         f"Культура: <b>{crop_name}</b>. Текущая стадия: <b>{phase}</b>. "
-        f"{age_line}\n\n"
+        f"{age_line}. {review_line}\n"
+        + "\n".join(context_lines)
+        + "\n\n"
         "Календарный возраст и накопленное тепло помогают оценить срок, но не "
         "доказывают фактическую стадию. Для томата особенно важны:\n"
         "• какая дата введена — посев, всходы или высадка рассады;\n"
         "• открытый грунт или теплица;\n"
-        "• детерминантный или индетерминантный сорт;\n"
-        "• жара, освещение, питание, полив и состояние растений.\n\n"
-        "Сейчас бот хранит наблюдение пользователя как источник истины и не "
-        "подменяет его догадкой. Следующий этап — напоминание: «стадия давно не "
-        "подтверждалась; возможно, пора выбрать следующую». Предложение будет "
-        "показываться отдельно и никогда не заменит наблюдение без подтверждения."
+        "• детерминантный или индетерминантный тип;\n"
+        "• сорт, жара, освещение, питание, полив и состояние растений.\n\n"
+        "Сейчас бот напоминает перепроверить старое наблюдение и показывает "
+        "следующую стадию только как пункт для осмотра. Интервал напоминания — "
+        "правило интерфейса, а не биологический порог. Никакая стадия не "
+        "заменяется без нажатия пользователя."
     )
 
 
@@ -163,6 +229,11 @@ def format_report_help(
     season_start_date: date | None,
     current_phase: str | None,
     today: date,
+    date_basis: str | None = None,
+    production_system: str | None = None,
+    plant_type: str | None = None,
+    phase_confirmed_at: datetime | None = None,
+    timezone_name: str = "UTC",
 ) -> str:
     if topic == "heat":
         return format_heat_help(crop_key)
@@ -176,6 +247,11 @@ def format_report_help(
             season_start_date=season_start_date,
             current_phase=current_phase,
             today=today,
+            date_basis=date_basis,
+            production_system=production_system,
+            plant_type=plant_type,
+            phase_confirmed_at=phase_confirmed_at,
+            timezone_name=timezone_name,
         )
     if topic == "sources":
         return format_sources_help()

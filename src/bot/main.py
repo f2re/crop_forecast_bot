@@ -98,6 +98,7 @@ def build_dispatcher(
 
     from src.bot.handlers.core import router as core_router
     from src.bot.handlers.crops import router as crops_router
+    from src.bot.handlers.phenology import router as phenology_router
     from src.bot.handlers.profile import router as profile_router
     from src.bot.handlers.report import router as report_router
     from src.bot.handlers.report_help import router as report_help_router
@@ -113,6 +114,7 @@ def build_dispatcher(
     dispatcher.include_router(copy.deepcopy(profile_router))
     dispatcher.include_router(copy.deepcopy(crops_router))
     dispatcher.include_router(copy.deepcopy(season_calendar_router))
+    dispatcher.include_router(copy.deepcopy(phenology_router))
     dispatcher.include_router(copy.deepcopy(report_help_router))
     dispatcher.include_router(copy.deepcopy(report_router))
     dispatcher.include_router(copy.deepcopy(risks_router))

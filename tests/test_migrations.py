@@ -83,9 +83,16 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "crop_key",
         "sowing_date",
         "season_start_date",
+        "date_basis",
+        "production_system",
+        "plant_type",
+        "cultivar_name",
+        "maturity_group",
         "phenological_phase",
         "phase_source",
         "phase_confidence",
+        "phase_confirmed_at",
+        "phase_observation_note",
         "is_active",
         "created_at",
         "updated_at",
@@ -145,10 +152,19 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
     }
     assert "ck_fields_risk_delivery_mode" in field_checks
     assert "ck_fields_quiet_hours" in field_checks
+
     season_indexes = {
         index["name"]: index for index in inspector.get_indexes("crop_seasons")
     }
     assert season_indexes["uq_crop_seasons_one_active_per_field"]["unique"] == 1
+    season_checks = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("crop_seasons")
+    }
+    assert "ck_crop_seasons_date_basis" in season_checks
+    assert "ck_crop_seasons_production_system" in season_checks
+    assert "ck_crop_seasons_plant_type" in season_checks
+
     run_unique_constraints = {
         constraint["name"]
         for constraint in inspector.get_unique_constraints("risk_forecast_runs")
@@ -163,7 +179,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260719_0005"
+    assert revision == expected_schema_revision() == "20260803_0006"
 
 
 def test_migrations_adopt_legacy_user_and_backfill_field_settings(
@@ -218,7 +234,8 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
         ).one()
         season_row = connection.execute(
             sa.text(
-                "SELECT field_id, crop_key, season_start_date, is_active "
+                "SELECT field_id, crop_key, season_start_date, is_active, "
+                "date_basis, production_system, plant_type, phase_confirmed_at "
                 "FROM crop_seasons"
             )
         ).one()
@@ -239,7 +256,11 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
     assert season_row[1] == "sunflower"
     assert season_row[2] is None
     assert bool(season_row[3]) is True
-    assert revision == "20260719_0005"
+    assert season_row[4] == "season_start"
+    assert season_row[5] == "unknown"
+    assert season_row[6] == "unknown"
+    assert season_row[7] is None
+    assert revision == "20260803_0006"
 
 
 def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
@@ -279,6 +300,8 @@ def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
             {"user_id": user_id},
         ).one()
 
+    # This fixture deliberately inserts only a field at revision 0002. Later
+    # migrations preserve that field's metadata and do not invent a crop profile.
     expected_source = "legacy/provider metadata; exact source not recorded"
     assert row[0] == expected_source
     assert row[1] == expected_source

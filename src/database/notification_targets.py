@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,10 @@ class EnabledNotificationTarget:
     quiet_hours_start: int | None
     quiet_hours_end: int | None
     crop_keys: tuple[str, ...] = ()
+    date_basis: str = "season_start"
+    production_system: str = "unknown"
+    plant_type: str = "unknown"
+    phase_confirmed_at: datetime | None = None
 
 
 async def list_enabled_notification_targets(
@@ -61,7 +65,11 @@ async def list_enabled_notification_targets(
             Field.quiet_hours_end,
             CropSeason.crop_key,
             CropSeason.season_start_date,
+            CropSeason.date_basis,
+            CropSeason.production_system,
+            CropSeason.plant_type,
             CropSeason.phenological_phase,
+            CropSeason.phase_confirmed_at,
         )
         .join(Field, Field.user_id == User.id)
         .outerjoin(
@@ -124,6 +132,10 @@ async def list_enabled_notification_targets(
                 quiet_hours_start=row.quiet_hours_start,
                 quiet_hours_end=row.quiet_hours_end,
                 crop_keys=crops,
+                date_basis=row.date_basis or "season_start",
+                production_system=row.production_system or "unknown",
+                plant_type=row.plant_type or "unknown",
+                phase_confirmed_at=row.phase_confirmed_at,
             ),
         )
     return list(targets.values())

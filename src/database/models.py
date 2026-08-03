@@ -181,7 +181,7 @@ class Field(Base):
 
 
 class CropSeason(Base):
-    """Crop and agronomic context for one active field season."""
+    """Crop and agronomic context for one field profile."""
 
     __tablename__ = "crop_seasons"
     __table_args__ = (
@@ -189,6 +189,18 @@ class CropSeason(Base):
             "phase_confidence IS NULL OR "
             "(phase_confidence >= 0 AND phase_confidence <= 1)",
             name="ck_crop_seasons_phase_confidence",
+        ),
+        CheckConstraint(
+            "date_basis IN ('sowing', 'emergence', 'transplanting', 'season_start')",
+            name="ck_crop_seasons_date_basis",
+        ),
+        CheckConstraint(
+            "production_system IN ('open_field', 'greenhouse', 'unknown')",
+            name="ck_crop_seasons_production_system",
+        ),
+        CheckConstraint(
+            "plant_type IN ('determinate', 'indeterminate', 'unknown')",
+            name="ck_crop_seasons_plant_type",
         ),
         Index(
             "uq_crop_seasons_one_active_per_field",
@@ -213,9 +225,37 @@ class CropSeason(Base):
     )
     sowing_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     season_start_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    date_basis: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="season_start",
+        server_default="season_start",
+    )
+    production_system: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="unknown",
+        server_default="unknown",
+    )
+    plant_type: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="unknown",
+        server_default="unknown",
+    )
+    cultivar_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    maturity_group: Mapped[str | None] = mapped_column(String(80), nullable=True)
     phenological_phase: Mapped[str | None] = mapped_column(String(120), nullable=True)
     phase_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     phase_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    phase_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    phase_observation_note: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
