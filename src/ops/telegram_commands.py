@@ -12,6 +12,7 @@ from src.bot.command_registry import (
     botfather_commands_text,
     configure_bot_commands,
     inspect_bot_commands,
+    telegram_type_value,
     verify_bot_commands,
 )
 
@@ -41,7 +42,9 @@ async def _run(*, apply: bool, print_botfather: bool) -> int:
                     "ok": True,
                     "bot_id": identity.id,
                     "username": identity.username,
-                    "menu_button": getattr(menu_button, "type", None),
+                    "menu_button": telegram_type_value(
+                        getattr(menu_button, "type", "")
+                    ),
                     "registrations": [asdict(item) for item in snapshots],
                 },
                 ensure_ascii=False,
