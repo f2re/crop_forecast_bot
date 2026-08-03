@@ -25,6 +25,7 @@ _ALLOWED_DELIVERY_STATES = {
     "sending",
     "sent",
     "deduplicated",
+    "deferred",
     "failed",
 }
 
