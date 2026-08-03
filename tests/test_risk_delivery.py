@@ -93,7 +93,7 @@ def test_watch_or_elevated_change_is_deferred_during_quiet_hours() -> None:
     assert decision.dedup_token is None
 
 
-def test_high_change_bypasses_quiet_hours_but_only_high_periods_are_sent() -> None:
+def test_high_change_bypasses_quiet_hours_without_consuming_lower_change() -> None:
     high = _event(level="high", fraction=0.70)
     elevated = _event(
         risk_type="strong_wind",
@@ -101,7 +101,7 @@ def test_high_change_bypasses_quiet_hours_but_only_high_periods_are_sent() -> No
         fraction=0.40,
     )
 
-    decision = plan_risk_delivery(
+    urgent = plan_risk_delivery(
         (high, elevated),
         mode="immediate",
         local_datetime=_local(23),
@@ -109,10 +109,28 @@ def test_high_change_bypasses_quiet_hours_but_only_high_periods_are_sent() -> No
         quiet_hours_end=7,
     )
 
-    assert decision.deferred is False
-    assert decision.events == (high,)
-    assert decision.priority_bypass is True
-    assert decision.dedup_token is not None
+    assert urgent.deferred is False
+    assert urgent.events == (high,)
+    assert urgent.priority_bypass is True
+    assert urgent.dedup_token is not None
+    assert tuple(episode.risk_type for episode in urgent.current_state) == (
+        "heavy_rain",
+    )
+
+    after_quiet_hours = plan_risk_delivery(
+        (high, elevated),
+        mode="immediate",
+        local_datetime=_local(8),
+        previous_state=urgent.current_state,
+        quiet_hours_start=22,
+        quiet_hours_end=7,
+    )
+
+    assert after_quiet_hours.priority_bypass is False
+    assert after_quiet_hours.events == (elevated,)
+    assert tuple(change.risk_type for change in after_quiet_hours.changes) == (
+        "strong_wind",
+    )
 
 
 def test_daily_digest_uses_one_local_date_token_for_material_change() -> None:
