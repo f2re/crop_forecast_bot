@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
+from src.domain.marker_catalog import get_pest_marker
+
 PestCalculationMethod = Literal["daily_average", "single_sine_horizontal"]
 PestBiofixType = Literal[
     "first_eggs",
@@ -30,6 +32,7 @@ class PestModel:
     name_ru: str
     scientific_name: str
     crop_keys: tuple[str, ...]
+    marker_keys: tuple[str, ...]
     biofix_type: PestBiofixType
     biofix_mode: PestBiofixMode
     biofix_label: str
@@ -80,6 +83,13 @@ COLORADO_POTATO_BEETLE = PestModel(
     name_ru="Колорадский жук",
     scientific_name="Leptinotarsa decemlineata",
     crop_keys=("potato",),
+    marker_keys=(
+        "air_daily_temperature",
+        "degree_day_accumulation",
+        "field_observation_biofix",
+        "continuous_completed_series",
+        "forecast_separation",
+    ),
     biofix_type="first_eggs",
     biofix_mode="user_observation",
     biofix_label="первая найденная кладка яиц",
@@ -185,6 +195,13 @@ BLACK_CUTWORM = PestModel(
     name_ru="Совка ипсилон (чёрная совка)",
     scientific_name="Agrotis ipsilon",
     crop_keys=("corn",),
+    marker_keys=(
+        "air_daily_temperature",
+        "degree_day_accumulation",
+        "pheromone_trap_biofix",
+        "continuous_completed_series",
+        "forecast_separation",
+    ),
     biofix_type="significant_moth_catch",
     biofix_mode="user_observation",
     biofix_label="значимый улов бабочек в феромонной ловушке",
@@ -289,6 +306,14 @@ SEEDCORN_MAGGOT_SOIL = PestModel(
     name_ru="Ростковая муха",
     scientific_name="Delia platura",
     crop_keys=("corn", "soy"),
+    marker_keys=(
+        "soil_temperature_0_to_7cm",
+        "degree_day_accumulation",
+        "upper_temperature_cutoff",
+        "calendar_biofix",
+        "continuous_completed_series",
+        "forecast_separation",
+    ),
     biofix_type="calendar_jan1",
     biofix_mode="calendar",
     biofix_label="календарное начало накопления 1 января",
@@ -392,3 +417,62 @@ def next_stage(model: PestModel, current: PestStage) -> PestStage | None:
         if stage.key == current.key:
             return model.stages[index + 1] if index + 1 < len(model.stages) else None
     raise ValueError("Стадия не входит в модель вредителя.")
+
+
+def validate_pest_model_markers() -> None:
+    required_driver = {
+        "air_2m": "air_daily_temperature",
+        "soil_0_to_7cm": "soil_temperature_0_to_7cm",
+    }
+    required_biofix = {
+        "first_eggs": "field_observation_biofix",
+        "significant_moth_catch": "pheromone_trap_biofix",
+        "calendar_jan1": "calendar_biofix",
+    }
+
+    for model in PEST_MODELS.values():
+        if not model.marker_keys:
+            raise RuntimeError(
+                f"Модель {model.key} не имеет проверяемых погодных маркеров."
+            )
+        markers = tuple(get_pest_marker(key) for key in model.marker_keys)
+        forbidden = [
+            marker.key for marker in markers if marker.status == "candidate_unlinked"
+        ]
+        if forbidden:
+            raise RuntimeError(
+                f"Модель {model.key} связана с недопущенными кандидатами: "
+                + ", ".join(forbidden)
+            )
+        weather_drivers = [
+            marker
+            for marker in markers
+            if marker.role == "weather_driver" and marker.status == "implemented"
+        ]
+        if not weather_drivers:
+            raise RuntimeError(
+                f"Модель {model.key} не имеет реализованного погодного driver."
+            )
+        expected_driver = required_driver[model.temperature_driver]
+        if expected_driver not in model.marker_keys:
+            raise RuntimeError(
+                f"Модель {model.key} не объявляет driver {expected_driver}."
+            )
+        expected_biofix = required_biofix[model.biofix_type]
+        if expected_biofix not in model.marker_keys:
+            raise RuntimeError(
+                f"Модель {model.key} не объявляет biofix {expected_biofix}."
+            )
+        if "degree_day_accumulation" not in model.marker_keys:
+            raise RuntimeError(
+                f"Модель {model.key} не объявляет температурное накопление."
+            )
+        if model.upper_threshold_c is not None and (
+            "upper_temperature_cutoff" not in model.marker_keys
+        ):
+            raise RuntimeError(
+                f"Модель {model.key} не объявляет верхний температурный предел."
+            )
+
+
+validate_pest_model_markers()
