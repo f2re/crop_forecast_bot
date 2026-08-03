@@ -196,12 +196,14 @@ async def _load_delivery_state(
     *,
     field_id: int,
     model: str,
+    delivery_mode: str,
 ) -> tuple[RiskEpisodeState, ...]:
     async with session_factory() as session:
         state = await load_risk_delivery_state(
             session,
             field_id=field_id,
             model=model,
+            delivery_mode=delivery_mode,
         )
     return () if state is None else state.episodes
 
@@ -211,6 +213,7 @@ async def _store_delivery_state(
     *,
     field_id: int,
     model: str,
+    delivery_mode: str,
     episodes: tuple[RiskEpisodeState, ...],
     observed_at: datetime,
     notified_at: datetime | None = None,
@@ -220,6 +223,7 @@ async def _store_delivery_state(
             session,
             field_id=field_id,
             model=model,
+            delivery_mode=delivery_mode,
             episodes=episodes,
             observed_at=observed_at,
             notified_at=notified_at,
@@ -387,6 +391,7 @@ async def check_weather_risk_alerts(
                             session_factory,
                             field_id=target.field_id,
                             model=forecast.meta.model,
+                            delivery_mode=delivery_mode,
                         )
                     )
                     decision = plan_risk_delivery(
@@ -412,6 +417,7 @@ async def check_weather_risk_alerts(
                                 session_factory,
                                 field_id=target.field_id,
                                 model=forecast.meta.model,
+                                delivery_mode=delivery_mode,
                                 episodes=decision.current_state,
                                 observed_at=forecast.meta.retrieved_at,
                             )
@@ -497,6 +503,7 @@ async def check_weather_risk_alerts(
                             session_factory,
                             field_id=target.field_id,
                             model=forecast.meta.model,
+                            delivery_mode=delivery_mode,
                             episodes=decision.current_state,
                             observed_at=forecast.meta.retrieved_at,
                             notified_at=notified_at,
