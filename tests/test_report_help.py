@@ -52,7 +52,8 @@ def test_phase_help_is_a_confirmation_prompt_not_an_automatic_prediction() -> No
     assert "прошло <b>110 сут.</b>" in text
     assert "посев, всходы или высадка рассады" in text
     assert "открытый грунт или теплица" in text
-    assert "не заменит наблюдение без подтверждения" in text
+    assert "не заменяется без нажатия пользователя" in text
+    assert "правило интерфейса, а не биологический порог" in text
 
 
 def test_sources_help_distinguishes_gridded_data_from_field_measurements() -> None:
