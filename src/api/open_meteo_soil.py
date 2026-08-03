@@ -33,7 +33,10 @@ logger = logging.getLogger(__name__)
 
 FORECAST_URL = "https://api.open-meteo.com/v1/ecmwf"
 ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
-FORECAST_VARIABLE = "soil_temperature_0_to_7cm"
+# Open-Meteo intentionally uses different identifiers for the first ECMWF
+# layer and the generic Historical Weather API. Keep them explicit and covered
+# by contract tests instead of guessing one universal alias.
+FORECAST_VARIABLE = "soil_temperature_0_7cm"
 HISTORY_VARIABLE = "soil_temperature_0_to_7cm"
 PAST_DAYS = 14
 FORECAST_DAYS = 7
@@ -42,7 +45,7 @@ _CACHE_TTL_SECONDS = 60 * 60
 _HISTORY_CACHE_TTL_SECONDS = 24 * 60 * 60
 _MIN_VALID_HOURS = 18
 _REQUEST_SEMAPHORE = asyncio.Semaphore(2)
-_FORECAST_SOURCE = "Open-Meteo ECMWF IFS, температура почвы 0–7 см"
+_FORECAST_SOURCE = "Open-Meteo ECMWF Best Match, температура почвы 0–7 см"
 _HISTORY_SOURCE = "Open-Meteo ERA5-Land, температура почвы 0–7 см"
 
 
@@ -314,7 +317,7 @@ def _fetch_sync(
                     )
                 history_source = _HISTORY_SOURCE
                 notes.append(
-                    "историческая часть — ERA5-Land, текущая и будущая — ECMWF IFS"
+                    "историческая часть — ERA5-Land, текущая и будущая — ECMWF"
                 )
 
         daily = _merge_daily(history, forecast)
@@ -335,10 +338,10 @@ def _fetch_sync(
             )
 
         source = _FORECAST_SOURCE
-        model = "ecmwf_ifs_hres"
+        model = "ecmwf_best_match"
         if history_source is not None:
             source = f"{_HISTORY_SOURCE} + {_FORECAST_SOURCE}"
-            model = "era5_land+ecmwf_ifs_hres"
+            model = "era5_land+ecmwf_best_match"
         meta = SoilTemperatureMeta(
             latitude=float(forecast_payload.get("latitude", latitude)),
             longitude=float(forecast_payload.get("longitude", longitude)),
@@ -349,7 +352,9 @@ def _fetch_sync(
             depth_label="модельный слой почвы 0–7 см",
             retrieved_at=retrieved_at,
             cache_ttl_seconds=_CACHE_TTL_SECONDS,
-            spatial_resolution_km=9.0,
+            # The ECMWF endpoint can select different ECMWF configurations and
+            # does not identify the chosen grid in the response payload.
+            spatial_resolution_km=None,
         )
         return SoilTemperatureData(
             meta=meta,
