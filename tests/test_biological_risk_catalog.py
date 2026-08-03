@@ -51,6 +51,19 @@ def test_host_specific_models_are_not_silently_transferred() -> None:
     assert "watermelon" not in cucurbit_scab.crop_keys
 
 
+def test_current_source_routes_are_canonical() -> None:
+    assert CANDIDATES_BY_KEY["tomato_consperse_stink_bug"].source_urls == (
+        "https://ipm.ucanr.edu/agriculture/tomato/stink-bugs/",
+    )
+    assert CANDIDATES_BY_KEY["cucurbit_scab"].source_urls == (
+        "https://extension.umn.edu/disease-management/scab-cucurbits",
+    )
+    assert CANDIDATES_BY_KEY["alfalfa_anthracnose"].source_urls == (
+        "https://extension.umn.edu/forage-pest-management/"
+        "anthracnose-stem-and-crown-rot",
+    )
+
+
 def test_crop_lookup_returns_only_declared_links() -> None:
     sunflower_keys = {item.key for item in candidates_for_crop("sunflower")}
     mustard_keys = {item.key for item in candidates_for_crop("mustard")}
