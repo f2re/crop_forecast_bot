@@ -88,6 +88,7 @@ jobs:
             scripts/help.sh \
             scripts/install-systemd.sh \
             scripts/install-github-deploy-trigger.sh \
+            scripts/configure-github-deploy.sh \
             scripts/verify-production.sh \
             scripts/verify-backup-restore.sh
 
