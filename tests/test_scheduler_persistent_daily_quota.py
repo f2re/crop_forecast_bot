@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
@@ -8,12 +9,13 @@ import pytest
 import src.bot.scheduler as scheduler_module
 from src.bot.scheduler import check_weather_risk_alerts
 from src.database.notification_targets import EnabledNotificationTarget
+from src.database.risk_delivery_state import StoredRiskDeliveryState
 from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.infrastructure.coordination import MemoryCoordination
 
 
-class FakeProvider:
+class ElevatedHeatProvider:
     async def fetch(self, latitude: float, longitude: float) -> EnsembleForecastData:
         rows = [
             {
@@ -43,16 +45,13 @@ class FakeProvider:
         )
 
 
-class RecordingBot:
+class NoTelegramBot:
     async def send_message(self, chat_id: int, text: str) -> object:
-        raise AssertionError("deferred digest must not call Telegram")
+        raise AssertionError("Telegram must not be called")
 
 
-@pytest.mark.asyncio
-async def test_daily_quota_deferral_does_not_advance_postgresql_baseline(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target = EnabledNotificationTarget(
+def _target() -> EnabledNotificationTarget:
+    return EnabledNotificationTarget(
         telegram_id=1001,
         field_id=42,
         field_name="Северное",
@@ -71,11 +70,11 @@ async def test_daily_quota_deferral_does_not_advance_postgresql_baseline(
         quiet_hours_end=None,
         crop_keys=("wheat",),
     )
-    delivery_states: list[str] = []
-    stored_baselines: list[object] = []
 
+
+def _patch_shared(monkeypatch: pytest.MonkeyPatch, delivery_states: list[str]) -> None:
     async def fake_targets(session_factory, **kwargs):
-        return [target]
+        return [_target()]
 
     async def fake_record(session_factory, **kwargs):
         return StoredRiskRun(
@@ -84,34 +83,16 @@ async def test_daily_quota_deferral_does_not_advance_postgresql_baseline(
             created=True,
         )
 
-    async def fake_load(session_factory, **kwargs):
-        return None
-
-    async def fake_store(session_factory, **kwargs):
-        stored_baselines.append(kwargs["episodes"])
-
     async def fake_delivery(session_factory, *, state, **kwargs):
         delivery_states.append(state)
         return True
-
-    async def fake_send_transition(*args, **kwargs):
-        assert kwargs["daily_quota_key"] is not None
-        assert "transition:" in kwargs["transition_key"]
-        return "deferred_daily"
 
     async def fake_prune(session_factory):
         return 0
 
     monkeypatch.setattr(scheduler_module, "_targets", fake_targets)
     monkeypatch.setattr(scheduler_module, "_record_risk_run", fake_record)
-    monkeypatch.setattr(scheduler_module, "_load_delivery_state", fake_load)
-    monkeypatch.setattr(scheduler_module, "_store_delivery_state", fake_store)
     monkeypatch.setattr(scheduler_module, "_set_risk_delivery", fake_delivery)
-    monkeypatch.setattr(
-        scheduler_module,
-        "send_risk_transition_once",
-        fake_send_transition,
-    )
     monkeypatch.setattr(scheduler_module, "_prune_risk_history", fake_prune)
     monkeypatch.setattr(
         scheduler_module,
@@ -121,20 +102,96 @@ async def test_daily_quota_deferral_does_not_advance_postgresql_baseline(
             8,
             3,
             16,
-            tzinfo=timezone.utc,
+            tzinfo=ZoneInfo("Europe/Moscow"),
         ),
     )
 
-    coordination = MemoryCoordination(namespace="scheduler-digest-deferral")
+
+@pytest.mark.asyncio
+async def test_postgresql_last_notified_at_blocks_second_daily_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivery_states: list[str] = []
+    stored_baselines: list[object] = []
+    _patch_shared(monkeypatch, delivery_states)
+
+    async def fake_load(session_factory, **kwargs):
+        return StoredRiskDeliveryState(
+            field_id=42,
+            model="gfs_seamless",
+            delivery_mode="digest",
+            episodes=(),
+            last_observed_at=datetime(2026, 8, 3, 6),
+            last_notified_at=datetime(2026, 8, 3, 10),
+        )
+
+    async def fake_store(session_factory, **kwargs):
+        stored_baselines.append(kwargs)
+
+    async def forbidden_transition(*args, **kwargs):
+        raise AssertionError("Redis transition path must not be entered")
+
+    monkeypatch.setattr(scheduler_module, "_load_delivery_state", fake_load)
+    monkeypatch.setattr(scheduler_module, "_store_delivery_state", fake_store)
+    monkeypatch.setattr(
+        scheduler_module,
+        "send_risk_transition_once",
+        forbidden_transition,
+    )
+
+    coordination = MemoryCoordination(namespace="persistent-daily-quota")
     try:
         await check_weather_risk_alerts(
-            RecordingBot(),  # type: ignore[arg-type]
+            NoTelegramBot(),  # type: ignore[arg-type]
             object(),  # type: ignore[arg-type]
             coordination,
-            provider=FakeProvider(),
+            provider=ElevatedHeatProvider(),
         )
     finally:
         await coordination.close()
 
-    assert delivery_states == ["sending", "deferred"]
+    assert delivery_states == ["deferred"]
     assert stored_baselines == []
+
+
+@pytest.mark.asyncio
+async def test_already_delivered_transition_restores_durable_quota(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    delivery_states: list[str] = []
+    stored_baselines: list[dict[str, object]] = []
+    _patch_shared(monkeypatch, delivery_states)
+
+    async def fake_load(session_factory, **kwargs):
+        return None
+
+    async def fake_store(session_factory, **kwargs):
+        stored_baselines.append(kwargs)
+
+    async def recovered_transition(*args, **kwargs):
+        return "already_delivered"
+
+    monkeypatch.setattr(scheduler_module, "_load_delivery_state", fake_load)
+    monkeypatch.setattr(scheduler_module, "_store_delivery_state", fake_store)
+    monkeypatch.setattr(
+        scheduler_module,
+        "send_risk_transition_once",
+        recovered_transition,
+    )
+
+    coordination = MemoryCoordination(namespace="persistent-daily-recovery")
+    try:
+        await check_weather_risk_alerts(
+            NoTelegramBot(),  # type: ignore[arg-type]
+            object(),  # type: ignore[arg-type]
+            coordination,
+            provider=ElevatedHeatProvider(),
+        )
+    finally:
+        await coordination.close()
+
+    assert delivery_states == ["sending", "deduplicated"]
+    assert len(stored_baselines) == 1
+    notified_at = stored_baselines[0]["notified_at"]
+    assert isinstance(notified_at, datetime)
+    assert notified_at.tzinfo is timezone.utc

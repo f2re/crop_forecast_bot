@@ -8,6 +8,7 @@ import pytest
 import src.bot.scheduler as scheduler_module
 from src.bot.scheduler import check_weather_risk_alerts
 from src.database.notification_targets import EnabledNotificationTarget
+from src.database.risk_delivery_state import StoredRiskDeliveryState
 from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.domain.risk_delivery import RiskEpisodeState
@@ -126,10 +127,10 @@ async def test_scheduler_calculates_each_saved_enabled_field(
         field_id: int,
         model: str,
         delivery_mode: str,
-    ) -> tuple[RiskEpisodeState, ...]:
+    ) -> StoredRiskDeliveryState | None:
         assert model == "gfs_seamless"
         assert delivery_mode == "immediate"
-        return semantic_states.get(field_id, ())
+        return None
 
     async def fake_store(
         session_factory,

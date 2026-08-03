@@ -8,6 +8,7 @@ import pytest
 import src.bot.scheduler as scheduler_module
 from src.bot.scheduler import check_weather_risk_alerts
 from src.database.notification_targets import EnabledNotificationTarget
+from src.database.risk_delivery_state import StoredRiskDeliveryState
 from src.database.risk_history import StoredRiskRun
 from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.domain.risk_delivery import RiskEpisodeState
@@ -111,6 +112,8 @@ def _patch_common(
     delivery_states: list[str] = []
     semantic_states: list[tuple[RiskEpisodeState, ...]] = []
     baseline: tuple[RiskEpisodeState, ...] = ()
+    last_observed_at = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    last_notified_at: datetime | None = None
 
     async def fake_targets(
         session_factory,
@@ -138,11 +141,20 @@ def _patch_common(
         field_id: int,
         model: str,
         delivery_mode: str,
-    ) -> tuple[RiskEpisodeState, ...]:
+    ) -> StoredRiskDeliveryState | None:
         assert field_id == 42
         assert model == "gfs_seamless"
         assert delivery_mode == target.risk_delivery_mode
-        return baseline
+        if not baseline and last_notified_at is None:
+            return None
+        return StoredRiskDeliveryState(
+            field_id=42,
+            model=model,
+            delivery_mode=target.risk_delivery_mode,
+            episodes=baseline,
+            last_observed_at=last_observed_at,
+            last_notified_at=last_notified_at,
+        )
 
     async def fake_store(
         session_factory,
@@ -154,12 +166,15 @@ def _patch_common(
         observed_at: datetime,
         notified_at: datetime | None = None,
     ) -> None:
-        nonlocal baseline
+        nonlocal baseline, last_observed_at, last_notified_at
         assert field_id == 42
         assert model == "gfs_seamless"
         assert delivery_mode == target.risk_delivery_mode
         assert observed_at.tzinfo is not None
         baseline = episodes
+        last_observed_at = observed_at
+        if notified_at is not None:
+            last_notified_at = notified_at
         semantic_states.append(episodes)
 
     async def fake_delivery(
@@ -249,10 +264,7 @@ async def test_weather_risk_scheduler_defers_non_high_change_in_quiet_hours(
 ) -> None:
     delivery_states, stored_flags, semantic_states = _patch_common(
         monkeypatch,
-        target=_target(
-            quiet_hours_start=22,
-            quiet_hours_end=7,
-        ),
+        target=_target(quiet_hours_start=22, quiet_hours_end=7),
         hour=23,
         signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
     )
