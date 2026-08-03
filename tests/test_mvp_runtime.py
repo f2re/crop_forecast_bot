@@ -26,6 +26,7 @@ async def test_mvp_dispatcher_loads_farmer_flow_without_rag_by_default() -> None
             "profile",
             "crops",
             "season-calendar",
+            "phenology",
             "report-help",
             "report",
             "risks",
