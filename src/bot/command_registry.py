@@ -42,6 +42,12 @@ class CommandRegistrationSnapshot:
     commands: tuple[tuple[str, str], ...]
 
 
+def telegram_type_value(value: object) -> str:
+    """Return the wire value for aiogram/Pydantic string enums."""
+
+    return str(getattr(value, "value", value))
+
+
 def build_bot_commands() -> list[BotCommand]:
     return [
         BotCommand(command=command, description=description)
@@ -64,7 +70,7 @@ def _registration_scopes():
 
 
 def _scope_name(scope) -> str:
-    return str(scope.type)
+    return telegram_type_value(scope.type)
 
 
 async def inspect_bot_commands(bot: Bot) -> tuple[CommandRegistrationSnapshot, ...]:
@@ -117,7 +123,7 @@ async def verify_bot_commands(bot: Bot) -> tuple[CommandRegistrationSnapshot, ..
         raise RuntimeError(f"Telegram command verification failed: {details}")
 
     menu_button = await bot.get_chat_menu_button()
-    if getattr(menu_button, "type", None) != "commands":
+    if telegram_type_value(getattr(menu_button, "type", "")) != "commands":
         raise RuntimeError(
             "Telegram menu button is not configured to open the command list"
         )
