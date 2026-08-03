@@ -42,8 +42,8 @@ def _hourly_payload(
     }
 
 
-def test_open_meteo_endpoints_use_their_exact_soil_variable_names() -> None:
-    assert FORECAST_VARIABLE == "soil_temperature_0_7cm"
+def test_open_meteo_endpoints_use_live_soil_variable_contract() -> None:
+    assert FORECAST_VARIABLE == "soil_temperature_0_to_7cm"
     assert HISTORY_VARIABLE == "soil_temperature_0_to_7cm"
     assert _forecast_params(45.75, 33.875)["hourly"] == FORECAST_VARIABLE
     assert (
