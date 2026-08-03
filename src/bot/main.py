@@ -15,11 +15,12 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand, TelegramObject
+from aiogram.types import TelegramObject
 
 from config.settings import Settings, get_settings
 from src.api.open_meteo import close_open_meteo_resources
 from src.api.open_meteo_ensemble import close_open_meteo_ensemble_resources
+from src.bot.command_registry import configure_bot_commands
 from src.bot.errors import handle_runtime_error
 from src.bot.middlewares import CallbackIdempotencyMiddleware
 from src.bot.pest_scheduler import register_pest_monitoring_job
@@ -62,29 +63,6 @@ def build_storage(settings: Settings) -> BaseStorage:
         return RedisStorage.from_url(settings.redis_url)
     logger.warning("REDIS_URL is not set; FSM state will not survive restart")
     return MemoryStorage()
-
-
-async def configure_bot_commands(bot: Bot) -> None:
-    await bot.set_my_commands(
-        [
-            BotCommand(command="start", description="Открыть главное меню"),
-            BotCommand(command="crops", description="Культуры активного поля"),
-            BotCommand(command="report", description="Агроотчёт выбранной культуры"),
-            BotCommand(command="risks", description="Проверить погодные условия"),
-            BotCommand(command="pests", description="Наблюдение за вредителями"),
-            BotCommand(command="soil", description="Температура почвы 0–7 см"),
-            BotCommand(
-                command="markers",
-                description="ОЯ и погодные маркеры вредителей",
-            ),
-            BotCommand(
-                command="history",
-                description="Показать историю предупреждений",
-            ),
-            BotCommand(command="help", description="Показать справку"),
-            BotCommand(command="cancel", description="Отменить текущий ввод"),
-        ]
-    )
 
 
 def build_dispatcher(
@@ -233,9 +211,9 @@ async def run(*, startup_smoke: bool = False) -> None:
                 await stop_scheduler()
             return
 
-        # Do not report systemd readiness until the real Telegram token and
-        # network path have been accepted by Telegram. This prevents a release
-        # with an invalid token or blocked egress from passing the health check.
+        # Do not report systemd readiness until Telegram accepts the token,
+        # command scopes and menu button. This prevents a healthy-looking release
+        # whose slash-command menu is actually stale or hidden by an old scope.
         identity = await bot.get_me()
         logger.info(
             "Telegram API verified for bot id=%s username=%s",
