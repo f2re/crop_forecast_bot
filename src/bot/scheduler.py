@@ -19,6 +19,7 @@ from src.api.open_meteo_ensemble import (
 )
 from src.application.agro_report import generate_agro_report
 from src.application.ports.risk import RiskForecastProvider
+from src.application.risk_notification_delivery import send_risk_transition_once
 from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
 from src.bot.report_presentation import compact_agro_report
 from src.bot.risk_alerts import (
@@ -295,24 +296,6 @@ async def _send_once(
     return True
 
 
-def _should_commit_delivery_state(
-    *,
-    sent: bool,
-    delivery_mode: str,
-    priority_bypass: bool,
-) -> bool:
-    """Keep an undelivered normal digest change pending for the next local day.
-
-    Immediate and priority-bypass transitions use state-specific Redis keys. If
-    one of those keys already exists, another worker has accepted the same
-    transition and the PostgreSQL baseline may safely advance. A normal digest
-    uses one key for the whole local day; a later material change must therefore
-    remain pending instead of being consumed by that daily key.
-    """
-
-    return sent or delivery_mode != "digest" or priority_bypass
-
-
 async def check_weather_risk_alerts(
     bot: Bot,
     session_factory: SessionFactory,
@@ -453,10 +436,17 @@ async def check_weather_risk_alerts(
                             )
                         signal_ids.append(signal_id)
                     selected_signal_ids = tuple(signal_ids)
-                    alert_key = (
-                        "notification:weather-risk-digest:"
+                    transition_key = (
+                        "notification:weather-risk-transition:"
                         f"{target.telegram_id}:{target.field_id}:"
                         f"{decision.dedup_token}"
+                    )
+                    daily_quota_key = (
+                        "notification:weather-risk-digest-day:"
+                        f"{target.telegram_id}:{target.field_id}:"
+                        f"{decision.daily_quota_token}"
+                        if decision.daily_quota_token is not None
+                        else None
                     )
 
                     async def send_digest(
@@ -488,12 +478,19 @@ async def check_weather_risk_alerts(
                         )
                     )
                     try:
-                        sent = await job_guard.run(
-                            _send_once(
+                        outcome = await job_guard.run(
+                            send_risk_transition_once(
                                 coordination,
-                                alert_key,
-                                _ENSEMBLE_RISK_DEDUP_TTL,
-                                send_digest,
+                                transition_key=transition_key,
+                                transition_ttl_seconds=_ENSEMBLE_RISK_DEDUP_TTL,
+                                reservation_ttl_seconds=_NOTIFICATION_RESERVATION_TTL,
+                                sender=send_digest,
+                                daily_quota_key=daily_quota_key,
+                                daily_quota_ttl_seconds=(
+                                    _DAILY_DIGEST_DEDUP_TTL
+                                    if daily_quota_key is not None
+                                    else None
+                                ),
                             )
                         )
                     except LeaseLostError:
@@ -507,20 +504,24 @@ async def check_weather_risk_alerts(
                             )
                         )
                         raise
-                    notified_at = datetime.now(timezone.utc) if sent else None
+
+                    notified_at = (
+                        datetime.now(timezone.utc) if outcome == "sent" else None
+                    )
+                    delivery_state = {
+                        "sent": "sent",
+                        "already_delivered": "deduplicated",
+                        "deferred_daily": "deferred",
+                    }[outcome]
                     await job_guard.run(
                         _set_many_risk_deliveries(
                             session_factory,
                             signal_ids=selected_signal_ids,
-                            state="sent" if sent else "deduplicated",
+                            state=delivery_state,
                             notified_at=notified_at,
                         )
                     )
-                    if _should_commit_delivery_state(
-                        sent=sent,
-                        delivery_mode=delivery_mode,
-                        priority_bypass=decision.priority_bypass,
-                    ):
+                    if outcome != "deferred_daily":
                         await job_guard.run(
                             _store_delivery_state(
                                 session_factory,
