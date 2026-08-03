@@ -26,11 +26,16 @@ class FieldKeyboardItem(Protocol):
 def get_main_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🌦 Агроотчёт", callback_data="agro_report")],
-        [InlineKeyboardButton(text="⚠️ Погодные риски", callback_data="risk_overview")],
-        [InlineKeyboardButton(text="🕘 История рисков", callback_data="risk_history")],
+        [InlineKeyboardButton(text="⚠️ Погодные условия", callback_data="risk_overview")],
+        [
+            InlineKeyboardButton(
+                text="🕘 История предупреждений",
+                callback_data="risk_history",
+            )
+        ],
         [InlineKeyboardButton(text="🗺 Мои поля", callback_data="fields")],
         [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
-        [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
+        [InlineKeyboardButton(text="📅 Дата и стадия", callback_data="season")],
     ]
     if get_settings().rag_enabled:
         rows.append(
@@ -47,7 +52,12 @@ def get_field_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="⌨️ Ввести координаты", callback_data="field_manual")],
-            [InlineKeyboardButton(text="📱 Отправить геолокацию", callback_data="field_location")],
+            [
+                InlineKeyboardButton(
+                    text="📱 Отправить геолокацию",
+                    callback_data="field_location",
+                )
+            ],
             [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
         ]
     )
@@ -95,10 +105,20 @@ def get_field_actions_keyboard(
         rows.extend(
             [
                 [InlineKeyboardButton(text="🌦 Агроотчёт", callback_data="agro_report")],
-                [InlineKeyboardButton(text="⚠️ Погодные риски", callback_data="risk_overview")],
-                [InlineKeyboardButton(text="🕘 История рисков", callback_data="risk_history")],
+                [
+                    InlineKeyboardButton(
+                        text="⚠️ Погодные условия",
+                        callback_data="risk_overview",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🕘 История предупреждений",
+                        callback_data="risk_history",
+                    )
+                ],
                 [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
-                [InlineKeyboardButton(text="📅 Сезон и фаза", callback_data="season")],
+                [InlineKeyboardButton(text="📅 Дата и стадия", callback_data="season")],
             ]
         )
     rows.extend(
@@ -191,12 +211,22 @@ def get_season_keyboard(*, has_start: bool, has_phase: bool) -> InlineKeyboardMa
     date_action = "Изменить дату" if has_start else "Выбрать дату посева"
     rows = [
         [InlineKeyboardButton(text=f"📅 {date_action}", callback_data="season_start_set")],
-        [InlineKeyboardButton(text="🌿 Указать фактическую фазу", callback_data="season_phase")],
+        [
+            InlineKeyboardButton(
+                text="🌿 Указать фактическую стадию",
+                callback_data="season_phase",
+            )
+        ],
         [InlineKeyboardButton(text="🌱 Культуры поля", callback_data="crop_choose")],
     ]
     if has_phase:
         rows.append(
-            [InlineKeyboardButton(text="🧹 Удалить указанную фазу", callback_data="phase_clear")]
+            [
+                InlineKeyboardButton(
+                    text="🧹 Удалить указанную стадию",
+                    callback_data="phase_clear",
+                )
+            ]
         )
     rows.append([InlineKeyboardButton(text="◀️ В меню", callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -206,9 +236,89 @@ def get_phase_keyboard(crop_key: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for index, phase in enumerate(get_crop_phases(crop_key)):
         builder.button(text=phase, callback_data=f"phase_pick:{index}")
-    builder.button(text="◀️ К сезону", callback_data="season")
+    builder.button(text="◀️ К дате и стадии", callback_data="season")
     builder.adjust(1)
     return builder.as_markup()
+
+
+def get_report_result_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🌡 Как считается тепло",
+                    callback_data="report_help:heat",
+                ),
+                InlineKeyboardButton(
+                    text="💧 Как считаются осадки",
+                    callback_data="report_help:water",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🌦 Что такое ГТК",
+                    callback_data="report_help:htc",
+                ),
+                InlineKeyboardButton(
+                    text="🌿 Почему стадия не меняется",
+                    callback_data="report_help:phase",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🧾 Источники и точность",
+                    callback_data="report_help:sources",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🌿 Уточнить стадию",
+                    callback_data="season_phase",
+                )
+            ],
+            [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
+        ]
+    )
+
+
+def get_risk_result_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="ℹ️ Как читать варианты прогноза",
+                    callback_data="report_help:risk",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🌿 Уточнить стадию",
+                    callback_data="season_phase",
+                )
+            ],
+            [InlineKeyboardButton(text="◀️ В меню", callback_data="menu")],
+        ]
+    )
+
+
+def get_report_help_keyboard(*, back_callback: str) -> InlineKeyboardMarkup:
+    back_label = (
+        "◀️ К погодным условиям"
+        if back_callback == "risk_overview"
+        else "◀️ К отчёту"
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=back_label, callback_data=back_callback)],
+            [
+                InlineKeyboardButton(
+                    text="🌿 Уточнить стадию",
+                    callback_data="season_phase",
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")],
+        ]
+    )
 
 
 def get_settings_keyboard(
@@ -249,13 +359,13 @@ def get_settings_keyboard(
             ],
             [
                 InlineKeyboardButton(
-                    text=f"{risk_action} предупреждения о рисках",
+                    text=f"{risk_action} предупреждения о погоде",
                     callback_data=risk_callback,
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text=f"Режим рисков: {mode_label}",
+                    text=f"Как присылать предупреждения: {mode_label}",
                     callback_data=mode_callback,
                 )
             ],
@@ -276,9 +386,9 @@ def get_risk_delivery_mode_keyboard(
 ) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     options = (
-        ("immediate", "Сразу при новом сигнале"),
-        ("digest", "Один дайджест в сутки"),
-        ("high_only", "Только высокий риск"),
+        ("immediate", "Сразу при новом предупреждении"),
+        ("digest", "Одна сводка в сутки"),
+        ("high_only", "Только важные предупреждения"),
     )
     for mode, label in options:
         marker = "✅ " if mode == current_mode else ""

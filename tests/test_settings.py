@@ -33,7 +33,7 @@ def test_rag_button_is_hidden_by_default(monkeypatch) -> None:
     keyboard = get_main_keyboard()
     labels = [button.text for row in keyboard.inline_keyboard for button in row]
     assert "🤖 Агросоветник" not in labels
-    assert "🕘 История рисков" in labels
+    assert "🕘 История предупреждений" in labels
 
     monkeypatch.setenv("RAG_ENABLED", "true")
     get_settings.cache_clear()
