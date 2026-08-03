@@ -11,11 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.agro.crop_catalog import get_crop_name
 from src.api.open_meteo import OpenMeteoError
 from src.application.agro_report import generate_agro_report
-from src.bot.keyboards import (
-    get_field_keyboard,
-    get_main_keyboard,
-    get_report_result_keyboard,
-)
+from src.bot.keyboards import get_field_keyboard, get_main_keyboard
+from src.bot.pest_keyboards import get_report_result_with_pests_keyboard
 from src.bot.report_presentation import compact_agro_report
 from src.bot.telegram_text import answer_html, edit_html
 from src.database.crud import get_field_context, update_field_metadata
@@ -95,7 +92,7 @@ async def agro_report(callback: CallbackQuery, session: AsyncSession) -> None:
         await edit_html(
             progress,
             _compact(updated_context, phenology, report),
-            reply_markup=get_report_result_keyboard(),
+            reply_markup=get_report_result_with_pests_keyboard(),
         )
     except OpenMeteoError:
         logger.warning(
@@ -149,5 +146,5 @@ async def agro_report_command(message: Message, session: AsyncSession) -> None:
     await answer_html(
         message,
         _compact(context, phenology, report),
-        reply_markup=get_report_result_keyboard(),
+        reply_markup=get_report_result_with_pests_keyboard(),
     )
