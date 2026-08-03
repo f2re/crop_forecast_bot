@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import timezone
 from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
@@ -185,7 +184,7 @@ def format_soil_temperature_help() -> str:
             "• Модель обновляется до 4 раз в сутки; ответ бота хранится не более часа.",
             "• Значение за вчера — архив модели, а не измерение метеостанции.",
             "• Точную выбранную сетку API не сообщает; доступные расчёты ECMWF "
-            "имеют шаг примерно 9–25 км.",
+            "имеют шаг примерно 9–28 км.",
             "",
             "<b>Как использовать</b>",
             "• Смотреть общий прогрев или охлаждение верхнего слоя.",
