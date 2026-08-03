@@ -115,9 +115,11 @@ def parse_late_blight_payload(
 
 
 def _fetch_sync(latitude: float, longitude: float) -> LateBlightWeatherData:
-    cache_path = str(get_settings().open_meteo_cache_path) + "-late-blight"
+    base_cache_path = get_settings().open_meteo_cache_path
+    base_cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path = base_cache_path.parent / f"{base_cache_path.name}-late-blight"
     session = requests_cache.CachedSession(
-        cache_path,
+        str(cache_path),
         expire_after=CACHE_TTL_SECONDS,
     )
     client = retry(
