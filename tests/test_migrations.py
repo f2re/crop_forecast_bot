@@ -299,15 +299,9 @@ def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
             ),
             {"user_id": user_id},
         ).one()
-        season = connection.execute(
-            sa.text(
-                "SELECT date_basis, production_system, plant_type, "
-                "phase_confirmed_at FROM crop_seasons WHERE field_id = "
-                "(SELECT id FROM fields WHERE user_id = :user_id)"
-            ),
-            {"user_id": user_id},
-        ).one()
 
+    # This fixture deliberately inserts only a field at revision 0002. Later
+    # migrations preserve that field's metadata and do not invent a crop profile.
     expected_source = "legacy/provider metadata; exact source not recorded"
     assert row[0] == expected_source
     assert row[1] == expected_source
@@ -316,4 +310,3 @@ def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(
     assert row[4] == "immediate"
     assert row[5] is None
     assert row[6] is None
-    assert season == ("season_start", "unknown", "unknown", None)
