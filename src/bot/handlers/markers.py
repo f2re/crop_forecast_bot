@@ -271,7 +271,7 @@ async def _show_potato_late_blight(
         )
         return
 
-    if resolved.enabled:
+    if resolved.enabled and outlook.available:
         try:
             await acknowledge_manual_late_blight_view(
                 session,
