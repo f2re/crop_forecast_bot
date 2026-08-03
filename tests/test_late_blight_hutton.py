@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -22,7 +22,7 @@ def _day_rows(
     zone = ZoneInfo(timezone_name)
     start_local = datetime.combine(local_day, time.min, tzinfo=zone)
     end_local = datetime.combine(
-        local_day.replace(day=local_day.day) + pd.Timedelta(days=1),
+        local_day + timedelta(days=1),
         time.min,
         tzinfo=zone,
     )
@@ -116,7 +116,9 @@ def test_missing_hour_is_fail_closed() -> None:
         today=date(2026, 7, 22),
     )
 
-    second_day = next(day for day in outlook.days if day.local_date == date(2026, 7, 21))
+    second_day = next(
+        day for day in outlook.days if day.local_date == date(2026, 7, 21)
+    )
     assert second_day.expected_hours == 24
     assert second_day.valid_hours == 23
     assert second_day.complete is False
