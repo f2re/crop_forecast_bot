@@ -12,6 +12,8 @@ from src.database.pest_monitoring import (
     mark_pest_monitor_checked,
     upsert_pest_monitor,
 )
+from src.database.pest_rollover import rollover_calendar_pest_monitor
+from src.domain.pests import get_pest_model
 
 
 @pytest.mark.asyncio
@@ -138,5 +140,64 @@ async def test_pest_model_is_not_transferred_to_another_crop(tmp_path) -> None:
                     pest_key="colorado_potato_beetle",
                     biofix_date=date(2026, 6, 1),
                 )
+            with pytest.raises(ValueError, match="не применяется"):
+                await upsert_pest_monitor(
+                    session,
+                    2003,
+                    pest_key="seedcorn_maggot_soil",
+                    biofix_date=date(2026, 1, 1),
+                )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_calendar_model_rolls_to_new_year_and_resets_notifications(tmp_path) -> None:
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'pest-rollover.sqlite'}"
+    )
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    try:
+        async with sessions() as session:
+            await save_coordinates(session, 2004, 45.75, 33.875)
+            await update_user_crop(session, 2004, "corn")
+            saved = await upsert_pest_monitor(
+                session,
+                2004,
+                pest_key="seedcorn_maggot_soil",
+                biofix_date=date(2025, 1, 1),
+            )
+            assert saved.monitor_id is not None
+            await mark_pest_monitor_checked(
+                session,
+                saved.monitor_id,
+                local_date=date(2025, 4, 10),
+                stage_event_key="old-stage",
+                advance_event_key="old-advance",
+            )
+
+        async with sessions() as session:
+            changed = await rollover_calendar_pest_monitor(
+                session,
+                saved.monitor_id,
+                model=get_pest_model("seedcorn_maggot_soil"),
+                biofix_date=date(2026, 1, 1),
+            )
+            assert changed is True
+
+        async with sessions() as session:
+            loaded = await get_active_pest_context(
+                session,
+                2004,
+                "seedcorn_maggot_soil",
+            )
+            assert loaded is not None
+            assert loaded.biofix_date == date(2026, 1, 1)
+            assert loaded.last_checked_local_date is None
+            assert loaded.last_notified_stage is None
+            assert loaded.last_notified_advance is None
     finally:
         await engine.dispose()
