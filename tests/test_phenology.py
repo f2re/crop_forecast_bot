@@ -51,8 +51,9 @@ def test_recent_stage_observation_does_not_trigger_review() -> None:
         timezone_name="Europe/Simferopol",
     )
 
+    # 20:00 UTC is 23:00 on 25 July in the field timezone.
     assert review.needs_review is False
-    assert review.days_since_confirmation == 8
+    assert review.days_since_confirmation == 9
     assert review.next_stage == "Завязывание плодов"
 
 
