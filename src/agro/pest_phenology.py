@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 import pandas as pd
@@ -17,15 +18,12 @@ _COMPLETED_KINDS = frozenset({"observation", "reanalysis", "operational_past"})
 _FORECAST_KINDS = frozenset({"current_forecast", "forecast"})
 
 
-def daily_average_degree_days(
+def _validate_temperature_inputs(
     t_min_c: float,
     t_max_c: float,
-    *,
     lower_threshold_c: float,
-    upper_threshold_c: float | None = None,
-) -> float:
-    """Return one daily heat increment using the transparent max-min method."""
-
+    upper_threshold_c: float | None,
+) -> None:
     values = (t_min_c, t_max_c, lower_threshold_c)
     if not all(pd.notna(value) for value in values):
         raise ValueError("Для расчёта тепла нужны Tmin, Tmax и нижний порог.")
@@ -34,10 +32,79 @@ def daily_average_degree_days(
     if upper_threshold_c is not None and upper_threshold_c <= lower_threshold_c:
         raise ValueError("Верхний порог должен быть выше нижнего.")
 
+
+def daily_average_degree_days(
+    t_min_c: float,
+    t_max_c: float,
+    *,
+    lower_threshold_c: float,
+    upper_threshold_c: float | None = None,
+) -> float:
+    """Return one daily heat increment using the daily-average method."""
+
+    _validate_temperature_inputs(
+        t_min_c,
+        t_max_c,
+        lower_threshold_c,
+        upper_threshold_c,
+    )
     mean_c = (float(t_min_c) + float(t_max_c)) / 2.0
     if upper_threshold_c is not None:
         mean_c = min(mean_c, float(upper_threshold_c))
     return max(0.0, mean_c - float(lower_threshold_c))
+
+
+def _sine_area_above(
+    t_min_c: float,
+    t_max_c: float,
+    threshold_c: float,
+) -> float:
+    """Mean daily area above one threshold for a single sinusoidal cycle."""
+
+    t_min = float(t_min_c)
+    t_max = float(t_max_c)
+    threshold = float(threshold_c)
+    if t_max <= threshold:
+        return 0.0
+    mean_c = (t_min + t_max) / 2.0
+    if t_min >= threshold:
+        return mean_c - threshold
+
+    amplitude = (t_max - t_min) / 2.0
+    if amplitude <= 0:
+        return max(0.0, mean_c - threshold)
+    ratio = min(1.0, max(-1.0, (threshold - mean_c) / amplitude))
+    angle = math.asin(ratio)
+    return (
+        (mean_c - threshold) * (math.pi / 2.0 - angle)
+        + amplitude * math.cos(angle)
+    ) / math.pi
+
+
+def single_sine_horizontal_degree_days(
+    t_min_c: float,
+    t_max_c: float,
+    *,
+    lower_threshold_c: float,
+    upper_threshold_c: float | None = None,
+) -> float:
+    """Return single-sine degree days with a horizontal upper cutoff.
+
+    Development above the upper threshold is held at the rate at the upper
+    threshold. Mathematically this is the area above the lower threshold minus
+    the area above the upper threshold.
+    """
+
+    _validate_temperature_inputs(
+        t_min_c,
+        t_max_c,
+        lower_threshold_c,
+        upper_threshold_c,
+    )
+    value = _sine_area_above(t_min_c, t_max_c, lower_threshold_c)
+    if upper_threshold_c is not None:
+        value -= _sine_area_above(t_min_c, t_max_c, upper_threshold_c)
+    return max(0.0, value)
 
 
 def _prepare_daily(df_daily: pd.DataFrame) -> pd.DataFrame:
@@ -45,7 +112,7 @@ def _prepare_daily(df_daily: pd.DataFrame) -> pd.DataFrame:
     missing = required.difference(df_daily.columns)
     if missing:
         raise ValueError(
-            "Не хватает погодных столбцов: " + ", ".join(sorted(missing))
+            "Не хватает температурных столбцов: " + ", ".join(sorted(missing))
         )
 
     optional = {"data_kind", "data_source", "local_date"}.intersection(
@@ -118,14 +185,23 @@ def _empty_outlook(
 
 
 def _daily_increment(row: pd.Series, model: PestModel) -> float:
-    if model.calculation_method != "daily_average":
-        raise ValueError("Метод расчёта модели вредителя не поддерживается.")
-    return daily_average_degree_days(
-        float(row["t_min"]),
-        float(row["t_max"]),
-        lower_threshold_c=model.lower_threshold_c,
-        upper_threshold_c=model.upper_threshold_c,
-    )
+    kwargs = {
+        "lower_threshold_c": model.lower_threshold_c,
+        "upper_threshold_c": model.upper_threshold_c,
+    }
+    if model.calculation_method == "daily_average":
+        return daily_average_degree_days(
+            float(row["t_min"]),
+            float(row["t_max"]),
+            **kwargs,
+        )
+    if model.calculation_method == "single_sine_horizontal":
+        return single_sine_horizontal_degree_days(
+            float(row["t_min"]),
+            float(row["t_max"]),
+            **kwargs,
+        )
+    raise ValueError("Метод расчёта модели вредителя не поддерживается.")
 
 
 def _continuous_forecast_prefix(
@@ -160,9 +236,9 @@ def calculate_pest_outlook(
     today: date,
     forecast_horizon_days: int = 7,
 ) -> PestOutlook:
-    """Calculate a monitoring window from a user-confirmed biological event.
+    """Calculate a scouting window from an explicit model start point.
 
-    The result predicts temperature-dependent development only. It does not
+    The result estimates temperature-dependent development only. It does not
     infer pest presence, abundance, crop damage or a treatment requirement.
     """
 
@@ -171,7 +247,7 @@ def calculate_pest_outlook(
         return _empty_outlook(
             model,
             biofix_date,
-            "дата первой находки находится в будущем",
+            "точка отсчёта находится в будущем",
         )
     if forecast_horizon_days < 0:
         raise ValueError("Горизонт прогноза не может быть отрицательным.")
