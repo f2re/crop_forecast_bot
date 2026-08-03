@@ -284,7 +284,7 @@ jobs:
           git fetch --no-tags origin "${{ github.base_ref }}"
           changed="$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")"
           printf '%s\n' "${changed}"
-          if grep -Eq '^(\.github/workflows/(ci|provider-smoke)\.yml|requirements[^/]*\.txt|src/(agro/climate_reference|api/open_meteo|api/open_meteo_climate|ops/provider_smoke|ops/climate_smoke)\.py)$' <<<"${changed}"; then
+          if grep -Eq '^(\.github/workflows/(ci|provider-smoke)\.yml|requirements[^/]*\.txt|src/(agro/climate_reference|api/open_meteo|api/open_meteo_climate|api/open_meteo_late_blight|ops/provider_smoke|ops/climate_smoke|ops/late_blight_smoke)\.py)$' <<<"${changed}"; then
             echo 'run=true' >> "${GITHUB_OUTPUT}"
           else
             echo 'run=false' >> "${GITHUB_OUTPUT}"
@@ -315,6 +315,15 @@ jobs:
             --longitude 37.62 \
             --season-start "${season_start}" | tee operational-smoke.json
 
+      - name: Potato late-blight Hutton-input contract
+        if: steps.changes.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python -m src.ops.late_blight_smoke \
+            --latitude 55.75 \
+            --longitude 37.62 | tee late-blight-smoke.json
+
       - name: Homogeneous ERA5 current/reference contract
         if: steps.changes.outputs.run == 'true'
         shell: bash
@@ -334,6 +343,7 @@ jobs:
           name: pr-live-provider-smoke-${{ github.run_id }}
           path: |
             operational-smoke.json
+            late-blight-smoke.json
             climate-smoke.json
           if-no-files-found: warn
           retention-days: 14
