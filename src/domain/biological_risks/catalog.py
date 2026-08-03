@@ -1,6 +1,7 @@
-"""Validated source-backed catalogue of future biological-risk integrations."""
+"""Проверяемый каталог будущих интеграций болезней и вредителей."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from urllib.parse import urlparse
 
@@ -14,11 +15,41 @@ from .types import BiologicalRiskCandidate
 
 CATALOG_CHECKED_ON = date(2026, 8, 3)
 
-INTEGRATION_CANDIDATES: tuple[BiologicalRiskCandidate, ...] = (
+_RAW_INTEGRATION_CANDIDATES: tuple[BiologicalRiskCandidate, ...] = (
     *GRAIN_CANDIDATES,
     *FIELD_CROP_CANDIDATES,
     *ROOT_VEGETABLE_CANDIDATES,
     *FORAGE_CANDIDATES,
+)
+
+# Some current Extension pages use canonical routes that differ from older
+# index slugs. Keep the source modules readable, but expose only the live,
+# verified routes from the public catalogue.
+_CANONICAL_SOURCE_URLS: dict[str, tuple[str, ...]] = {
+    "tomato_consperse_stink_bug": (
+        "https://ipm.ucanr.edu/agriculture/tomato/stink-bugs/",
+    ),
+    "cucurbit_scab": (
+        "https://extension.umn.edu/disease-management/scab-cucurbits",
+    ),
+    "alfalfa_anthracnose": (
+        "https://extension.umn.edu/forage-pest-management/"
+        "anthracnose-stem-and-crown-rot",
+    ),
+}
+
+
+def _canonicalize_sources(
+    item: BiologicalRiskCandidate,
+) -> BiologicalRiskCandidate:
+    source_urls = _CANONICAL_SOURCE_URLS.get(item.key)
+    if source_urls is None:
+        return item
+    return replace(item, source_urls=source_urls)
+
+
+INTEGRATION_CANDIDATES: tuple[BiologicalRiskCandidate, ...] = tuple(
+    _canonicalize_sources(item) for item in _RAW_INTEGRATION_CANDIDATES
 )
 CANDIDATES_BY_KEY: dict[str, BiologicalRiskCandidate] = {
     item.key: item for item in INTEGRATION_CANDIDATES
