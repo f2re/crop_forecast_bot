@@ -182,7 +182,7 @@ def supported_pests_for_crop(crop_key: str) -> tuple[PestModel, ...]:
 def validate_pest_for_crop(pest_key: str, crop_key: str) -> PestModel:
     model = get_pest_model(pest_key)
     if crop_key not in model.crop_keys:
-        raise ValueError("Эта модель не относится к выбранной культуре.")
+        raise ValueError("Эта модель не применяется к выбранной культуре.")
     return model
 
 
