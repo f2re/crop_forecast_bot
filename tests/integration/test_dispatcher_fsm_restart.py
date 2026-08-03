@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from src.bot.main import build_dispatcher
 from src.database.crud import get_field_context
 from src.database.models import Base
+from src.database.phenology import get_active_crop_phenology
 from src.infrastructure.coordination import MemoryCoordination
 from tests.bot_harness import callback_update, make_bot, message_update
 
@@ -91,17 +92,27 @@ async def test_core_fsm_branches_continue_after_storage_reopen(tmp_path) -> None
             callback_update(9, data="season_calendar:manual"),
         )
 
-        # Manual calendar input state survives RedisStorage/client reopen.
+        # Manual date input survives RedisStorage/client reopen.
         await reopen_storage()
         await dispatcher.feed_update(bot, message_update(10, text="15.04.2026"))
 
+        # The pending date and waiting_for_date_basis state survive a second reopen.
+        await reopen_storage()
+        await dispatcher.feed_update(
+            bot,
+            callback_update(11, data="season_basis:sowing"),
+        )
+
         async with sessions() as session:
             restored = await get_field_context(session, 1001)
+            phenology = await get_active_crop_phenology(session, 1001)
         assert restored is not None
+        assert phenology is not None
         assert restored.field_name == "Северное поле"
         assert restored.crop_key == "sunflower"
         assert restored.season_start_date is not None
         assert restored.season_start_date.isoformat() == "2026-04-15"
+        assert phenology.date_basis == "sowing"
     finally:
         await current_storage.close()
         await coordination.close()
