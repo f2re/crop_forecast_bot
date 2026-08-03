@@ -38,6 +38,7 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "risk_forecast_signals",
         "risk_delivery_states",
         "pest_monitors",
+        "biological_monitors",
         "alembic_version",
     }.issubset(inspector.get_table_names())
 
@@ -178,6 +179,25 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
         "updated_at",
     } == pest_columns
 
+    biological_columns = {
+        column["name"]
+        for column in inspector.get_columns("biological_monitors")
+    }
+    assert {
+        "id",
+        "crop_season_id",
+        "model_key",
+        "enabled",
+        "inoculum_context",
+        "state_version",
+        "state_json",
+        "last_checked_local_date",
+        "last_observed_at",
+        "last_notified_at",
+        "created_at",
+        "updated_at",
+    } == biological_columns
+
     field_indexes = {
         index["name"]: index for index in inspector.get_indexes("fields")
     }
@@ -231,10 +251,30 @@ def test_migrations_create_user_field_season_and_revision(tmp_path: Path) -> Non
     assert "ix_pest_monitors_crop_season_id" in pest_indexes
     assert "ix_pest_monitors_enabled" in pest_indexes
 
+    biological_unique_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("biological_monitors")
+    }
+    assert (
+        "uq_biological_monitors_season_model"
+        in biological_unique_constraints
+    )
+    biological_checks = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints("biological_monitors")
+    }
+    assert "ck_biological_monitors_inoculum_context" in biological_checks
+    biological_indexes = {
+        index["name"]: index
+        for index in inspector.get_indexes("biological_monitors")
+    }
+    assert "ix_biological_monitors_enabled" in biological_indexes
+    assert "ix_biological_monitors_observed_at" in biological_indexes
+
     engine = sa.create_engine(f"sqlite:///{database_path.as_posix()}")
     with engine.connect() as connection:
         revision = connection.scalar(sa.text("SELECT version_num FROM alembic_version"))
-    assert revision == expected_schema_revision() == "20260803_0008"
+    assert revision == expected_schema_revision() == "20260803_0009"
 
 
 def test_migrations_adopt_legacy_user_and_backfill_field_settings(
@@ -315,7 +355,7 @@ def test_migrations_adopt_legacy_user_and_backfill_field_settings(
     assert season_row[5] == "unknown"
     assert season_row[6] == "unknown"
     assert season_row[7] is None
-    assert revision == "20260803_0008"
+    assert revision == "20260803_0009"
 
 
 def test_field_metadata_provenance_is_preserved_when_upgrading_from_0002(

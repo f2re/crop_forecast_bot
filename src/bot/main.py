@@ -22,6 +22,10 @@ from src.api.open_meteo import close_open_meteo_resources
 from src.api.open_meteo_ensemble import close_open_meteo_ensemble_resources
 from src.bot.command_registry import configure_bot_commands
 from src.bot.errors import handle_runtime_error
+from src.bot.late_blight_scheduler import (
+    check_late_blight_monitoring,
+    register_late_blight_monitoring_job,
+)
 from src.bot.middlewares import CallbackIdempotencyMiddleware
 from src.bot.pest_scheduler import register_pest_monitoring_job
 from src.bot.scheduler import (
@@ -126,7 +130,7 @@ async def _run_startup_risk_check(
     coordination: CoordinationBackend,
     delay_seconds: int,
 ) -> None:
-    """Evaluate every saved alert-enabled field shortly after a healthy startup."""
+    """Evaluate saved weather and crop-disease monitors after healthy startup."""
 
     await asyncio.sleep(delay_seconds)
     try:
@@ -137,6 +141,13 @@ async def _run_startup_risk_check(
         # A provider outage must not terminate Telegram polling. The scheduler
         # will retry at the next configured cycle and records controlled errors.
         logger.exception("Startup weather-risk screening failed")
+
+    try:
+        await check_late_blight_monitoring(bot, session_factory, coordination)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Startup late-blight monitoring failed")
 
 
 async def run(*, startup_smoke: bool = False) -> None:
@@ -195,6 +206,11 @@ async def run(*, startup_smoke: bool = False) -> None:
             rag_enabled=settings.rag_enabled,
         )
         register_pest_monitoring_job(
+            bot,
+            database.get_session,
+            coordination,
+        )
+        register_late_blight_monitoring_job(
             bot,
             database.get_session,
             coordination,
