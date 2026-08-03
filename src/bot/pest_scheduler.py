@@ -226,6 +226,10 @@ async def check_pest_monitoring(
                     continue
 
                 first = valid_targets[0]
+                calculation_day = _local_datetime(
+                    first.timezone,
+                    now_utc,
+                ).date()
                 try:
                     reports = await job_guard.run(
                         evaluate_pest_monitors(
@@ -233,6 +237,7 @@ async def check_pest_monitoring(
                             first.longitude,
                             tuple(requests),
                             provider=provider,
+                            today=calculation_day,
                         )
                     )
                 except OpenMeteoError as exc:
