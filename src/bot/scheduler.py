@@ -20,6 +20,7 @@ from src.api.open_meteo_ensemble import (
 from src.application.agro_report import generate_agro_report
 from src.application.ports.risk import RiskForecastProvider
 from src.bot.alerts import format_frost_alert, format_frost_data_unavailable
+from src.bot.report_presentation import compact_agro_report
 from src.bot.risk_alerts import (
     format_ensemble_data_unavailable,
     format_ensemble_risk_digest,
@@ -605,9 +606,10 @@ async def send_daily_digest(
                 job_guard.ensure_owned()
                 if due_only and not _daily_digest_is_due(target.timezone):
                     continue
+                local_today = _local_datetime(target.timezone).date()
                 digest_key = (
                     f"notification:digest:{target.telegram_id}:{target.field_id}:"
-                    f"{_local_date(target.timezone)}"
+                    f"{local_today.isoformat()}"
                 )
                 try:
                     report = await job_guard.run(
@@ -620,9 +622,15 @@ async def send_daily_digest(
                             field_name=target.field_name,
                         )
                     )
+                    report_text = compact_agro_report(
+                        report.text,
+                        season_start_date=target.season_start_date,
+                        today=local_today,
+                        source="Open-Meteo",
+                    )
 
                     async def send(
-                        report_text: str = report.text,
+                        report_text: str = report_text,
                         target=target,
                     ) -> object:
                         return await bot.send_message(target.telegram_id, report_text)
