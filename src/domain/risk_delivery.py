@@ -58,6 +58,7 @@ class RiskDeliveryDecision:
     deferred: bool
     reason: str
     dedup_token: str | None
+    daily_quota_token: str | None = None
     priority_bypass: bool = False
 
 
@@ -196,32 +197,6 @@ def _for_mode(
     )
 
 
-def _prioritized(
-    episodes: tuple[RiskEpisodeState, ...],
-    *,
-    limit: int,
-) -> tuple[RiskEpisodeState, ...]:
-    prioritized = sorted(
-        episodes,
-        key=lambda episode: (
-            -_LEVEL_ORDER[episode.highest_level],
-            episode.start_date,
-            _RISK_ORDER[episode.risk_type],
-            episode.end_date,
-        ),
-    )
-    selected = prioritized[:limit]
-    selected.sort(
-        key=lambda episode: (
-            episode.start_date,
-            -_LEVEL_ORDER[episode.highest_level],
-            _RISK_ORDER[episode.risk_type],
-            episode.end_date,
-        )
-    )
-    return tuple(selected)
-
-
 def _canonical(
     episodes: Sequence[RiskEpisodeState],
 ) -> tuple[RiskEpisodeState, ...]:
@@ -248,21 +223,19 @@ def _state_for_changes(
     )
 
 
-def _accepted_priority_state(
+def _accepted_changed_state(
     previous: tuple[RiskEpisodeState, ...],
-    current_high: tuple[RiskEpisodeState, ...],
+    current: tuple[RiskEpisodeState, ...],
     changes: tuple[RiskStateChange, ...],
 ) -> tuple[RiskEpisodeState, ...]:
-    """Advance only the hazard types actually included in a priority message."""
+    """Advance only hazard types actually included in the Telegram message."""
 
     accepted_types = {change.risk_type for change in changes}
     retained = [
         episode for episode in previous if episode.risk_type not in accepted_types
     ]
     retained.extend(
-        episode
-        for episode in current_high
-        if episode.risk_type in accepted_types
+        episode for episode in current if episode.risk_type in accepted_types
     )
     return _canonical(retained)
 
@@ -354,8 +327,9 @@ def plan_risk_delivery(
     create another Telegram message. Elapsed dates are trimmed from both states,
     so the ordinary passage of a heat period does not look like a forecast change.
 
-    ``previous_state`` is the last successfully accepted delivery baseline from
-    PostgreSQL. It may be empty after a forecast explicitly cleared all signals.
+    ``max_events`` limits changed hazard types in one Telegram message, not
+    individual days or periods. Unselected hazard types remain in the previous
+    baseline and are therefore delivered by a later run instead of being lost.
     """
 
     if max_events <= 0:
@@ -370,16 +344,10 @@ def plan_risk_delivery(
         previous_state,
         as_of_date=local_datetime.date(),
     )
-    current_state = _prioritized(
-        _for_mode(current_full_state, mode=resolved_mode),
-        limit=max_events,
-    )
-    old_state = _prioritized(
-        _for_mode(previous_full_state, mode=resolved_mode),
-        limit=max_events,
-    )
-    changes = _changes(old_state, current_state)
-    if not changes:
+    current_state = _for_mode(current_full_state, mode=resolved_mode)
+    old_state = _for_mode(previous_full_state, mode=resolved_mode)
+    all_changes = _changes(old_state, current_state)
+    if not all_changes:
         return RiskDeliveryDecision(
             events=(),
             changes=(),
@@ -394,24 +362,18 @@ def plan_risk_delivery(
         quiet_hours_start,
         quiet_hours_end,
     )
-    current_high_state = _prioritized(
-        tuple(
-            episode
-            for episode in current_full_state
-            if episode.highest_level == "high"
-        ),
-        limit=max_events,
+    current_high_state = tuple(
+        episode
+        for episode in current_full_state
+        if episode.highest_level == "high"
     )
-    previous_high_state = _prioritized(
-        tuple(
-            episode
-            for episode in previous_full_state
-            if episode.highest_level == "high"
-        ),
-        limit=max_events,
+    previous_high_state = tuple(
+        episode
+        for episode in previous_full_state
+        if episode.highest_level == "high"
     )
-    high_changes = _changes(previous_high_state, current_high_state)
-    high_priority_change = bool(high_changes) and bool(current_high_state)
+    all_high_changes = _changes(previous_high_state, current_high_state)
+    high_priority_change = bool(all_high_changes) and bool(current_high_state)
     priority_bypass = high_priority_change and (
         quiet or resolved_mode == "digest"
     )
@@ -427,31 +389,37 @@ def plan_risk_delivery(
         )
 
     if priority_bypass:
-        selected_state = _state_for_changes(current_high_state, high_changes)
+        selected_changes = all_high_changes[:max_events]
+        selected_state = _state_for_changes(current_high_state, selected_changes)
         selected_previous_state = _state_for_changes(
             previous_high_state,
-            high_changes,
+            selected_changes,
         )
-        selected_changes = high_changes
-        accepted_state = _accepted_priority_state(
+        accepted_state = _accepted_changed_state(
             previous_full_state,
             current_high_state,
-            high_changes,
+            selected_changes,
         )
     else:
-        selected_state = _state_for_changes(current_state, changes)
-        selected_previous_state = _state_for_changes(old_state, changes)
-        selected_changes = changes
-        accepted_state = current_full_state
+        selected_changes = all_changes[:max_events]
+        selected_state = _state_for_changes(current_state, selected_changes)
+        selected_previous_state = _state_for_changes(old_state, selected_changes)
+        accepted_state = _accepted_changed_state(
+            previous_full_state,
+            current_full_state,
+            selected_changes,
+        )
 
     selected_events = _events_for_episodes(events, selected_state)
-    if resolved_mode == "digest" and not priority_bypass:
-        dedup_token = f"daily:{local_datetime.date().isoformat()}"
-    else:
-        dedup_token = _transition_token(
-            selected_previous_state,
-            selected_state,
-        )
+    dedup_token = _transition_token(
+        selected_previous_state,
+        selected_state,
+    )
+    daily_quota_token = (
+        f"daily:{local_datetime.date().isoformat()}"
+        if resolved_mode == "digest" and not priority_bypass
+        else None
+    )
 
     return RiskDeliveryDecision(
         events=selected_events,
@@ -464,5 +432,6 @@ def plan_risk_delivery(
             else "существенное изменение прогноза готово к доставке"
         ),
         dedup_token=dedup_token,
+        daily_quota_token=daily_quota_token,
         priority_bypass=priority_bypass,
     )

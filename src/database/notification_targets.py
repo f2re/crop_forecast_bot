@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 
 from sqlalchemy import and_, select
@@ -8,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import CropSeason, Field, User
 from src.domain.risk_delivery import RiskDeliveryMode, validate_risk_delivery_mode
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +36,94 @@ class EnabledNotificationTarget:
     production_system: str = "unknown"
     plant_type: str = "unknown"
     phase_confirmed_at: datetime | None = None
+    field_ids: tuple[int, ...] = ()
+    field_names: tuple[str, ...] = ()
+
+
+def _weather_location_key(target: EnabledNotificationTarget) -> tuple[object, ...]:
+    """Group accidental duplicate field cards without merging their database rows.
+
+    Five decimal places are about one metre in latitude and sufficiently strict
+    for duplicate coordinates copied from the same Telegram location. Delivery
+    preferences remain part of the key: two deliberately different policies are
+    not silently combined.
+    """
+
+    return (
+        target.telegram_id,
+        round(target.latitude, 5),
+        round(target.longitude, 5),
+        target.timezone,
+        target.risk_delivery_mode,
+        target.quiet_hours_start,
+        target.quiet_hours_end,
+    )
+
+
+def collapse_weather_notification_targets(
+    targets: list[EnabledNotificationTarget],
+) -> list[EnabledNotificationTarget]:
+    """Return one weather target for duplicate cards of the same point.
+
+    A coordinate point can already contain multiple crop seasons. Creating a
+    second field card with the same coordinates should therefore not duplicate a
+    location-wide heat, rain or wind alert. The lowest field id owns the
+    persistent delivery baseline; all field names and crops remain visible in
+    the combined Telegram message.
+    """
+
+    groups: dict[tuple[object, ...], list[EnabledNotificationTarget]] = {}
+    for target in targets:
+        groups.setdefault(_weather_location_key(target), []).append(target)
+
+    collapsed: list[EnabledNotificationTarget] = []
+    for group in groups.values():
+        ordered = sorted(group, key=lambda item: item.field_id)
+        primary = ordered[0]
+        field_ids = tuple(item.field_id for item in ordered)
+        field_names = tuple(dict.fromkeys(item.field_name for item in ordered))
+        crop_keys = tuple(
+            dict.fromkeys(
+                crop
+                for item in ordered
+                for crop in (item.crop_keys or (item.selected_crop,))
+                if crop
+            )
+        )
+        phases = tuple(
+            dict.fromkeys(
+                item.phenological_phase
+                for item in ordered
+                if item.phenological_phase
+            )
+        )
+        combined_name = " / ".join(field_names)
+        if len(combined_name) > 120:
+            combined_name = combined_name[:117].rstrip() + "…"
+
+        if len(ordered) > 1:
+            logger.warning(
+                "Collapsed duplicate weather targets for Telegram user %s: "
+                "field ids %s at %.5f, %.5f",
+                primary.telegram_id,
+                field_ids,
+                primary.latitude,
+                primary.longitude,
+            )
+
+        collapsed.append(
+            replace(
+                primary,
+                field_name=combined_name,
+                crop_keys=crop_keys or (primary.selected_crop,),
+                phenological_phase=phases[0] if len(phases) == 1 else None,
+                field_ids=field_ids,
+                field_names=field_names,
+            )
+        )
+
+    collapsed.sort(key=lambda item: (item.telegram_id, item.field_id))
+    return collapsed
 
 
 async def list_enabled_notification_targets(
@@ -46,6 +137,10 @@ async def list_enabled_notification_targets(
     ``Field.is_active`` is intentionally not used here. The active field is a
     Telegram navigation concept; background monitoring must continue for all
     explicitly enabled fields owned by the user.
+
+    Location-wide weather alerts collapse accidental duplicate field cards with
+    identical coordinates and delivery settings. Crop-specific daily reports
+    remain separate.
     """
     statement = (
         select(
@@ -136,6 +231,12 @@ async def list_enabled_notification_targets(
                 production_system=row.production_system or "unknown",
                 plant_type=row.plant_type or "unknown",
                 phase_confirmed_at=row.phase_confirmed_at,
+                field_ids=(row.field_id,),
+                field_names=(row.field_name,),
             ),
         )
-    return list(targets.values())
+
+    resolved = list(targets.values())
+    if frost_alerts_only and not daily_digest_only:
+        return collapse_weather_notification_targets(resolved)
+    return resolved
