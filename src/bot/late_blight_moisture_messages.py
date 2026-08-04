@@ -67,7 +67,7 @@ def _night_parts(night: LateBlightNightMoistureAssessment) -> list[str]:
         )
     if night.fog_hours:
         parts.append(
-            f"туман/видимость <1 км {night.fog_hours} ч"
+            f"туман/видимость &lt;1 км {night.fog_hours} ч"
         )
     if night.precipitation_hours:
         parts.append(f"осадки {night.precipitation_hours} ч")
@@ -141,7 +141,7 @@ def format_compact_night_moisture(
     if maximum_saturation:
         parts.append(f"почти насыщенный воздух до {maximum_saturation} ч/ночь")
     if fog_nights:
-        parts.append(f"туман или видимость <1 км в {fog_nights} ноч.")
+        parts.append(f"туман или видимость &lt;1 км в {fog_nights} ноч.")
     if precipitation_nights:
         parts.append(f"осадки в {precipitation_nights} ноч.")
     if drops:
