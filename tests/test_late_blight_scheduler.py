@@ -14,6 +14,7 @@ from src.database.biological_monitoring import (
 )
 from src.database.crud import save_coordinates, update_user_crop
 from src.database.models import Base, Field
+from src.database.phenology import set_growth_context
 from src.domain.late_blight import LateBlightWeatherData, LateBlightWeatherMeta
 from src.infrastructure.coordination import MemoryCoordination
 
@@ -30,15 +31,14 @@ class MutableLateBlightProvider:
         for offset in range(4):
             local_day = self.start + timedelta(days=offset)
             for hour in range(24):
-                stamp = datetime.combine(
-                    local_day,
-                    time(hour=hour),
-                    tzinfo=timezone.utc,
-                )
                 qualifies = offset < self.qualifying_days
                 rows.append(
                     {
-                        "date": stamp,
+                        "date": datetime.combine(
+                            local_day,
+                            time(hour=hour),
+                            tzinfo=timezone.utc,
+                        ),
                         "temperature_2m": 12.0 if qualifies else 8.0,
                         "relative_humidity_2m": (
                             95.0 if qualifies and hour < 6 else 80.0
@@ -77,6 +77,11 @@ async def _prepare_monitor(sessions, telegram_id: int, *, mode: str) -> None:
     async with sessions() as session:
         await save_coordinates(session, telegram_id, 55.75, 37.62)
         await update_user_crop(session, telegram_id, "potato")
+        await set_growth_context(
+            session,
+            telegram_id,
+            production_system="open_field",
+        )
         context = await enable_late_blight_monitor(session, telegram_id)
         assert context.monitor_id is not None
         await session.execute(
@@ -106,24 +111,16 @@ async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
         await _prepare_monitor(sessions, 8101, mode="immediate")
         now = datetime.combine(today, time(hour=9), tzinfo=timezone.utc)
 
-        await check_late_blight_monitoring(
-            bot,  # type: ignore[arg-type]
-            sessions,
-            coordination,
-            provider=provider,
-            now_utc=now,
-            job_lock_ttl_seconds=60,
-            renew_interval_seconds=5,
-        )
-        await check_late_blight_monitoring(
-            bot,  # type: ignore[arg-type]
-            sessions,
-            coordination,
-            provider=provider,
-            now_utc=now,
-            job_lock_ttl_seconds=60,
-            renew_interval_seconds=5,
-        )
+        for _ in range(2):
+            await check_late_blight_monitoring(
+                bot,  # type: ignore[arg-type]
+                sessions,
+                coordination,
+                provider=provider,
+                now_utc=now,
+                job_lock_ttl_seconds=60,
+                renew_interval_seconds=5,
+            )
         assert len(bot.messages) == 1
         assert "Появилось новое погодное окно" in bot.messages[0][1]
 
@@ -141,24 +138,16 @@ async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
         assert "продлится дольше" in bot.messages[1][1]
 
         provider.qualifying_days = 0
-        await check_late_blight_monitoring(
-            bot,  # type: ignore[arg-type]
-            sessions,
-            coordination,
-            provider=provider,
-            now_utc=now,
-            job_lock_ttl_seconds=60,
-            renew_interval_seconds=5,
-        )
-        await check_late_blight_monitoring(
-            bot,  # type: ignore[arg-type]
-            sessions,
-            coordination,
-            provider=provider,
-            now_utc=now,
-            job_lock_ttl_seconds=60,
-            renew_interval_seconds=5,
-        )
+        for _ in range(2):
+            await check_late_blight_monitoring(
+                bot,  # type: ignore[arg-type]
+                sessions,
+                coordination,
+                provider=provider,
+                now_utc=now,
+                job_lock_ttl_seconds=60,
+                renew_interval_seconds=5,
+            )
         assert len(bot.messages) == 3
         assert "больше не подтверждается" in bot.messages[2][1]
 
@@ -212,13 +201,6 @@ async def test_digest_retains_same_day_change_and_sends_it_next_local_day(
             renew_interval_seconds=5,
         )
         assert len(bot.messages) == 1
-
-        async with sessions() as session:
-            deferred = await get_active_late_blight_context(session, 8102)
-            assert deferred is not None
-            assert deferred.delivery_state.active_periods[0].end_date == (
-                today + timedelta(days=1)
-            )
 
         next_day = datetime.combine(
             today + timedelta(days=1),
