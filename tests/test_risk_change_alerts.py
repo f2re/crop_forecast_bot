@@ -43,7 +43,7 @@ def _outlook(*events: RiskEvent) -> RiskOutlook:
     )
 
 
-def test_digest_explains_heat_extension() -> None:
+def test_digest_explains_heat_extension_concisely() -> None:
     events = tuple(_event(date(2026, 8, day)) for day in range(5, 11))
     change = RiskStateChange(
         risk_type="heat",
@@ -79,7 +79,8 @@ def test_digest_explains_heat_extension() -> None:
     assert "Что изменилось" in text
     assert "продлится дольше" in text
     assert "до 10 августа вместо 8 августа" in text
-    assert "не создают повторное сообщение" in text
+    assert "не создают повторное сообщение" not in text
+    assert "Надёжность" not in text
 
 
 def test_digest_explains_cleared_future_heat_once() -> None:

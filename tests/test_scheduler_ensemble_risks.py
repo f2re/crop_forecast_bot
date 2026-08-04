@@ -244,15 +244,15 @@ async def test_weather_risk_scheduler_persists_before_sending_and_reuses_db_stat
     assert len(bot.messages) == 1
     chat_id, text = bot.messages[0]
     assert chat_id == 1001
-    assert "Погодные условия, требующие внимания" in text
+    assert "Погода: Северное" in text
     assert "Что изменилось" in text
     assert "Сильные осадки" in text
-    assert "22 из 31 вариантов модели" in text
-    assert "Пшеница" in text
-    assert "Картофель" in text
-    assert "вероятность повреждения растений" in text
-    assert "пересекли" not in text
-    assert "%" not in text
+    assert "🟡" in text
+    assert "Пшеница, Картофель" in text
+    assert "22 из 31" not in text
+    assert "вероятность повреждения растений" not in text
+    assert "Надёжность" not in text
+    assert len(text) < 700
     assert delivery_states == ["sending", "sent"]
     assert len(semantic_states) == 2
     assert semantic_states[0] == semantic_states[1]
@@ -317,7 +317,9 @@ async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
     text = bot.messages[0][1]
     assert "Сильные осадки" in text
     assert "Сильные порывы ветра" in text
-    assert "один дайджест в сутки при существенном изменении" in text
+    assert "Действие:" in text
+    assert "один дайджест" not in text
+    assert "Режим уведомлений" not in text
     assert delivery_states == ["sending", "sending", "sent", "sent"]
     assert len(semantic_states) == 1
 
@@ -360,5 +362,6 @@ async def test_weather_risk_scheduler_reports_clear_once(
     assert len(bot.messages) == 2
     assert "больше не подтверждается" in bot.messages[1][1]
     assert "больше не подтверждаются" in bot.messages[1][1]
+    assert "🟢" in bot.messages[1][1]
     assert delivery_states == ["sending", "sent"]
     assert semantic_states[-1] == ()

@@ -82,19 +82,18 @@ async def test_generate_and_format_manual_risk_overview_for_farmer() -> None:
     )
 
     assert provider.calls == [(55.75, 37.62)]
-    assert "Погодные условия, требующие внимания" in text
-    assert "Сильные осадки" in text
-    assert "20 из 31 вариантов модели" in text
-    assert "суточная сумма осадков" in text
-    assert "согласованность" in text
-    assert "Культуры на точке" in text
-    assert "Томат" in text
-    assert "Картофель" in text
-    assert "не процент повреждения культуры" in text
-    assert "пересекли" not in text
-    assert "P10" not in text
-    assert "Что делать сейчас" in text
-    assert len(text) <= 4096
+    assert "Погодные риски: Северное" in text
+    assert "🔴" in text
+    assert "Сильные осадки — действовать" in text
+    assert "осадки 2–40 мм" in text
+    assert "Действие:" in text
+    assert "Томат, Картофель" in text
+    assert "Данные: ансамбль GFS" in text
+    assert "вариант" not in text
+    assert "Как читать прогноз" not in text
+    assert "Надёжность данных" not in text
+    assert "Когда проверить снова" not in text
+    assert len(text) < 900
 
 
 @pytest.mark.asyncio
@@ -115,7 +114,7 @@ async def test_manual_overview_explains_convection_without_hail_claim() -> None:
 
     assert "Неустойчивая атмосфера" in text
     assert "CAPE" in text
-    assert "не доказывает грозу или град" in text
+    assert "не прогноз грозы" in text
     assert "вероятность града" not in text
 
 
@@ -135,8 +134,9 @@ async def test_manual_overview_distinguishes_valid_no_signal() -> None:
 
     assert overview.outlook.available is True
     assert overview.outlook.events == ()
-    assert "общие погодные пороги внимания не достигнуты" in text
-    assert "Локальные явления всё равно возможны" in text
+    assert "🟢" in text
+    assert "Существенных погодных рисков не выявлено" in text
+    assert "обычный контроль поля" in text
 
 
 @pytest.mark.asyncio
@@ -156,5 +156,6 @@ async def test_manual_overview_fails_closed_for_unavailable_outlook() -> None:
         crop="wheat",
     )
 
-    assert "Анализ не выполнен" in text
-    assert "Отсутствие полного ансамбля" in text
+    assert "⚪" in text
+    assert "Данные временно недоступны" in text
+    assert "проверьте официальный прогноз" in text
