@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pytest
 
 from src.domain.late_blight import (
     LateBlightWeatherData,
@@ -49,10 +50,11 @@ def _hourly_days(
     precipitation = [0.0] * len(timestamps)
 
     for index, timestamp in enumerate(local):
-        if timestamp.date() == start_day + timedelta(days=1) and timestamp.hour in {3, 4}:
+        is_target_night = timestamp.date() == start_day + timedelta(days=1)
+        if is_target_night and timestamp.hour in {3, 4}:
             weather_code[index] = 45
             visibility[index] = 600.0
-        if timestamp.date() == start_day + timedelta(days=1) and timestamp.hour == 5:
+        if is_target_night and timestamp.hour == 5:
             precipitation[index] = 0.4
 
     return pd.DataFrame(
@@ -102,7 +104,7 @@ def test_night_context_describes_temperature_drop_saturation_fog_and_rain() -> N
     assert night.night_minimum_temperature_c == 11.0
     assert night.day_to_night_drop_c == 13.0
     assert night.maximum_relative_humidity_percent == 97.0
-    assert night.minimum_dewpoint_depression_c == 0.6
+    assert night.minimum_dewpoint_depression_c == pytest.approx(0.6)
     assert night.near_saturation_hours >= 10
     assert night.fog_hours == 2
     assert night.precipitation_hours == 1
