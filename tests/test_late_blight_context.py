@@ -19,6 +19,7 @@ from src.database.biological_monitoring import disable_late_blight_monitor
 from src.database.crud import save_coordinates, update_user_crop
 from src.database.models import Base
 from src.database.phenology import set_growth_context
+from src.domain.late_blight import LateBlightPeriod
 from src.domain.late_blight_delivery import (
     LateBlightDeliveryState,
     LateBlightEpisodeState,
@@ -96,14 +97,23 @@ async def test_context_requires_enabled_open_field_potato_monitor(tmp_path) -> N
 
 
 def test_context_change_is_a_high_priority_semantic_transition() -> None:
-    period = LateBlightEpisodeState(date(2026, 8, 5), date(2026, 8, 7))
+    previous_period = LateBlightEpisodeState(
+        date(2026, 8, 5),
+        date(2026, 8, 7),
+    )
+    current_period = LateBlightPeriod(
+        start_date=date(2026, 8, 5),
+        end_date=date(2026, 8, 7),
+        day_count=3,
+        data_kind="forecast",
+    )
     previous = LateBlightDeliveryState(
-        active_periods=(period,),
+        active_periods=(previous_period,),
         withdrawn_periods=(),
         inoculum_context="unknown",
     )
     decision = plan_late_blight_delivery(
-        (),
+        (current_period,),
         previous_state=previous,
         inoculum_context="regional_alert_confirmed",
         mode="high_only",
@@ -112,8 +122,6 @@ def test_context_change_is_a_high_priority_semantic_transition() -> None:
         quiet_hours_end=7,
     )
 
-    # The period naturally remains active on 05.08; only the user-provided
-    # context changes and may bypass quiet/digest delivery.
     assert decision.change is not None
     assert decision.change.kind == "context_confirmed"
     assert decision.priority_bypass is True
