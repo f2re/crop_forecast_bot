@@ -70,7 +70,7 @@ def _format_change(change: RiskStateChange) -> str:
         )
     if not current:
         return (
-            f"• {emoji} <b>{name}</b>: период "
+            f"• {emoji} <b>{name}</b>: ранее ожидавшийся период "
             f"{html.escape(_episodes_label(previous))} больше не подтверждается."
         )
 
@@ -166,7 +166,7 @@ def format_ensemble_risk_digest(
     )
 
     if changes:
-        lines.extend(["", "<b>Изменение прогноза</b>"])
+        lines.extend(["", "<b>Что изменилось</b>"])
         lines.extend(_format_change(change) for change in changes)
 
     if periods:
