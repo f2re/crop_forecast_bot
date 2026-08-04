@@ -11,6 +11,7 @@ from src.database.biological_monitoring import (
     get_active_late_blight_context,
     save_late_blight_delivery_state,
 )
+from src.database.late_blight_context import set_late_blight_inoculum_context
 from src.database.phenology import get_active_crop_phenology
 from src.domain.late_blight import LateBlightOutlook
 from src.domain.late_blight_delivery import (
@@ -51,6 +52,17 @@ async def enable_open_field_late_blight_monitor(
 ) -> LateBlightMonitorContext:
     await require_open_field_late_blight_scope(session, telegram_id)
     return await enable_late_blight_monitor(session, telegram_id)
+
+
+async def set_open_field_late_blight_inoculum_context(
+    session: AsyncSession,
+    telegram_id: int,
+    value: str,
+) -> LateBlightMonitorContext:
+    """Persist user-provided context without presenting it as a diagnosis."""
+
+    await require_open_field_late_blight_scope(session, telegram_id)
+    return await set_late_blight_inoculum_context(session, telegram_id, value)
 
 
 async def acknowledge_manual_late_blight_view(
