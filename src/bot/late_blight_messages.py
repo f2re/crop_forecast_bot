@@ -4,6 +4,7 @@ import html
 from datetime import date
 from zoneinfo import ZoneInfo
 
+from src.bot.late_blight_moisture_messages import format_night_moisture_section
 from src.domain.late_blight import LateBlightDayAssessment, LateBlightOutlook
 
 
@@ -103,6 +104,8 @@ def format_potato_late_blight_screening(
         lines.extend(["", "<b>Проверка по суткам</b>"])
         lines.extend(_day_line(day) for day in diagnostic_days)
 
+    lines.extend(format_night_moisture_section(outlook))
+
     local_retrieved = outlook.retrieved_at.astimezone(ZoneInfo(outlook.timezone))
     timezone_label = local_retrieved.tzname() or outlook.timezone
     lines.extend(
@@ -117,8 +120,9 @@ def format_potato_late_blight_screening(
             "• нижнюю сторону листьев и быстро увеличивающиеся водянистые пятна;",
             "• падалицу картофеля и места хранения отбракованных клубней.",
             "",
-            "⚠️ Температура и влажность взяты из модельной сетки на высоте 2 м. "
-            "Это не влажность внутри ботвы, не увлажнение листа и не диагноз.",
+            "⚠️ Температура, RH, точка росы, видимость и осадки взяты из "
+            "модельной сетки для открытого воздуха. Это не микроклимат внутри "
+            "ботвы и не измерение увлажнения листа.",
             "Благоприятная погода без источника инфекции не доказывает заражение. "
             "Бот не назначает препарат, срок или дозу обработки.",
             "",
