@@ -17,6 +17,7 @@ from src.application.late_blight_monitoring import (
     acknowledge_manual_late_blight_view,
     enable_open_field_late_blight_monitor,
     require_open_field_late_blight_scope,
+    set_open_field_late_blight_inoculum_context,
 )
 from src.application.late_blight_screening import (
     generate_potato_late_blight_screening,
@@ -39,6 +40,7 @@ from src.database.biological_monitoring import (
     get_active_late_blight_context,
 )
 from src.database.crud import get_field_context
+from src.domain.late_blight_delivery import InoculumContext
 
 logger = logging.getLogger(__name__)
 router = Router(name="marker-catalog")
@@ -51,6 +53,20 @@ _AGROMETEOROLOGICAL_SOURCE_URL = (
 )
 _HUTTON_SOURCE_URL = (
     "https://ahdb.org.uk/knowledge-library/late-blight-management-in-potatoes"
+)
+_CONTEXT_LABELS: dict[InoculumContext, str] = {
+    "unknown": "подтверждённого источника нет",
+    "regional_alert_confirmed": "пользователь указал региональное сообщение",
+    "nearby_outbreak_confirmed": "пользователь указал подтверждённый очаг рядом",
+    "field_source_suspected": "пользователь отметил возможный источник на поле",
+    "field_symptoms_observed": "пользователь отметил подозрительные симптомы",
+}
+_CONTEXT_BUTTONS: tuple[tuple[InoculumContext, str], ...] = (
+    ("unknown", "⚪ Нет подтверждённого источника"),
+    ("regional_alert_confirmed", "📣 Есть региональное сообщение"),
+    ("nearby_outbreak_confirmed", "📍 Очаг подтверждён рядом"),
+    ("field_source_suspected", "🥔 Возможный источник на поле"),
+    ("field_symptoms_observed", "🔎 Подозрительные симптомы"),
 )
 
 
@@ -176,6 +192,15 @@ def _late_blight_keyboard(
                 )
             ]
         )
+        if enabled:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="🧭 Источник инфекции",
+                        callback_data="late_blight:context",
+                    )
+                ]
+            )
     else:
         rows.append(
             [
@@ -214,13 +239,77 @@ def _late_blight_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _with_monitor_status(text: str, *, enabled: bool) -> str:
+def _late_blight_context_keyboard(
+    current: InoculumContext,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for value, label in _CONTEXT_BUTTONS:
+        marker = "✅ " if value == current else ""
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"{marker}{label}"[:64],
+                    callback_data=f"late_blight:context:set:{value}",
+                )
+            ]
+        )
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="◀️ К расчёту фитофтороза",
+                    callback_data="late_blight:potato",
+                )
+            ],
+            [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")],
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def format_late_blight_context(
+    context: InoculumContext,
+) -> str:
+    return "\n".join(
+        [
+            "🧭 <b>Источник инфекции фитофтороза</b>",
+            "",
+            "Текущий контекст: "
+            f"<b>{html.escape(_CONTEXT_LABELS[context])}</b>.",
+            "",
+            "Выберите только то, что действительно известно:",
+            "• региональное сообщение — есть проверяемый источник и дата;",
+            "• очаг рядом — заболевание подтверждено специалистом или лабораторией;",
+            "• возможный источник — падалица, отбракованные клубни или заражённые "
+            "остатки только подозреваются;",
+            "• симптомы — пользователь увидел похожие признаки, но диагноз ещё "
+            "не подтверждён.",
+            "",
+            "Контекст может повысить приоритет уведомления при действующем "
+            "погодном окне. Он не изменяет критерий Hutton, не доказывает "
+            "заражение и не является рекомендацией по обработке.",
+        ]
+    )
+
+
+def _with_monitor_status(
+    text: str,
+    *,
+    enabled: bool,
+    inoculum_context: InoculumContext,
+) -> str:
     status = (
         "🔔 Фоновые предупреждения: <b>включены</b>."
         if enabled
         else "🔕 Фоновые предупреждения: <b>выключены</b>."
     )
-    return f"{text}\n\n{status}"
+    context = (
+        "🧭 Контекст: "
+        f"{html.escape(_CONTEXT_LABELS[inoculum_context])}."
+        if enabled
+        else ""
+    )
+    return "\n\n".join(part for part in (text, status, context) if part)
 
 
 async def _edit_section(
@@ -346,6 +435,7 @@ async def _show_potato_late_blight(
                 field_name=resolved.field_name,
             ),
             enabled=resolved.enabled,
+            inoculum_context=resolved.inoculum_context,
         ),
         reply_markup=_late_blight_keyboard(enabled=resolved.enabled),
     )
@@ -445,6 +535,67 @@ async def disable_potato_late_blight_alerts(
         "рассылки, пока наблюдение не будет включено снова.",
         reply_markup=_late_blight_keyboard(enabled=context.enabled),
     )
+
+
+@router.callback_query(F.data == "late_blight:context")
+async def late_blight_context_menu(
+    callback: CallbackQuery,
+    session: AsyncSession,
+) -> None:
+    await callback.answer()
+    if callback.message is None:
+        return
+    try:
+        await require_open_field_late_blight_scope(
+            session,
+            callback.from_user.id,
+        )
+        context = await get_active_late_blight_context(
+            session,
+            callback.from_user.id,
+        )
+        if context is None or context.monitor_id is None or not context.enabled:
+            raise ValueError("Сначала включите предупреждения о фитофторозе.")
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    await edit_html(
+        callback.message,
+        format_late_blight_context(context.inoculum_context),
+        reply_markup=_late_blight_context_keyboard(context.inoculum_context),
+    )
+
+
+@router.callback_query(F.data.startswith("late_blight:context:set:"))
+async def set_late_blight_context(
+    callback: CallbackQuery,
+    session: AsyncSession,
+) -> None:
+    value = (callback.data or "").rsplit(":", maxsplit=1)[-1]
+    try:
+        context = await set_open_field_late_blight_inoculum_context(
+            session,
+            callback.from_user.id,
+            value,
+        )
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    except Exception:
+        logger.exception(
+            "Failed to update late-blight inoculum context for user %s",
+            callback.from_user.id,
+        )
+        await callback.answer("Не удалось сохранить контекст", show_alert=True)
+        return
+
+    message = (
+        "Подтверждение источника снято"
+        if context.inoculum_context == "unknown"
+        else "Контекст сохранён"
+    )
+    await callback.answer(message)
+    await _show_potato_late_blight(callback, session, context=context)
 
 
 @router.callback_query(F.data == "marker_catalog:meteo")
