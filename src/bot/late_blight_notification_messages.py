@@ -4,6 +4,7 @@ import html
 from datetime import date
 from zoneinfo import ZoneInfo
 
+from src.bot.late_blight_moisture_messages import format_compact_night_moisture
 from src.domain.late_blight import LateBlightOutlook
 from src.domain.late_blight_delivery import (
     InoculumContext,
@@ -124,6 +125,12 @@ def format_late_blight_change_notification(
                 ),
             ]
         )
+        night_context = format_compact_night_moisture(
+            outlook,
+            periods=decision.current_state.active_periods,
+        )
+        if night_context is not None:
+            lines.extend(["", night_context])
 
     lines.extend(
         [
@@ -135,8 +142,11 @@ def format_late_blight_change_notification(
             "",
             "Критерий Hutton означает два последовательных местных дня с "
             "Tmin не ниже 10 °C и не менее 6 часов RH ≥90 % в каждый день.",
-            "Модельные температура и RH на высоте 2 м не равны микроклимату "
-            "ботвы или увлажнению листа. Погодное окно не подтверждает наличие "
+            "Резкий перепад температуры не является отдельным критерием: он "
+            "важен лишь когда сопровождается насыщением воздуха, росой, туманом "
+            "или другим длительным увлажнением.",
+            "Модельные параметры открытого воздуха не равны микроклимату ботвы "
+            "или увлажнению листа. Погодное окно не подтверждает наличие "
             "возбудителя, заражение или необходимость обработки.",
         ]
     )
