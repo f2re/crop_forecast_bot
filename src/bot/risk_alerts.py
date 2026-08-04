@@ -92,7 +92,8 @@ def _format_change(change: RiskStateChange) -> str:
             )
         elif new.end_date > old.end_date:
             details.append(
-                f"продлится до {_date_label(new.end_date)} вместо {_date_label(old.end_date)}"
+                f"продлится дольше: до {_date_label(new.end_date)} "
+                f"вместо {_date_label(old.end_date)}"
             )
         if new.highest_level != old.highest_level:
             details.append("уровень сигнала изменился")
@@ -182,7 +183,7 @@ def format_ensemble_risk_digest(
         lines.extend(
             [
                 "",
-                "🟢 <b>Ранее отмеченные риски больше не подтверждаются.</b>",
+                "🟢 <b>Ранее отмеченные условия выше порога больше не подтверждаются.</b>",
                 "Действие: вернитесь к обычному контролю поля.",
             ]
         )
