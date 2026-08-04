@@ -8,36 +8,46 @@ from src.bot.risk_language import (
 from src.domain.risk import RiskEvent
 
 
-def _heat_event(day: int, lead_days: int, members: int = 28) -> RiskEvent:
+def _event(
+    *,
+    risk_type: str = "heat",
+    day: int,
+    lead_days: int,
+    level: str = "high",
+    members: int = 28,
+    p10: float = 31.5,
+    median: float = 34.0,
+    p90: float = 37.5,
+) -> RiskEvent:
     return RiskEvent(
-        risk_type="heat",
+        risk_type=risk_type,  # type: ignore[arg-type]
         event_date=date(2026, 8, day),
         lead_days=lead_days,
-        level="high",
+        level=level,  # type: ignore[arg-type]
         members_exceeding=members,
         valid_members=31,
         member_fraction=members / 31,
-        severe_members_exceeding=20,
-        severe_member_fraction=20 / 31,
-        threshold=32.0,
-        severe_threshold=35.0,
-        unit="°C, Tmax воздуха 2 м",
-        p10=31.5,
-        median=34.0,
-        p90=37.5,
+        severe_members_exceeding=20 if level == "high" else 0,
+        severe_member_fraction=20 / 31 if level == "high" else 0.0,
+        threshold=15.0 if risk_type == "strong_wind" else 32.0,
+        severe_threshold=20.0 if risk_type == "strong_wind" else 35.0,
+        unit="м/с" if risk_type == "strong_wind" else "°C",
+        p10=p10,
+        median=median,
+        p90=p90,
         model="gfs_seamless",
         reliability_note="test",
-        action="Проверьте влагу и перенесите чувствительные работы.",
-        caveat="Порог зависит от культуры и фазы.",
+        action="Техническая длинная рекомендация не должна попадать в сообщение.",
+        caveat="Техническое ограничение не должно попадать в сообщение.",
     )
 
 
 def test_consecutive_hazard_days_are_grouped_into_period() -> None:
     periods = group_risk_events(
         (
-            _heat_event(2, 0),
-            _heat_event(3, 1),
-            _heat_event(5, 3),
+            _event(day=2, lead_days=0),
+            _event(day=3, lead_days=1),
+            _event(day=5, lead_days=3),
         )
     )
 
@@ -47,26 +57,55 @@ def test_consecutive_hazard_days_are_grouped_into_period() -> None:
     assert periods[1].start_date == date(2026, 8, 5)
 
     text = format_risk_period(periods[0])
-    assert "Жара: 2–3 августа" in text
-    assert "28 из 31 вариантов модели" in text
-    assert "основной разброс вариантов" in text
-    assert "Приоритет" in text
-    assert "%" not in text
-    assert "пересекли" not in text
+    assert "🔴" in text
+    assert "Жара — действовать" in text
+    assert "2–3 августа" in text
+    assert "31.5–37.5 °C" in text
+    assert "Действие:" in text
+    assert "вариант" not in text
+    assert "Надёжность" not in text
+    assert "Приоритет" not in text
 
 
-def test_far_signal_is_planning_information_not_call_to_act_now() -> None:
-    period = group_risk_events((_heat_event(14, 12),))[0]
+def test_weak_wind_signal_is_short_and_actionable() -> None:
+    period = group_risk_events(
+        (
+            _event(
+                risk_type="strong_wind",
+                day=7,
+                lead_days=3,
+                level="watch",
+                members=5,
+                p10=9.0,
+                median=11.8,
+                p90=15.2,
+            ),
+        )
+    )[0]
 
     text = format_risk_period(period)
 
-    assert "дальний сигнал" in text
-    assert "только предварительное планирование" in text
-    assert "готовиться сейчас" not in text
-    assert "устойчивый сигнал" not in text
+    assert "🟡" in text
+    assert "Сильные порывы ветра — наблюдать" in text
+    assert "7 августа · порывы 9–15.2 м/с" in text
+    assert "Пока только наблюдайте" in text
+    assert "5 из 31" not in text
+    assert "срок:" not in text
+    assert len(text) < 240
 
 
-def test_multiple_crop_context_does_not_claim_crop_damage() -> None:
+def test_far_signal_is_observation_not_call_to_act_now() -> None:
+    period = group_risk_events((_event(day=14, lead_days=12),))[0]
+
+    text = format_risk_period(period)
+
+    assert "🟡" in text
+    assert "наблюдать" in text
+    assert "действовать" not in text
+    assert "только предварительное планирование" not in text
+
+
+def test_crop_context_is_compact() -> None:
     lines = crop_context_lines(
         crops=("tomato", "potato"),
         selected_crop="tomato",
@@ -74,8 +113,9 @@ def test_multiple_crop_context_does_not_claim_crop_damage() -> None:
     )
     text = "\n".join(lines)
 
-    assert "Томат" in text
-    assert "Картофель" in text
-    assert "Погодные условия общие для точки" in text
-    assert "повреждение каждой культуры отдельно не рассчитано" in text
-    assert "Фаза выбранной культуры" in text
+    assert lines == [
+        "🌱 Томат, Картофель",
+        "🌿 Томат: <b>Цветение</b>",
+    ]
+    assert "повреждение" not in text
+    assert "выбрана" not in text

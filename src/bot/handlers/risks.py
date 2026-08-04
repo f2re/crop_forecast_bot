@@ -24,10 +24,7 @@ router = Router(name="risks")
 async def _build_text(session: AsyncSession, telegram_id: int) -> str:
     context = await get_field_context(session, telegram_id)
     if context is None:
-        return (
-            "Сначала добавьте поле и хотя бы одну культуру. Затем откройте "
-            "«Погодные условия»."
-        )
+        return "Сначала добавьте поле и культуру."
 
     overview = await generate_risk_overview(
         context.latitude,
@@ -46,10 +43,9 @@ async def _build_text(session: AsyncSession, telegram_id: int) -> str:
 
 def _unavailable_text(exc: Exception) -> str:
     return (
-        "⚠️ <b>Погодные условия сейчас не оценены</b>\n\n"
+        "⚪ <b>Погодные риски не рассчитаны</b>\n"
         f"Причина: {html.escape(str(exc))}.\n"
-        "Отсутствие данных не означает отсутствие опасного явления. Проверьте "
-        "официальный прогноз и повторите запрос после обновления данных."
+        "Действие: проверьте официальный прогноз и повторите запрос позже."
     )
 
 
@@ -62,11 +58,7 @@ async def show_risk_overview(
     if callback.message is None:
         return
 
-    await edit_html(
-        callback.message,
-        "⏳ Получаю 31 вариант прогноза и объединяю одинаковые условия "
-        "по периодам…",
-    )
+    await edit_html(callback.message, "⏳ Проверяю прогноз…")
     try:
         text = await _build_text(session, callback.from_user.id)
     except (RiskForecastProviderError, ValueError) as exc:
@@ -88,10 +80,7 @@ async def show_risk_overview(
 async def risk_overview_command(message: Message, session: AsyncSession) -> None:
     if message.from_user is None:
         return
-    await message.answer(
-        "⏳ Получаю 31 вариант прогноза и объединяю одинаковые условия "
-        "по периодам…"
-    )
+    await message.answer("⏳ Проверяю прогноз…")
     try:
         text = await _build_text(session, message.from_user.id)
     except (RiskForecastProviderError, ValueError) as exc:

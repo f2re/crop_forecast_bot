@@ -9,7 +9,6 @@ from src.bot.risk_language import (
     format_risk_period,
     group_risk_events,
     model_label,
-    unique_actions,
 )
 
 _MAX_PERIODS = 5
@@ -23,7 +22,7 @@ def format_risk_overview(
     crops: tuple[str, ...] = (),
     phase: str | None = None,
 ) -> str:
-    """Render weather signals without presenting raw members as crop damage odds."""
+    """Render a compact decision-oriented weather overview."""
 
     outlook = overview.outlook
     meta = overview.meta
@@ -31,8 +30,7 @@ def format_risk_overview(
     periods = group_risk_events(outlook.events)
 
     lines = [
-        "⚠️ <b>Погодные условия, требующие внимания</b>",
-        f"🗺 Поле: <b>{html.escape(field_name)}</b>",
+        f"⚠️ <b>Погодные риски: {html.escape(field_name)}</b>",
     ]
     lines.extend(
         crop_context_lines(
@@ -41,75 +39,43 @@ def format_risk_overview(
             phase=phase,
         )
     )
-    lines.extend(
-        [
-            "",
-            "<b>Как читать прогноз</b>",
-            f"• {meta.member_count} вариантов одной модели рассчитаны с немного "
-            "разными начальными условиями. Чем больше вариантов показывают одно "
-            "и то же, тем согласованнее сигнал.",
-            "• Это не процент повреждения культуры и не официальное предупреждение.",
-            "",
-            "<b>Что ожидается</b>",
-        ]
-    )
+    lines.append("")
 
     if not outlook.available:
-        lines.append(f"• Анализ не выполнен: {html.escape(outlook.status)}.")
-        lines.append(
-            "• Отсутствие полного ансамбля не означает отсутствие локального явления."
+        lines.extend(
+            [
+                f"⚪ Данные временно недоступны: {html.escape(outlook.status)}.",
+                "Действие: проверьте официальный прогноз.",
+            ]
         )
     elif periods:
-        for period in periods[:_MAX_PERIODS]:
-            lines.extend([format_risk_period(period), ""])
+        for index, period in enumerate(periods[:_MAX_PERIODS]):
+            if index:
+                lines.append("")
+            lines.append(format_risk_period(period))
         hidden = max(0, len(periods) - _MAX_PERIODS)
         if hidden:
-            lines.append(f"• Дополнительных периодов: {hidden}.")
+            lines.append(f"\nЕщё периодов: {hidden}.")
     else:
-        lines.append(
-            "• На полностью обеспеченной части прогноза общие погодные пороги "
-            "внимания не достигнуты. Локальные явления всё равно возможны."
-        )
-
-    lines.extend(
-        [
-            "<b>Надёжность данных</b>",
-            f"• Источник: {html.escape(meta.source)}; модель: "
-            f"{html.escape(model_label(meta.model))}.",
-            f"• Полностью проверено суток: {outlook.valid_days} из "
-            f"{outlook.forecast_days}; пропущено из-за неполных данных: "
-            f"{outlook.incomplete_days}.",
-            f"• Данные получены: {retrieved_at:%d.%m.%Y %H:%M UTC}.",
-            "• Ближайшие 3–5 суток обычно полезнее для конкретных действий. "
-            "После 7–10 суток даты и интенсивность могут заметно сдвинуться.",
-        ]
-    )
-
-    lines.extend(["", "<b>Что делать сейчас</b>"])
-    if periods:
-        for action in unique_actions(periods):
-            lines.append(f"• {html.escape(action)}")
-    else:
-        lines.append(
-            "• Продолжайте обычный контроль поля и официальных предупреждений."
+        lines.extend(
+            [
+                "🟢 <b>Существенных погодных рисков не выявлено.</b>",
+                "Действие: обычный контроль поля.",
+            ]
         )
 
     lines.extend(
         [
             "",
-            "<b>Когда проверить снова</b>",
-            "• После следующего запуска модели, при изменении фактической фазы "
-            "культуры и обязательно при официальном предупреждении.",
+            (
+                f"<i>Данные: {html.escape(model_label(meta.model))} · "
+                f"{retrieved_at:%d.%m %H:%M UTC} · "
+                f"проверено {outlook.valid_days}/{outlook.forecast_days} суток.</i>"
+            ),
         ]
     )
-    if any(period.risk_type == "convection" for period in periods):
-        lines.append(
-            "• CAPE описывает запас энергии в атмосфере. Без подъёма воздуха, "
-            "влаги, сдвига ветра и краткосрочных наблюдений он не доказывает "
-            "грозу или град."
-        )
 
-    text = "\n".join(line for line in lines if line is not None)
+    text = "\n".join(lines)
     if len(text) > 4096:
         raise ValueError("Risk overview exceeds Telegram message limit")
     return text

@@ -62,7 +62,8 @@ async def test_dispatcher_manual_risk_overview_flow(
         for update in updates:
             await dispatcher.feed_update(bot, update)
 
-        assert any("31 вариант прогноза" in text for text in telegram.texts)
+        assert any("Проверяю прогноз" in text for text in telegram.texts)
+        assert all("31 вариант" not in text for text in telegram.texts)
         assert any("TEST MANUAL RISK OVERVIEW" in text for text in telegram.texts)
     finally:
         await storage.close()

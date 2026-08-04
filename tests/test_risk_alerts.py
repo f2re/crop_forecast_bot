@@ -4,7 +4,7 @@ from src.bot.risk_alerts import format_ensemble_risk_alert
 from src.domain.risk import RiskEvent, RiskOutlook
 
 
-def test_alert_explains_model_agreement_and_hail_limit() -> None:
+def test_alert_is_compact_actionable_and_hides_model_internals() -> None:
     event = RiskEvent(
         risk_type="convection",
         event_date=date(2026, 7, 29),
@@ -47,13 +47,15 @@ def test_alert_explains_model_agreement_and_hail_limit() -> None:
         phase="Цветение",
     )
 
-    assert "22 из 31 вариантов модели" in text
-    assert "согласованность модельного сигнала" in text
-    assert "не откалиброванная вероятность" in text
-    assert "не прогноз града" in text
-    assert "через 12 сут." in text
-    assert "15 из 16" in text
-    assert "Томат" in text
-    assert "Картофель" in text
-    assert "пересекли" not in text
-    assert "%" not in text
+    assert "Погода: Поле 1" in text
+    assert "🟡" in text
+    assert "Неустойчивая атмосфера — наблюдать" in text
+    assert "не прогноз грозы" in text
+    assert "Следите за официальными предупреждениями и радаром" in text
+    assert "Томат, Картофель" in text
+    assert "22 из 31" not in text
+    assert "согласованность" not in text
+    assert "не откалиброванная вероятность" not in text
+    assert "Надёжность" not in text
+    assert "15 из 16" not in text
+    assert len(text) < 500
