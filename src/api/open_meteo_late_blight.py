@@ -23,17 +23,37 @@ CACHE_TTL_SECONDS = 60 * 60
 _MAX_CONCURRENT_REQUESTS = 4
 _REQUEST_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_REQUESTS)
 
+_REQUIRED_HOURLY = (
+    "temperature_2m",
+    "relative_humidity_2m",
+)
+_OPTIONAL_MOISTURE_HOURLY = (
+    "dew_point_2m",
+    "precipitation",
+    "weather_code",
+    "visibility",
+    "is_day",
+)
+
 
 def build_late_blight_request_params(
     latitude: float,
     longitude: float,
 ) -> dict[str, Any]:
+    """Request the Hutton inputs plus non-triggering moisture diagnostics.
+
+    Temperature and relative humidity are the only hard inputs used by the
+    Hutton decision. Dew point, precipitation, fog/visibility and day/night are
+    supporting context: they explain possible nocturnal condensation but never
+    create a late-blight alert by themselves.
+    """
+
     return {
         "latitude": latitude,
         "longitude": longitude,
         "past_days": PAST_DAYS,
         "forecast_days": FORECAST_DAYS,
-        "hourly": "temperature_2m,relative_humidity_2m",
+        "hourly": ",".join((*_REQUIRED_HOURLY, *_OPTIONAL_MOISTURE_HOURLY)),
         "timezone": "auto",
         "timeformat": "unixtime",
         "cell_selection": "land",
@@ -59,6 +79,29 @@ def _timestamps(values: list[Any]) -> pd.DatetimeIndex:
     return pd.DatetimeIndex(pd.to_datetime(values, utc=True, errors="coerce"))
 
 
+def _hourly_values(
+    hourly: dict[str, Any],
+    name: str,
+    expected_length: int,
+    *,
+    required: bool,
+) -> list[Any]:
+    raw = hourly.get(name)
+    if raw is None:
+        if required:
+            raise LateBlightWeatherProviderError(
+                f"Open-Meteo не вернул обязательный ряд {name}"
+            )
+        return [None] * expected_length
+    values = list(raw)
+    if len(values) != expected_length:
+        raise LateBlightWeatherProviderError(
+            f"Почасовой ряд {name} имеет длину {len(values)}, "
+            f"ожидалось {expected_length}"
+        )
+    return values
+
+
 def parse_late_blight_payload(
     payload: dict[str, Any],
     *,
@@ -75,15 +118,24 @@ def parse_late_blight_payload(
         )
 
     times = list(hourly.get("time") or ())
-    temperature = list(hourly.get("temperature_2m") or ())
-    humidity = list(hourly.get("relative_humidity_2m") or ())
-    if not times or len(times) != len(temperature) or len(times) != len(humidity):
-        raise LateBlightWeatherProviderError(
-            "Почасовые температура, влажность и время имеют разную длину"
-        )
+    if not times:
+        raise LateBlightWeatherProviderError("Почасовая временная ось пуста")
+    length = len(times)
+    temperature = _hourly_values(
+        hourly,
+        "temperature_2m",
+        length,
+        required=True,
+    )
+    humidity = _hourly_values(
+        hourly,
+        "relative_humidity_2m",
+        length,
+        required=True,
+    )
 
     dates = _timestamps(times)
-    if len(dates) != len(times) or dates.isna().any():
+    if len(dates) != length or dates.isna().any():
         raise LateBlightWeatherProviderError(
             "Open-Meteo вернул повреждённую временную ось"
         )
@@ -93,6 +145,36 @@ def parse_late_blight_payload(
             "date": dates,
             "temperature_2m": temperature,
             "relative_humidity_2m": humidity,
+            "dew_point_2m": _hourly_values(
+                hourly,
+                "dew_point_2m",
+                length,
+                required=False,
+            ),
+            "precipitation": _hourly_values(
+                hourly,
+                "precipitation",
+                length,
+                required=False,
+            ),
+            "weather_code": _hourly_values(
+                hourly,
+                "weather_code",
+                length,
+                required=False,
+            ),
+            "visibility": _hourly_values(
+                hourly,
+                "visibility",
+                length,
+                required=False,
+            ),
+            "is_day": _hourly_values(
+                hourly,
+                "is_day",
+                length,
+                required=False,
+            ),
         }
     )
     return LateBlightWeatherData(
