@@ -245,7 +245,7 @@ async def test_weather_risk_scheduler_persists_before_sending_and_reuses_db_stat
     chat_id, text = bot.messages[0]
     assert chat_id == 1001
     assert "Погода: Северное" in text
-    assert "Изменение прогноза" in text
+    assert "Что изменилось" in text
     assert "Сильные осадки" in text
     assert "🟡" in text
     assert "Пшеница, Картофель" in text
