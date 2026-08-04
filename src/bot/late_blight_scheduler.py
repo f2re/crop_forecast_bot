@@ -30,6 +30,7 @@ from src.database.biological_monitoring import (
     mark_late_blight_observed,
     save_late_blight_delivery_state,
 )
+from src.database.late_blight_scope import open_field_late_blight_season_ids
 from src.domain.late_blight_delivery import plan_late_blight_delivery
 from src.infrastructure.coordination import (
     CoordinationBackend,
@@ -87,7 +88,21 @@ async def _targets(
     session_factory: SessionFactory,
 ) -> list[LateBlightMonitoringTarget]:
     async with session_factory() as session:
-        return await list_enabled_late_blight_targets(session)
+        targets = await list_enabled_late_blight_targets(session)
+        allowed_seasons = await open_field_late_blight_season_ids(
+            session,
+            tuple(dict.fromkeys(target.season_id for target in targets)),
+        )
+    skipped = [target for target in targets if target.season_id not in allowed_seasons]
+    for target in skipped:
+        logger.warning(
+            "Late-blight monitor paused outside confirmed open field: "
+            "user=%s field=%s season=%s",
+            target.telegram_id,
+            target.field_id,
+            target.season_id,
+        )
+    return [target for target in targets if target.season_id in allowed_seasons]
 
 
 async def _save_state(
@@ -136,7 +151,7 @@ async def check_late_blight_monitoring(
     job_lock_ttl_seconds: int = _JOB_LOCK_TTL_SECONDS,
     renew_interval_seconds: float = _LEASE_RENEW_INTERVAL_SECONDS,
 ) -> None:
-    """Evaluate enabled potato monitors and deliver semantic window changes."""
+    """Evaluate enabled open-field potato monitors and deliver period changes."""
 
     job_guard = await RenewingLease.acquire(
         coordination,

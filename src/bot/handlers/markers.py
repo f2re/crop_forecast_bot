@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.application.late_blight_monitoring import (
     acknowledge_manual_late_blight_view,
+    enable_open_field_late_blight_monitor,
+    require_open_field_late_blight_scope,
 )
 from src.application.late_blight_screening import (
     generate_potato_late_blight_screening,
@@ -34,7 +36,6 @@ from src.bot.telegram_text import answer_html, edit_html
 from src.database.biological_monitoring import (
     LateBlightMonitorContext,
     disable_late_blight_monitor,
-    enable_late_blight_monitor,
     get_active_late_blight_context,
 )
 from src.database.crud import get_field_context
@@ -144,26 +145,57 @@ def _catalog_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _late_blight_keyboard(*, enabled: bool) -> InlineKeyboardMarkup:
-    toggle = InlineKeyboardButton(
-        text=(
-            "🔕 Выключить предупреждения"
-            if enabled
-            else "🔔 Включить предупреждения"
-        ),
-        callback_data=(
-            "late_blight:disable" if enabled else "late_blight:enable"
-        ),
-    )
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
+def _late_blight_keyboard(
+    *,
+    enabled: bool,
+    open_field: bool = True,
+) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    if open_field:
+        rows.append(
             [
                 InlineKeyboardButton(
                     text="🔄 Пересчитать",
                     callback_data="late_blight:potato",
                 )
-            ],
-            [toggle],
+            ]
+        )
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=(
+                        "🔕 Выключить предупреждения"
+                        if enabled
+                        else "🔔 Включить предупреждения"
+                    ),
+                    callback_data=(
+                        "late_blight:disable"
+                        if enabled
+                        else "late_blight:enable"
+                    ),
+                )
+            ]
+        )
+    else:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="🌾 Условия выращивания",
+                    callback_data="crop_growth_context",
+                )
+            ]
+        )
+        if enabled:
+            rows.append(
+                [
+                    InlineKeyboardButton(
+                        text="🔕 Выключить старое наблюдение",
+                        callback_data="late_blight:disable",
+                    )
+                ]
+            )
+    rows.extend(
+        [
             [
                 InlineKeyboardButton(
                     text="📚 Критерии Hutton",
@@ -179,6 +211,7 @@ def _late_blight_keyboard(*, enabled: bool) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 В меню", callback_data="menu")],
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _with_monitor_status(text: str, *, enabled: bool) -> str:
@@ -238,10 +271,30 @@ async def _show_potato_late_blight(
         )
         return
 
+    try:
+        await require_open_field_late_blight_scope(
+            session,
+            callback.from_user.id,
+        )
+    except ValueError as exc:
+        await edit_html(
+            callback.message,
+            "🌾 <b>Нужно уточнить условия выращивания</b>\n\n"
+            f"{html.escape(str(exc))}\n\n"
+            "Наружная температура, точка росы, туман и видимость не описывают "
+            "микроклимат теплицы. Для защищённого грунта понадобится датчик "
+            "внутри сооружения.",
+            reply_markup=_late_blight_keyboard(
+                enabled=resolved.enabled,
+                open_field=False,
+            ),
+        )
+        return
+
     await edit_html(
         callback.message,
         f"🦠 Поле <b>{html.escape(resolved.field_name)}</b>\n"
-        "Проверяю температуру и высокую влажность по местным суткам…",
+        "Проверяю температуру, влажность и ночное насыщение воздуха…",
     )
     await session.rollback()
     try:
@@ -357,7 +410,7 @@ async def enable_potato_late_blight_alerts(
     session: AsyncSession,
 ) -> None:
     try:
-        context = await enable_late_blight_monitor(
+        context = await enable_open_field_late_blight_monitor(
             session,
             callback.from_user.id,
         )
@@ -387,9 +440,9 @@ async def disable_potato_late_blight_alerts(
     await edit_html(
         callback.message,
         "🔕 <b>Фоновые предупреждения о фитофторозе выключены</b>\n\n"
-        "Ручная проверка погодного окна остаётся доступной. Уже сохранённые "
-        "данные не используются для фоновой рассылки, пока наблюдение не будет "
-        "включено снова.",
+        "Ручная проверка погодного окна остаётся доступной для подтверждённого "
+        "открытого грунта. Уже сохранённые данные не используются для фоновой "
+        "рассылки, пока наблюдение не будет включено снова.",
         reply_markup=_late_blight_keyboard(enabled=context.enabled),
     )
 
