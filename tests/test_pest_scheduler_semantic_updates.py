@@ -66,9 +66,7 @@ async def test_scheduler_persists_state_key_but_deduplicates_transition_key(
         projected_crossing_date=date(2026, 6, 8),
     )
     model = get_pest_model("colorado_potato_beetle")
-    stage_key = (
-        f"{model.model_version}:2026-06-01:current:eggs"
-    )
+    stage_key = f"{model.model_version}:2026-06-01:current:eggs"
     previous_advance = (
         f"{model.model_version}:2026-06-01:"
         "approaching:larva_1:expected:2026-06-06"
@@ -141,7 +139,8 @@ async def test_scheduler_persists_state_key_but_deduplicates_transition_key(
         await coordination.close()
 
     assert len(bot.messages) == 1
-    assert "ожидается позже" in bot.messages[0]
+    assert "Срок осмотра поля сдвинулся" in bot.messages[0]
+    assert "Срочного осмотра не требуется" in bot.messages[0]
     assert len(saved) == 1
     assert saved[0]["advance_event_key"] == (
         f"{model.model_version}:2026-06-01:"
