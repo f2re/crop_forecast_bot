@@ -49,6 +49,8 @@ _INOCULUM_CONTEXTS = frozenset(
         "field_symptoms_observed",
     }
 )
+_MATERIAL_DATE_SHIFT_DAYS = 2
+_URGENT_LEAD_DAYS = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,11 +162,24 @@ def _overlaps(
     )
 
 
+def _urgency_band(value: date, *, as_of_date: date) -> int:
+    lead_days = max(0, (value - as_of_date).days)
+    if lead_days <= 1:
+        return 0
+    if lead_days <= 3:
+        return 1
+    return 2
+
+
 def _period_change_kind(
     previous: tuple[LateBlightEpisodeState, ...],
     current: tuple[LateBlightEpisodeState, ...],
     withdrawn: tuple[LateBlightEpisodeState, ...],
+    *,
+    as_of_date: date,
 ) -> LateBlightChangeKind | None:
+    """Return only a qualitative change worth a Telegram interruption."""
+
     if previous == current:
         return None
     if not previous and current:
@@ -180,21 +195,24 @@ def _period_change_kind(
     if len(previous) == 1 and len(current) == 1:
         old = previous[0]
         new = current[0]
-        if old.start_date == new.start_date:
-            if new.end_date > old.end_date:
-                return "extended"
-            if new.end_date < old.end_date:
-                return "shortened"
-        if old.end_date == new.end_date:
-            if new.start_date < old.start_date:
-                return "starts_earlier"
-            if new.start_date > old.start_date:
-                return "starts_later"
-        if (
-            old.start_date != new.start_date
-            and old.end_date != new.end_date
-        ):
-            return "shifted"
+        start_shift = (new.start_date - old.start_date).days
+        end_shift = (new.end_date - old.end_date).days
+
+        start_material = abs(start_shift) >= _MATERIAL_DATE_SHIFT_DAYS
+        if start_shift < 0:
+            start_material = start_material or (
+                _urgency_band(new.start_date, as_of_date=as_of_date)
+                < _urgency_band(old.start_date, as_of_date=as_of_date)
+            )
+        end_material = abs(end_shift) >= _MATERIAL_DATE_SHIFT_DAYS
+
+        if not start_material and not end_material:
+            return None
+        if start_shift == 0:
+            return "extended" if end_shift > 0 else "shortened"
+        if end_shift == 0:
+            return "starts_earlier" if start_shift < 0 else "starts_later"
+        return "shifted"
     return "updated"
 
 
@@ -231,6 +249,26 @@ def _transition_token(
     return "transition:" + sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 
+def _is_priority_change(
+    change: LateBlightStateChange,
+    *,
+    as_of_date: date,
+) -> bool:
+    if change.current_context == "unknown" or not change.current:
+        return False
+    if change.kind not in {
+        "new",
+        "restored",
+        "context_confirmed",
+        "context_changed",
+        "starts_earlier",
+        "shifted",
+    }:
+        return False
+    earliest = min(period.start_date for period in change.current)
+    return 0 <= (earliest - as_of_date).days <= _URGENT_LEAD_DAYS
+
+
 def plan_late_blight_delivery(
     periods: Sequence[LateBlightPeriod],
     *,
@@ -247,34 +285,30 @@ def plan_late_blight_delivery(
     resolved_mode: RiskDeliveryMode = validate_risk_delivery_mode(mode)
     resolved_context = validate_inoculum_context(inoculum_context)
     previous = previous_state or empty_late_blight_delivery_state()
+    as_of_date = local_datetime.date()
     previous_active = _future_state(
         previous.active_periods,
-        as_of_date=local_datetime.date(),
+        as_of_date=as_of_date,
     )
-    current_active = episodes_from_outlook(
+    observed_active = episodes_from_outlook(
         periods,
-        as_of_date=local_datetime.date(),
+        as_of_date=as_of_date,
     )
 
-    if current_active:
-        next_withdrawn: tuple[LateBlightEpisodeState, ...] = ()
+    if observed_active:
+        observed_withdrawn: tuple[LateBlightEpisodeState, ...] = ()
     elif previous_active:
-        next_withdrawn = previous_active
+        observed_withdrawn = previous_active
     else:
-        next_withdrawn = _canonical(previous.withdrawn_periods)
-
-    current_state = LateBlightDeliveryState(
-        active_periods=current_active,
-        withdrawn_periods=next_withdrawn,
-        inoculum_context=resolved_context,
-    )
+        observed_withdrawn = _canonical(previous.withdrawn_periods)
 
     change_kind = _period_change_kind(
         previous_active,
-        current_active,
+        observed_active,
         _canonical(previous.withdrawn_periods),
+        as_of_date=as_of_date,
     )
-    if change_kind is None and current_active:
+    if change_kind is None and observed_active:
         change_kind = _context_change_kind(
             previous.inoculum_context,
             resolved_context,
@@ -286,17 +320,24 @@ def plan_late_blight_delivery(
         else LateBlightStateChange(
             kind=change_kind,
             previous=previous_active,
-            current=current_active,
+            current=observed_active,
             previous_context=previous.inoculum_context,
             current_context=resolved_context,
         )
     )
 
-    confirmed_context = (
-        previous.inoculum_context != "unknown" or resolved_context != "unknown"
+    # Keep the last-notified boundaries through one-day forecast noise. Natural
+    # passage is already trimmed by _future_state, so elapsed days do not repeat.
+    accepted_active = observed_active if change is not None else previous_active
+    accepted_withdrawn = (
+        observed_withdrawn
+        if change is not None
+        else _canonical(previous.withdrawn_periods)
     )
-    priority_bypass = bool(
-        confirmed_context and (previous_active or current_active)
+    current_state = LateBlightDeliveryState(
+        active_periods=accepted_active,
+        withdrawn_periods=accepted_withdrawn,
+        inoculum_context=resolved_context,
     )
 
     if change is None:
@@ -305,19 +346,25 @@ def plan_late_blight_delivery(
             change=None,
             deferred=False,
             silent_advance=True,
-            reason="смысловое состояние не изменилось",
+            reason="существенного изменения погодного окна нет",
             dedup_token=None,
             daily_quota_token=None,
             priority_bypass=False,
         )
 
+    priority_bypass = _is_priority_change(change, as_of_date=as_of_date)
+
     if resolved_mode == "high_only" and not priority_bypass:
         return LateBlightDeliveryDecision(
-            current_state=current_state,
+            current_state=LateBlightDeliveryState(
+                active_periods=observed_active,
+                withdrawn_periods=observed_withdrawn,
+                inoculum_context=resolved_context,
+            ),
             change=None,
             deferred=False,
             silent_advance=True,
-            reason="режим только высокого риска требует подтверждённого источника",
+            reason="режим высокого риска требует близкого окна и указанного источника",
             dedup_token=None,
             daily_quota_token=None,
             priority_bypass=False,
@@ -332,7 +379,11 @@ def plan_late_blight_delivery(
         )
     ):
         return LateBlightDeliveryDecision(
-            current_state=current_state,
+            current_state=LateBlightDeliveryState(
+                active_periods=previous_active,
+                withdrawn_periods=_canonical(previous.withdrawn_periods),
+                inoculum_context=previous.inoculum_context,
+            ),
             change=change,
             deferred=True,
             silent_advance=False,
@@ -343,9 +394,14 @@ def plan_late_blight_delivery(
         )
 
     daily_token = (
-        local_datetime.date().isoformat()
+        as_of_date.isoformat()
         if resolved_mode == "digest" and not priority_bypass
         else None
+    )
+    previous_normalized = LateBlightDeliveryState(
+        active_periods=previous_active,
+        withdrawn_periods=_canonical(previous.withdrawn_periods),
+        inoculum_context=previous.inoculum_context,
     )
     return LateBlightDeliveryDecision(
         current_state=current_state,
@@ -353,7 +409,7 @@ def plan_late_blight_delivery(
         deferred=False,
         silent_advance=False,
         reason="существенное изменение погодного окна",
-        dedup_token=_transition_token(previous, current_state),
+        dedup_token=_transition_token(previous_normalized, current_state),
         daily_quota_token=daily_token,
         priority_bypass=priority_bypass,
     )
