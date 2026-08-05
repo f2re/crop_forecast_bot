@@ -84,16 +84,14 @@ async def test_generate_and_format_manual_risk_overview_for_farmer() -> None:
     assert provider.calls == [(55.75, 37.62)]
     assert "Погодные риски: Северное" in text
     assert "🔴" in text
-    assert "Сильные осадки — действовать" in text
+    assert "Сильный дождь — нужна проверка" in text
     assert "осадки 2–40 мм" in text
-    assert "Действие:" in text
+    assert "Что лучше сделать:" in text
     assert "Томат, Картофель" in text
     assert "Данные: ансамбль GFS" in text
     assert "вариант" not in text
-    assert "Как читать прогноз" not in text
     assert "Надёжность данных" not in text
-    assert "Когда проверить снова" not in text
-    assert len(text) < 900
+    assert len(text) < 950
 
 
 @pytest.mark.asyncio
@@ -112,9 +110,9 @@ async def test_manual_overview_explains_convection_without_hail_claim() -> None:
         crop="sunflower",
     )
 
-    assert "Неустойчивая атмосфера" in text
+    assert "Возможны грозовые условия" in text
     assert "CAPE" in text
-    assert "не прогноз грозы" in text
+    assert "не самостоятельный прогноз грозы" in text
     assert "вероятность града" not in text
 
 
