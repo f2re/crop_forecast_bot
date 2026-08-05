@@ -1,11 +1,15 @@
 from datetime import date
 
-from src.bot.risk_alerts import format_ensemble_risk_alert
+from src.bot.risk_alerts import (
+    format_ensemble_risk_alert,
+    format_ensemble_risk_digest,
+)
 from src.domain.risk import RiskEvent, RiskOutlook
+from src.domain.risk_delivery import RiskEpisodeState, RiskStateChange
 
 
-def test_alert_is_compact_actionable_and_hides_model_internals() -> None:
-    event = RiskEvent(
+def _event() -> RiskEvent:
+    return RiskEvent(
         risk_type="convection",
         event_date=date(2026, 7, 29),
         lead_days=12,
@@ -26,10 +30,13 @@ def test_alert_is_compact_actionable_and_hides_model_internals() -> None:
         action="Следите за предупреждениями.",
         caveat="Это не прогноз града.",
     )
-    outlook = RiskOutlook(
+
+
+def _outlook(*events: RiskEvent) -> RiskOutlook:
+    return RiskOutlook(
         available=True,
         status="risk",
-        events=(event,),
+        events=events,
         model="gfs_seamless",
         member_count=31,
         forecast_days=16,
@@ -38,24 +45,56 @@ def test_alert_is_compact_actionable_and_hides_model_internals() -> None:
         generated_for_date=date(2026, 7, 17),
     )
 
+
+def test_alert_is_compact_calm_and_hides_model_internals() -> None:
+    event = _event()
     text = format_ensemble_risk_alert(
         event,
-        outlook,
+        _outlook(event),
         field_name="Поле 1",
         crop="tomato",
         crops=("tomato", "potato"),
         phase="Цветение",
     )
 
-    assert "Погода: Поле 1" in text
+    assert "Погода требует внимания: Поле 1" in text
     assert "🟡" in text
-    assert "Неустойчивая атмосфера — наблюдать" in text
-    assert "не прогноз грозы" in text
-    assert "Следите за официальными предупреждениями и радаром" in text
+    assert "Возможны грозовые условия — пока наблюдаем" in text
+    assert "не самостоятельный прогноз грозы" in text
+    assert "Ближе к сроку проверьте официальные предупреждения" in text
     assert "Томат, Картофель" in text
     assert "22 из 31" not in text
-    assert "согласованность" not in text
-    assert "не откалиброванная вероятность" not in text
     assert "Надёжность" not in text
-    assert "15 из 16" not in text
-    assert len(text) < 500
+    assert len(text) < 520
+
+
+def test_withdrawn_heat_is_reported_as_forecast_improvement() -> None:
+    change = RiskStateChange(
+        risk_type="heat",
+        previous=(
+            RiskEpisodeState(
+                risk_type="heat",
+                start_date=date(2026, 8, 5),
+                end_date=date(2026, 8, 8),
+                highest_level="high",
+            ),
+        ),
+        current=(),
+    )
+    text = format_ensemble_risk_digest(
+        (),
+        _outlook(),
+        field_name="Южное",
+        crop="wheat",
+        phase=None,
+        delivery_mode="immediate",
+        priority_bypass=False,
+        changes=(change,),
+    )
+
+    assert text.startswith("✅")
+    assert "Прогноз улучшился" in text
+    assert "жара" in text
+    assert "больше не ожидаются" in text
+    assert "обычному контролю" in text
+    assert "Действие:" not in text
