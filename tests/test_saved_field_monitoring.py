@@ -14,7 +14,7 @@ from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.domain.risk_delivery import RiskEpisodeState
 from src.infrastructure.coordination import MemoryCoordination
 
-_EVENT_DATE = date(2026, 7, 29)
+_EVENT_DATE = date(2026, 7, 19)
 
 
 def _target(
