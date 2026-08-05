@@ -215,10 +215,13 @@ def _for_mode(
     *,
     mode: RiskDeliveryMode,
 ) -> tuple[RiskEpisodeState, ...]:
+    serious = tuple(
+        episode for episode in episodes if episode.highest_level != "watch"
+    )
     if mode != "high_only":
-        return episodes
+        return serious
     return tuple(
-        episode for episode in episodes if episode.highest_level == "high"
+        episode for episode in serious if episode.highest_level == "high"
     )
 
 
