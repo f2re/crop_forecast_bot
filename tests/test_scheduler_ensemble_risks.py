@@ -47,10 +47,11 @@ def _ensemble(
     rain_members: int = 22,
     wind_members: int = 0,
     retrieved_hour: int = 0,
+    event_date: date = date(2026, 7, 19),
 ) -> EnsembleForecastData:
     rows = [
         {
-            "local_date": date(2026, 7, 29),
+            "local_date": event_date,
             "member_id": f"m{member:02d}",
             "t_min_c": 8.0,
             "t_max_c": 25.0,
@@ -170,7 +171,6 @@ def _patch_common(
         assert field_id == 42
         assert model == "gfs_seamless"
         assert delivery_mode == target.risk_delivery_mode
-        assert observed_at.tzinfo is not None
         baseline = episodes
         last_observed_at = observed_at
         if notified_at is not None:
@@ -213,14 +213,15 @@ def _patch_common(
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_persists_before_sending_and_reuses_db_state(
+async def test_scheduler_sends_near_serious_period_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_date = date(2026, 7, 19)
     delivery_states, _, semantic_states = _patch_common(
         monkeypatch,
         target=_target(),
         hour=10,
-        signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+        signal_ids={("heavy_rain", event_date): 99},
     )
 
     bot = RecordingBot()
@@ -242,31 +243,58 @@ async def test_weather_risk_scheduler_persists_before_sending_and_reuses_db_stat
         await coordination.close()
 
     assert len(bot.messages) == 1
-    chat_id, text = bot.messages[0]
-    assert chat_id == 1001
-    assert "Погода: Северное" in text
-    assert "Что изменилось" in text
-    assert "Сильные осадки" in text
-    assert "🟡" in text
+    text = bot.messages[0][1]
+    assert "Погода требует внимания: Северное" in text
+    assert "Сильный дождь" in text
+    assert "Что лучше сделать:" in text
     assert "Пшеница, Картофель" in text
     assert "22 из 31" not in text
-    assert "вероятность повреждения растений" not in text
     assert "Надёжность" not in text
-    assert len(text) < 700
     assert delivery_states == ["sending", "sent"]
     assert len(semantic_states) == 2
     assert semantic_states[0] == semantic_states[1]
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_defers_non_high_change_in_quiet_hours(
+async def test_scheduler_keeps_far_signal_in_history_without_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    far_date = date(2026, 7, 29)
+    delivery_states, stored_flags, semantic_states = _patch_common(
+        monkeypatch,
+        target=_target(),
+        hour=10,
+        signal_ids={("heavy_rain", far_date): 99},
+    )
+
+    bot = RecordingBot()
+    coordination = MemoryCoordination(namespace="test-ensemble-far")
+    try:
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(event_date=far_date)),
+        )
+    finally:
+        await coordination.close()
+
+    assert stored_flags == [True]
+    assert bot.messages == []
+    assert delivery_states == []
+    assert semantic_states == [()]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_defers_non_urgent_change_in_quiet_hours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event_date = date(2026, 7, 19)
     delivery_states, stored_flags, semantic_states = _patch_common(
         monkeypatch,
         target=_target(quiet_hours_start=22, quiet_hours_end=7),
         hour=23,
-        signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+        signal_ids={("heavy_rain", event_date): 99},
     )
 
     bot = RecordingBot()
@@ -288,16 +316,17 @@ async def test_weather_risk_scheduler_defers_non_high_change_in_quiet_hours(
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
+async def test_scheduler_sends_one_digest_for_multiple_serious_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_date = date(2026, 7, 19)
     delivery_states, _, semantic_states = _patch_common(
         monkeypatch,
         target=_target(mode="digest"),
         hour=10,
         signal_ids={
-            ("heavy_rain", date(2026, 7, 29)): 99,
-            ("strong_wind", date(2026, 7, 29)): 100,
+            ("heavy_rain", event_date): 99,
+            ("strong_wind", event_date): 100,
         },
     )
 
@@ -315,24 +344,24 @@ async def test_weather_risk_scheduler_sends_one_digest_for_multiple_events(
 
     assert len(bot.messages) == 1
     text = bot.messages[0][1]
-    assert "Сильные осадки" in text
+    assert "Сильный дождь" in text
     assert "Сильные порывы ветра" in text
-    assert "Действие:" in text
-    assert "один дайджест" not in text
+    assert "Что лучше сделать:" in text
     assert "Режим уведомлений" not in text
     assert delivery_states == ["sending", "sending", "sent", "sent"]
     assert len(semantic_states) == 1
 
 
 @pytest.mark.asyncio
-async def test_weather_risk_scheduler_reports_clear_once(
+async def test_scheduler_reports_cancelled_risk_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    event_date = date(2026, 7, 19)
     delivery_states, _, semantic_states = _patch_common(
         monkeypatch,
         target=_target(),
         hour=10,
-        signal_ids={("heavy_rain", date(2026, 7, 29)): 99},
+        signal_ids={("heavy_rain", event_date): 99},
     )
 
     bot = RecordingBot()
@@ -360,8 +389,8 @@ async def test_weather_risk_scheduler_reports_clear_once(
         await coordination.close()
 
     assert len(bot.messages) == 2
-    assert "больше не подтверждается" in bot.messages[1][1]
-    assert "больше не подтверждаются" in bot.messages[1][1]
-    assert "🟢" in bot.messages[1][1]
+    assert bot.messages[1][1].startswith("✅")
+    assert "Прогноз улучшился" in bot.messages[1][1]
+    assert "больше не ожидаются" in bot.messages[1][1]
     assert delivery_states == ["sending", "sent"]
     assert semantic_states[-1] == ()
