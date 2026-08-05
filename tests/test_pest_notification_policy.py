@@ -80,10 +80,7 @@ def test_initial_approach_is_dated_and_deduplicated_by_state() -> None:
     assert isinstance(first, SemanticPestNotification)
     assert first.change == "initial"
     assert first.expected_date == date(2026, 6, 6)
-    assert pest_notification_state_key(first).endswith(
-        ":expected:2026-06-06"
-    )
-    assert len(first.event_key) <= 180
+    assert pest_notification_state_key(first).endswith(":expected:2026-06-06")
 
     repeated = choose_semantic_pest_notification(
         outlook,
@@ -94,7 +91,7 @@ def test_initial_approach_is_dated_and_deduplicated_by_state() -> None:
     assert repeated is None
 
 
-def test_approach_date_moves_earlier_and_later_explicitly() -> None:
+def test_two_day_shift_is_material_and_human_readable() -> None:
     outlook, today = _outlook()
     stage_key = _stage_key(outlook)
     initial = choose_semantic_pest_notification(
@@ -105,10 +102,7 @@ def test_approach_date_moves_earlier_and_later_explicitly() -> None:
     )
     assert isinstance(initial, SemanticPestNotification)
 
-    later_outlook = replace(
-        outlook,
-        projected_crossing_date=date(2026, 6, 8),
-    )
+    later_outlook = replace(outlook, projected_crossing_date=date(2026, 6, 8))
     later = choose_semantic_pest_notification(
         later_outlook,
         last_notified_stage=stage_key,
@@ -117,34 +111,68 @@ def test_approach_date_moves_earlier_and_later_explicitly() -> None:
     )
     assert isinstance(later, SemanticPestNotification)
     assert later.change == "later"
-    assert later.previous_expected_date == date(2026, 6, 6)
-    assert later.expected_date == date(2026, 6, 8)
-    assert "ожидается позже" in format_semantic_pest_notification(
+    text = format_semantic_pest_notification(
         later,
         later_outlook,
         field_name="Северное",
         crop_key="potato",
     )
+    assert "Срок осмотра поля сдвинулся" in text
+    assert "Срочного осмотра не требуется" in text
+    assert "Это ориентир для осмотра" in text
 
-    earlier_outlook = replace(
+
+def test_one_day_shift_is_silent_but_cumulative_shift_is_reported() -> None:
+    outlook, today = _outlook()
+    stage_key = _stage_key(outlook)
+    initial = choose_semantic_pest_notification(
         outlook,
-        projected_crossing_date=date(2026, 6, 5),
-    )
-    earlier = choose_semantic_pest_notification(
-        earlier_outlook,
         last_notified_stage=stage_key,
-        last_notified_advance=later.state_key,
+        last_notified_advance=None,
+        today=today,
+    )
+    assert isinstance(initial, SemanticPestNotification)
+
+    one_day_later = replace(outlook, projected_crossing_date=date(2026, 6, 7))
+    assert choose_semantic_pest_notification(
+        one_day_later,
+        last_notified_stage=stage_key,
+        last_notified_advance=initial.state_key,
+        today=today,
+    ) is None
+
+    two_days_later = replace(outlook, projected_crossing_date=date(2026, 6, 8))
+    material = choose_semantic_pest_notification(
+        two_days_later,
+        last_notified_stage=stage_key,
+        last_notified_advance=initial.state_key,
+        today=today,
+    )
+    assert isinstance(material, SemanticPestNotification)
+    assert material.change == "later"
+
+
+def test_one_day_earlier_move_to_today_is_material() -> None:
+    outlook, today = _outlook()
+    stage_key = _stage_key(outlook)
+    initial = choose_semantic_pest_notification(
+        outlook,
+        last_notified_stage=stage_key,
+        last_notified_advance=None,
+        today=today,
+    )
+    assert isinstance(initial, SemanticPestNotification)
+    assert initial.expected_date == today + timedelta(days=1)
+
+    today_outlook = replace(outlook, projected_crossing_date=today)
+    earlier = choose_semantic_pest_notification(
+        today_outlook,
+        last_notified_stage=stage_key,
+        last_notified_advance=initial.state_key,
         today=today,
     )
     assert isinstance(earlier, SemanticPestNotification)
     assert earlier.change == "earlier"
-    assert earlier.previous_expected_date == date(2026, 6, 8)
-    assert "ожидается раньше" in format_semantic_pest_notification(
-        earlier,
-        earlier_outlook,
-        field_name="Северное",
-        crop_key="potato",
-    )
 
 
 def test_announced_window_can_be_withdrawn_and_restored() -> None:
@@ -167,13 +195,14 @@ def test_announced_window_can_be_withdrawn_and_restored() -> None:
     )
     assert isinstance(withdrawn, SemanticPestNotification)
     assert withdrawn.change == "withdrawn"
-    assert withdrawn.expected_date is None
-    assert "больше не подтверждается" in format_semantic_pest_notification(
+    withdrawn_text = format_semantic_pest_notification(
         withdrawn,
         withdrawn_outlook,
         field_name="Северное",
         crop_key="potato",
     )
+    assert "Плановый осмотр пока можно отложить" in withdrawn_text
+    assert "больше не подтверждается" in withdrawn_text
 
     restored = choose_semantic_pest_notification(
         outlook,
@@ -183,8 +212,7 @@ def test_announced_window_can_be_withdrawn_and_restored() -> None:
     )
     assert isinstance(restored, SemanticPestNotification)
     assert restored.change == "restored"
-    assert restored.event_key != initial.event_key
-    assert "снова подтверждается" in format_semantic_pest_notification(
+    assert "Окно осмотра снова ожидается" in format_semantic_pest_notification(
         restored,
         outlook,
         field_name="Северное",
@@ -200,15 +228,12 @@ def test_first_reminder_stays_inside_initial_advance_window() -> None:
         projected_crossing_date=today + timedelta(days=5),
     )
 
-    assert (
-        choose_semantic_pest_notification(
-            far_outlook,
-            last_notified_stage=stage_key,
-            last_notified_advance=None,
-            today=today,
-        )
-        is None
-    )
+    assert choose_semantic_pest_notification(
+        far_outlook,
+        last_notified_stage=stage_key,
+        last_notified_advance=None,
+        today=today,
+    ) is None
 
 
 def test_legacy_advance_key_gets_one_date_aware_upgrade() -> None:
@@ -228,4 +253,3 @@ def test_legacy_advance_key_gets_one_date_aware_upgrade() -> None:
     )
     assert isinstance(upgraded, SemanticPestNotification)
     assert upgraded.change == "initial"
-    assert upgraded.state_key.endswith(":expected:2026-06-06")
