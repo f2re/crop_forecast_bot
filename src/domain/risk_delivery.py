@@ -11,9 +11,9 @@ RiskDeliveryMode = Literal["immediate", "digest", "high_only"]
 
 _DELIVERY_MODES = frozenset({"immediate", "digest", "high_only"})
 _MODE_LABELS: dict[RiskDeliveryMode, str] = {
-    "immediate": "сразу при новом или существенно изменившемся периоде",
-    "digest": "один дайджест в сутки при существенном изменении",
-    "high_only": "только высокий риск и его существенные изменения",
+    "immediate": "только при новом, отменённом или заметно изменившемся опасном периоде",
+    "digest": "не более одного сообщения в сутки о существенных изменениях",
+    "high_only": "только ближайший высокий риск и его отмена",
 }
 _LEVEL_ORDER: dict[RiskLevel, int] = {"watch": 0, "elevated": 1, "high": 2}
 _RISK_ORDER: dict[RiskType, int] = {
@@ -24,6 +24,14 @@ _RISK_ORDER: dict[RiskType, int] = {
     "convection": 4,
 }
 
+# Automatic alerts are deliberately stricter than the manual overview.
+# A weak/watch signal remains visible in history and /risks but never interrupts
+# the user. Elevated signals must be close; high signals may be announced earlier.
+_ELEVATED_LEAD_DAYS = 3
+_HIGH_LEAD_DAYS = 7
+_URGENT_HIGH_LEAD_DAYS = 1
+_MATERIAL_DATE_SHIFT_DAYS = 2
+
 
 class RiskSignalLike(Protocol):
     risk_type: RiskType
@@ -33,7 +41,7 @@ class RiskSignalLike(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class RiskEpisodeState:
-    """One contiguous period of one hazard used for delivery decisions."""
+    """One contiguous serious period used as the last-notified baseline."""
 
     risk_type: RiskType
     start_date: date
@@ -43,7 +51,7 @@ class RiskEpisodeState:
 
 @dataclass(frozen=True, slots=True)
 class RiskStateChange:
-    """Semantic change for one hazard between delivered and current forecasts."""
+    """Qualitative change between the last notification and current forecast."""
 
     risk_type: RiskType
     previous: tuple[RiskEpisodeState, ...]
@@ -123,6 +131,19 @@ def _make_episode(
     )
 
 
+def _episode_is_actionable(
+    episode: RiskEpisodeState,
+    *,
+    as_of_date: date,
+) -> bool:
+    lead_days = max(0, (episode.start_date - as_of_date).days)
+    if episode.highest_level == "watch":
+        return False
+    if episode.highest_level == "elevated":
+        return lead_days <= _ELEVATED_LEAD_DAYS
+    return lead_days <= _HIGH_LEAD_DAYS
+
+
 def _episode_states(
     signals: Sequence[RiskSignalLike],
     *,
@@ -140,11 +161,15 @@ def _episode_states(
         current: list[RiskSignalLike] = []
         for signal in ordered:
             if current and (signal.event_date - current[-1].event_date).days > 1:
-                episodes.append(_make_episode(risk_type, current))
+                episode = _make_episode(risk_type, current)
+                if _episode_is_actionable(episode, as_of_date=as_of_date):
+                    episodes.append(episode)
                 current = []
             current.append(signal)
         if current:
-            episodes.append(_make_episode(risk_type, current))
+            episode = _make_episode(risk_type, current)
+            if _episode_is_actionable(episode, as_of_date=as_of_date):
+                episodes.append(episode)
 
     episodes.sort(
         key=lambda episode: (
@@ -257,34 +282,126 @@ def _transition_token(
     return f"transition:{digest}"
 
 
-def _changes(
+def _urgency_band(value: date, *, as_of_date: date) -> int:
+    lead_days = max(0, (value - as_of_date).days)
+    if lead_days <= 1:
+        return 0
+    if lead_days <= 3:
+        return 1
+    if lead_days <= 7:
+        return 2
+    return 3
+
+
+def _pair_is_material(
+    previous: RiskEpisodeState,
+    current: RiskEpisodeState,
+    *,
+    as_of_date: date,
+) -> bool:
+    if previous.highest_level != current.highest_level:
+        return True
+    start_shift = abs((current.start_date - previous.start_date).days)
+    end_shift = abs((current.end_date - previous.end_date).days)
+    if start_shift >= _MATERIAL_DATE_SHIFT_DAYS:
+        return True
+    if end_shift >= _MATERIAL_DATE_SHIFT_DAYS:
+        return True
+    return _urgency_band(
+        previous.start_date,
+        as_of_date=as_of_date,
+    ) != _urgency_band(current.start_date, as_of_date=as_of_date)
+
+
+def _episode_distance(
+    previous: RiskEpisodeState,
+    current: RiskEpisodeState,
+) -> tuple[int, int, int]:
+    overlap = not (
+        previous.end_date < current.start_date
+        or current.end_date < previous.start_date
+    )
+    return (
+        0 if overlap else 1,
+        abs((current.start_date - previous.start_date).days),
+        abs((current.end_date - previous.end_date).days),
+    )
+
+
+def _match_episodes(
     previous: tuple[RiskEpisodeState, ...],
     current: tuple[RiskEpisodeState, ...],
-) -> tuple[RiskStateChange, ...]:
-    previous_by_type: dict[RiskType, list[RiskEpisodeState]] = {}
-    current_by_type: dict[RiskType, list[RiskEpisodeState]] = {}
-    for episode in previous:
-        previous_by_type.setdefault(episode.risk_type, []).append(episode)
-    for episode in current:
-        current_by_type.setdefault(episode.risk_type, []).append(episode)
+) -> tuple[
+    tuple[tuple[RiskEpisodeState, RiskEpisodeState], ...],
+    tuple[RiskEpisodeState, ...],
+    tuple[RiskEpisodeState, ...],
+]:
+    remaining = list(current)
+    pairs: list[tuple[RiskEpisodeState, RiskEpisodeState]] = []
+    unmatched_previous: list[RiskEpisodeState] = []
+    for old in previous:
+        if not remaining:
+            unmatched_previous.append(old)
+            continue
+        index = min(
+            range(len(remaining)),
+            key=lambda item: _episode_distance(old, remaining[item]),
+        )
+        candidate = remaining[index]
+        if _episode_distance(old, candidate)[0] > 0:
+            unmatched_previous.append(old)
+            continue
+        pairs.append((old, remaining.pop(index)))
+    return tuple(pairs), tuple(unmatched_previous), tuple(remaining)
+
+
+def _material_change_plan(
+    previous: tuple[RiskEpisodeState, ...],
+    current: tuple[RiskEpisodeState, ...],
+    *,
+    as_of_date: date,
+) -> tuple[tuple[RiskStateChange, ...], tuple[RiskEpisodeState, ...]]:
+    previous_by_type: dict[RiskType, tuple[RiskEpisodeState, ...]] = {}
+    current_by_type: dict[RiskType, tuple[RiskEpisodeState, ...]] = {}
+    for risk_type in _RISK_ORDER:
+        previous_by_type[risk_type] = tuple(
+            episode for episode in previous if episode.risk_type == risk_type
+        )
+        current_by_type[risk_type] = tuple(
+            episode for episode in current if episode.risk_type == risk_type
+        )
 
     changes: list[RiskStateChange] = []
-    risk_types = sorted(
-        set(previous_by_type) | set(current_by_type),
-        key=_RISK_ORDER.__getitem__,
-    )
-    for risk_type in risk_types:
-        old = tuple(previous_by_type.get(risk_type, ()))
-        new = tuple(current_by_type.get(risk_type, ()))
-        if old != new:
-            changes.append(
-                RiskStateChange(
-                    risk_type=risk_type,
-                    previous=old,
-                    current=new,
-                )
+    candidate_state: list[RiskEpisodeState] = []
+    for risk_type in _RISK_ORDER:
+        old = previous_by_type[risk_type]
+        new = current_by_type[risk_type]
+        if not old and not new:
+            continue
+        if not old:
+            changes.append(RiskStateChange(risk_type, (), new))
+            candidate_state.extend(new)
+            continue
+        if not new:
+            changes.append(RiskStateChange(risk_type, old, ()))
+            continue
+
+        pairs, removed, added = _match_episodes(old, new)
+        material = bool(removed or added)
+        if not material:
+            material = any(
+                _pair_is_material(previous_episode, current_episode, as_of_date=as_of_date)
+                for previous_episode, current_episode in pairs
             )
-    return tuple(changes)
+        if material:
+            changes.append(RiskStateChange(risk_type, old, new))
+            candidate_state.extend(new)
+        else:
+            # Preserve the last-notified baseline. Repeated one-day drift will
+            # eventually become a two-day change and create one useful update.
+            candidate_state.extend(old)
+
+    return tuple(changes), _canonical(candidate_state)
 
 
 def _events_for_episodes(
@@ -310,6 +427,34 @@ def _events_for_episodes(
     return tuple(selected)
 
 
+def _urgent_high_change(
+    change: RiskStateChange,
+    events: tuple[RiskEvent, ...],
+    *,
+    as_of_date: date,
+) -> bool:
+    if not change.current:
+        return False
+    previous_high = any(
+        episode.highest_level == "high" for episode in change.previous
+    )
+    current_high = any(
+        episode.highest_level == "high" for episode in change.current
+    )
+    if not current_high:
+        return False
+    if previous_high and all(
+        episode.highest_level == "high" for episode in change.previous
+    ):
+        return False
+    return any(
+        event.risk_type == change.risk_type
+        and event.level == "high"
+        and 0 <= (event.event_date - as_of_date).days <= _URGENT_HIGH_LEAD_DAYS
+        for event in events
+    )
+
+
 def plan_risk_delivery(
     events: tuple[RiskEvent, ...],
     *,
@@ -320,103 +465,92 @@ def plan_risk_delivery(
     quiet_hours_end: int | None = None,
     max_events: int = 5,
 ) -> RiskDeliveryDecision:
-    """Deliver only new or materially changed contiguous hazard periods.
+    """Deliver only qualitative, actionable risk transitions.
 
-    A forecast run is reduced to semantic episodes: hazard type, start date, end
-    date and highest level. Changes in raw ensemble fraction and quantiles do not
-    create another Telegram message. Elapsed dates are trimmed from both states,
-    so the ordinary passage of a heat period does not look like a forecast change.
+    Automatic messages are stricter than the manual forecast:
+    * watch signals are never pushed;
+    * elevated periods are introduced only within three days;
+    * high periods are introduced only within seven days;
+    * raw values, ensemble fractions and one-day boundary noise do not repeat;
+    * disappearance, level change or a two-day date change is material.
 
-    ``max_events`` limits changed hazard types in one Telegram message, not
-    individual days or periods. Unselected hazard types remain in the previous
-    baseline and are therefore delivered by a later run instead of being lost.
+    ``max_events`` limits changed hazard types in one Telegram message. Changes
+    not selected remain based on the previous delivered state and are not lost.
     """
 
     if max_events <= 0:
         raise ValueError("max_events must be positive")
+    if local_datetime.tzinfo is None or local_datetime.utcoffset() is None:
+        raise ValueError("local_datetime must be timezone-aware")
 
     resolved_mode = validate_risk_delivery_mode(mode)
-    current_full_state = _episode_states(
-        events,
-        as_of_date=local_datetime.date(),
+    as_of_date = local_datetime.date()
+    current_all = _for_mode(
+        _episode_states(events, as_of_date=as_of_date),
+        mode=resolved_mode,
     )
-    previous_full_state = _future_state(
-        previous_state,
-        as_of_date=local_datetime.date(),
+    old_state = _for_mode(
+        _future_state(previous_state, as_of_date=as_of_date),
+        mode=resolved_mode,
     )
-    current_state = _for_mode(current_full_state, mode=resolved_mode)
-    old_state = _for_mode(previous_full_state, mode=resolved_mode)
-    all_changes = _changes(old_state, current_state)
+    all_changes, candidate_state = _material_change_plan(
+        old_state,
+        current_all,
+        as_of_date=as_of_date,
+    )
     if not all_changes:
         return RiskDeliveryDecision(
             events=(),
             changes=(),
-            current_state=current_full_state,
+            current_state=candidate_state,
             deferred=False,
-            reason="существенных изменений периода нет",
+            reason="существенных изменений опасного периода нет",
             dedup_token=None,
         )
 
+    urgent_changes = tuple(
+        change
+        for change in all_changes
+        if _urgent_high_change(change, events, as_of_date=as_of_date)
+    )
     quiet = is_quiet_time(
         local_datetime,
         quiet_hours_start,
         quiet_hours_end,
     )
-    current_high_state = tuple(
-        episode
-        for episode in current_full_state
-        if episode.highest_level == "high"
-    )
-    previous_high_state = tuple(
-        episode
-        for episode in previous_full_state
-        if episode.highest_level == "high"
-    )
-    all_high_changes = _changes(previous_high_state, current_high_state)
-    high_priority_change = bool(all_high_changes) and bool(current_high_state)
-    priority_bypass = high_priority_change and (
+    priority_bypass = bool(urgent_changes) and (
         quiet or resolved_mode == "digest"
     )
 
-    if quiet and not high_priority_change:
+    if quiet and not urgent_changes:
         return RiskDeliveryDecision(
             events=(),
             changes=(),
-            current_state=previous_full_state,
+            current_state=old_state,
             deferred=True,
             reason="доставка отложена до окончания тихих часов",
             dedup_token=None,
         )
 
-    if priority_bypass:
-        selected_changes = all_high_changes[:max_events]
-        selected_state = _state_for_changes(current_high_state, selected_changes)
-        selected_previous_state = _state_for_changes(
-            previous_high_state,
-            selected_changes,
-        )
-        accepted_state = _accepted_changed_state(
-            previous_full_state,
-            current_high_state,
-            selected_changes,
-        )
-    else:
-        selected_changes = all_changes[:max_events]
-        selected_state = _state_for_changes(current_state, selected_changes)
-        selected_previous_state = _state_for_changes(old_state, selected_changes)
-        accepted_state = _accepted_changed_state(
-            previous_full_state,
-            current_full_state,
-            selected_changes,
-        )
-
+    selected_changes = (
+        urgent_changes[:max_events]
+        if priority_bypass
+        else all_changes[:max_events]
+    )
+    selected_state = _state_for_changes(candidate_state, selected_changes)
+    selected_previous_state = _state_for_changes(old_state, selected_changes)
+    accepted_state = _accepted_changed_state(
+        old_state,
+        candidate_state,
+        selected_changes,
+    )
     selected_events = _events_for_episodes(events, selected_state)
     dedup_token = _transition_token(
         selected_previous_state,
         selected_state,
     )
     daily_quota_token = (
-        f"daily:{local_datetime.date().isoformat()}"
+        f"daily:{as_of_date.isoformat()}"
         if resolved_mode == "digest" and not priority_bypass
         else None
     )
@@ -427,9 +561,9 @@ def plan_risk_delivery(
         current_state=accepted_state,
         deferred=False,
         reason=(
-            "высокий риск существенно изменился и доставляется без ожидания"
+            "ближайший высокий риск требует сообщения без ожидания"
             if priority_bypass
-            else "существенное изменение прогноза готово к доставке"
+            else "существенное изменение опасного периода готово к доставке"
         ),
         dedup_token=dedup_token,
         daily_quota_token=daily_quota_token,
