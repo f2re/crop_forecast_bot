@@ -93,7 +93,7 @@ async def _prepare_monitor(sessions, telegram_id: int, *, mode: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
+async def test_late_blight_scheduler_sends_only_material_extension_and_withdrawal(
     tmp_path,
 ) -> None:
     engine = create_async_engine(
@@ -122,8 +122,9 @@ async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
                 renew_interval_seconds=5,
             )
         assert len(bot.messages) == 1
-        assert "Появилось новое погодное окно" in bot.messages[0][1]
+        assert "Погодное окно ожидается" in bot.messages[0][1]
 
+        # One extra day is ordinary forecast noise and stays silent.
         provider.qualifying_days = 3
         await check_late_blight_monitoring(
             bot,  # type: ignore[arg-type]
@@ -134,8 +135,21 @@ async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
             job_lock_ttl_seconds=60,
             renew_interval_seconds=5,
         )
+        assert len(bot.messages) == 1
+
+        # Two extra days change the practical inspection window.
+        provider.qualifying_days = 4
+        await check_late_blight_monitoring(
+            bot,  # type: ignore[arg-type]
+            sessions,
+            coordination,
+            provider=provider,
+            now_utc=now,
+            job_lock_ttl_seconds=60,
+            renew_interval_seconds=5,
+        )
         assert len(bot.messages) == 2
-        assert "продлится дольше" in bot.messages[1][1]
+        assert "Период может продлиться" in bot.messages[1][1]
 
         provider.qualifying_days = 0
         for _ in range(2):
@@ -149,7 +163,7 @@ async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
                 renew_interval_seconds=5,
             )
         assert len(bot.messages) == 3
-        assert "больше не подтверждается" in bot.messages[2][1]
+        assert "больше не подтверждается прогнозом" in bot.messages[2][1]
 
         async with sessions() as session:
             saved = await get_active_late_blight_context(session, 8101)
@@ -162,7 +176,7 @@ async def test_late_blight_scheduler_sends_new_extension_and_withdrawal_once(
 
 
 @pytest.mark.asyncio
-async def test_digest_retains_same_day_change_and_sends_it_next_local_day(
+async def test_digest_retains_material_same_day_change_and_sends_next_local_day(
     tmp_path,
 ) -> None:
     engine = create_async_engine(
@@ -190,7 +204,7 @@ async def test_digest_retains_same_day_change_and_sends_it_next_local_day(
         )
         assert len(bot.messages) == 1
 
-        provider.qualifying_days = 3
+        provider.qualifying_days = 4
         await check_late_blight_monitoring(
             bot,  # type: ignore[arg-type]
             sessions,
@@ -217,7 +231,7 @@ async def test_digest_retains_same_day_change_and_sends_it_next_local_day(
             renew_interval_seconds=5,
         )
         assert len(bot.messages) == 2
-        assert "продлится дольше" in bot.messages[1][1]
+        assert "Период может продлиться" in bot.messages[1][1]
     finally:
         await coordination.close()
         await engine.dispose()
