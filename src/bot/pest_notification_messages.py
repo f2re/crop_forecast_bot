@@ -20,7 +20,7 @@ def format_semantic_pest_notification(
     field_name: str,
     crop_key: str,
 ) -> str:
-    """Render explicit forecast-window changes while preserving old messages."""
+    """Render only material changes in the recommended scouting date."""
 
     if not isinstance(notification, SemanticPestNotification):
         return format_pest_notification(
@@ -38,9 +38,6 @@ def format_semantic_pest_notification(
         )
 
     model = outlook.model
-    heading = (
-        f"🐛 <b>Уточнение окна осмотра: {html.escape(model.name_ru)}</b>"
-    )
     context = (
         f"🗺 {html.escape(field_name)} · "
         f"{html.escape(get_crop_name(crop_key))}"
@@ -48,28 +45,49 @@ def format_semantic_pest_notification(
     stage = html.escape(notification.stage.label)
     previous = _date_label(notification.previous_expected_date)
     current = _date_label(notification.expected_date)
+    action = html.escape(notification.stage.scouting_action)
 
     if notification.change == "earlier":
-        change_text = (
-            f"Расчётное окно «{stage}» ожидается раньше: "
-            f"<b>{current}</b> вместо {previous}."
+        heading = (
+            f"🐛 <b>Осмотр поля лучше провести раньше: "
+            f"{html.escape(model.name_ru)}</b>"
         )
-    elif notification.change == "later":
         change_text = (
-            f"Расчётное окно «{stage}» ожидается позже: "
-            f"<b>{current}</b> вместо {previous}."
+            f"Окно «{stage}» теперь ожидается около <b>{current}</b>, "
+            f"раньше было {previous}."
+        )
+        action_text = f"Что лучше сделать: {action}"
+    elif notification.change == "later":
+        heading = (
+            f"🐛 <b>Срок осмотра поля сдвинулся: "
+            f"{html.escape(model.name_ru)}</b>"
+        )
+        change_text = (
+            f"Окно «{stage}» теперь ожидается около <b>{current}</b>, "
+            f"раньше было {previous}."
+        )
+        action_text = (
+            "Срочного осмотра не требуется; ориентируйтесь на новую дату."
         )
     elif notification.change == "withdrawn":
-        change_text = (
-            f"Ранее ожидавшийся вход в окно «{stage}» около "
-            f"<b>{previous}</b> больше не подтверждается текущим "
-            "температурным прогнозом."
+        heading = (
+            f"✅ <b>Плановый осмотр пока можно отложить: "
+            f"{html.escape(model.name_ru)}</b>"
         )
+        change_text = (
+            f"Ранее ожидавшееся окно «{stage}» около <b>{previous}</b> "
+            "больше не подтверждается температурным прогнозом."
+        )
+        action_text = "Вернитесь к обычному наблюдению за полем."
     else:
-        change_text = (
-            f"После предыдущего снятия окно «{stage}» снова подтверждается. "
-            f"Новая ориентировочная дата: <b>{current}</b>."
+        heading = (
+            f"🐛 <b>Окно осмотра снова ожидается: "
+            f"{html.escape(model.name_ru)}</b>"
         )
+        change_text = (
+            f"Окно «{stage}» снова ожидается около <b>{current}</b>."
+        )
+        action_text = f"Что лучше сделать: {action}"
 
     return "\n".join(
         [
@@ -77,11 +95,8 @@ def format_semantic_pest_notification(
             context,
             "",
             change_text,
+            action_text,
             "",
-            f"Что сделать: {html.escape(notification.stage.scouting_action)}",
-            "",
-            "Это уточнение времени обследования, а не доказательство наличия "
-            "вредителя и не команда на обработку. Проверьте вид, численность и "
-            "повреждение непосредственно на поле.",
+            "Это ориентир для осмотра, а не признак наличия вредителя.",
         ]
     )

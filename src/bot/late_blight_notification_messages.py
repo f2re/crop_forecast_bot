@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import html
 from datetime import date
-from zoneinfo import ZoneInfo
 
-from src.bot.late_blight_moisture_messages import format_compact_night_moisture
 from src.domain.late_blight import LateBlightOutlook
 from src.domain.late_blight_delivery import (
     InoculumContext,
@@ -14,8 +12,8 @@ from src.domain.late_blight_delivery import (
 
 _CONTEXT_LABELS: dict[InoculumContext, str] = {
     "unknown": "источник инфекции не подтверждён",
-    "regional_alert_confirmed": "есть подтверждённое региональное сообщение",
-    "nearby_outbreak_confirmed": "подтверждён близлежащий очаг",
+    "regional_alert_confirmed": "есть указанное региональное сообщение",
+    "nearby_outbreak_confirmed": "рядом указан подтверждённый очаг",
     "field_source_suspected": "на поле отмечен возможный источник инфекции",
     "field_symptoms_observed": "на поле отмечены подозрительные симптомы",
 }
@@ -30,76 +28,66 @@ def _date_range(start: date, end: date) -> str:
 
 
 def _periods_text(periods: tuple[LateBlightEpisodeState, ...]) -> str:
-    if not periods:
-        return "нет"
-    return ", ".join(_date_range(item.start_date, item.end_date) for item in periods)
+    return ", ".join(
+        _date_range(item.start_date, item.end_date) for item in periods
+    )
 
 
-def _change_lines(decision: LateBlightDeliveryDecision) -> list[str]:
+def _change_text(decision: LateBlightDeliveryDecision) -> str:
     change = decision.change
     if change is None:
-        return []
+        return ""
     previous = change.previous
     current = change.current
     old_text = _periods_text(previous)
     new_text = _periods_text(current)
 
     if change.kind == "new":
-        return [f"Появилось новое погодное окно: <b>{new_text}</b>."]
+        return f"Погодное окно ожидается <b>{new_text}</b>."
     if change.kind == "restored":
-        return [f"Ранее снятое окно снова подтверждается: <b>{new_text}</b>."]
+        return f"Ранее снятое погодное окно снова ожидается: <b>{new_text}</b>."
     if change.kind == "withdrawn":
-        return [
+        return (
             f"Ранее ожидавшееся окно <b>{old_text}</b> больше не "
             "подтверждается прогнозом."
-        ]
+        )
     if change.kind == "extended" and previous and current:
-        return [
-            "Погодное окно продлится дольше: до "
-            f"<b>{current[0].end_date:%d.%m}</b> вместо "
-            f"{previous[0].end_date:%d.%m}."
-        ]
+        return (
+            "Период может продлиться до "
+            f"<b>{current[0].end_date:%d.%m}</b> "
+            f"(ранее — до {previous[0].end_date:%d.%m})."
+        )
     if change.kind == "shortened" and previous and current:
-        return [
-            "Погодное окно закончится раньше: "
-            f"<b>{current[0].end_date:%d.%m}</b> вместо "
-            f"{previous[0].end_date:%d.%m}."
-        ]
+        return (
+            "Период может закончиться "
+            f"<b>{current[0].end_date:%d.%m}</b> "
+            f"(ранее — {previous[0].end_date:%d.%m})."
+        )
     if change.kind == "starts_earlier" and previous and current:
-        return [
-            "Погодное окно начнётся раньше: "
-            f"<b>{current[0].start_date:%d.%m}</b> вместо "
-            f"{previous[0].start_date:%d.%m}."
-        ]
+        return (
+            "Условия могут начаться раньше: "
+            f"<b>{current[0].start_date:%d.%m}</b> "
+            f"вместо {previous[0].start_date:%d.%m}."
+        )
     if change.kind == "starts_later" and previous and current:
-        return [
-            "Погодное окно начнётся позже: "
-            f"<b>{current[0].start_date:%d.%m}</b> вместо "
-            f"{previous[0].start_date:%d.%m}."
-        ]
-    if change.kind == "split":
-        return [f"Единый период разделился: теперь <b>{new_text}</b>."]
-    if change.kind == "merged":
-        return [f"Несколько периодов объединились: теперь <b>{new_text}</b>."]
+        return (
+            "Условия ожидаются позже: "
+            f"<b>{current[0].start_date:%d.%m}</b> "
+            f"вместо {previous[0].start_date:%d.%m}."
+        )
     if change.kind == "context_confirmed":
-        return [
-            "Для действующего погодного окна появился дополнительный "
-            f"контекст: <b>{html.escape(_CONTEXT_LABELS[change.current_context])}</b>."
-        ]
-    if change.kind == "context_cleared":
-        return [
-            "Подтверждение источника инфекции снято; остаётся только "
-            "погодная благоприятность."
-        ]
-    if change.kind == "context_changed":
-        return [
-            "Контекст источника инфекции изменён: "
+        return (
+            "К погодному окну добавлен важный контекст: "
             f"<b>{html.escape(_CONTEXT_LABELS[change.current_context])}</b>."
-        ]
-    return [
-        f"Границы погодного окна изменились: было {old_text}, "
-        f"теперь <b>{new_text}</b>."
-    ]
+        )
+    if change.kind == "context_cleared":
+        return "Указанный источник инфекции снят; остаётся только погодный фактор."
+    if change.kind == "context_changed":
+        return (
+            "Контекст поля уточнён: "
+            f"<b>{html.escape(_CONTEXT_LABELS[change.current_context])}</b>."
+        )
+    return f"Погодное окно уточнилось: теперь <b>{new_text}</b>."
 
 
 def format_late_blight_change_notification(
@@ -108,65 +96,42 @@ def format_late_blight_change_notification(
     *,
     field_name: str,
 ) -> str:
-    lines = [
-        "🦠 <b>Фитофтороз картофеля — изменение погодного окна</b>",
-        f"🗺 {html.escape(field_name)}",
-        "",
-        *_change_lines(decision),
-    ]
-    if decision.current_state.active_periods:
-        lines.extend(
-            [
-                "",
-                "<b>Текущее окно</b>",
-                *(
-                    f"• {_date_range(period.start_date, period.end_date)}"
-                    for period in decision.current_state.active_periods
-                ),
-            ]
-        )
-        night_context = format_compact_night_moisture(
-            outlook,
-            periods=decision.current_state.active_periods,
-        )
-        if night_context is not None:
-            lines.extend(["", night_context])
+    del outlook
+    change = decision.change
+    withdrawn = change is not None and change.kind == "withdrawn"
 
-    lines.extend(
-        [
+    if withdrawn:
+        lines = [
+            "✅ <b>Погодное окно фитофтороза больше не ожидается</b>",
+            f"🗺 {html.escape(field_name)}",
             "",
-            "<b>Что делать сейчас</b>",
-            "• осмотреть нижнюю сторону листьев и водянистые быстро растущие пятна;",
-            "• проверить падалицу и места хранения отбракованных клубней;",
-            "• сверить региональные сообщения об очагах.",
-            "",
-            "Критерий Hutton означает два последовательных местных дня с "
-            "Tmin не ниже 10 °C и не менее 6 часов RH ≥90 % в каждый день.",
-            "Резкий перепад температуры не является отдельным критерием: он "
-            "важен лишь когда сопровождается насыщением воздуха, росой, туманом "
-            "или другим длительным увлажнением.",
-            "Модельные параметры открытого воздуха не равны микроклимату ботвы "
-            "или увлажнению листа. Погодное окно не подтверждает наличие "
-            "возбудителя, заражение или необходимость обработки.",
+            _change_text(decision),
+            "Специальный осмотр по этому прогнозу пока не нужен.",
         ]
-    )
-    if decision.current_state.inoculum_context != "unknown":
-        lines.append(
-            "Дополнительный контекст: "
-            + html.escape(
-                _CONTEXT_LABELS[decision.current_state.inoculum_context]
+    else:
+        context = decision.current_state.inoculum_context
+        heading = (
+            "🟠 <b>Фитофтороз картофеля: проверьте поле</b>"
+            if context != "unknown"
+            else "🦠 <b>Погода благоприятна для фитофтороза картофеля</b>"
+        )
+        lines = [
+            heading,
+            f"🗺 {html.escape(field_name)}",
+            "",
+            _change_text(decision),
+            "Что сделать: осмотрите нижние листья и возможные источники инфекции.",
+        ]
+        if context == "unknown":
+            lines.append(
+                "Это только погодные условия: наличие инфекции не подтверждено."
             )
-            + "."
-        )
+        else:
+            lines.append(
+                "Контекст указан пользователем; диагноз всё равно нужно подтвердить."
+            )
 
-    retrieved = outlook.retrieved_at.astimezone(ZoneInfo(outlook.timezone))
-    timezone_label = retrieved.tzname() or outlook.timezone
-    lines.extend(
-        [
-            "",
-            f"Источник: {html.escape(outlook.source)} · "
-            f"модель {html.escape(outlook.model)} · "
-            f"{retrieved:%d.%m.%Y %H:%M} {html.escape(timezone_label)}.",
-        ]
-    )
-    return "\n".join(lines)
+    text = "\n".join(line for line in lines if line)
+    if len(text) > 1200:
+        raise ValueError("Late-blight notification is unexpectedly long")
+    return text

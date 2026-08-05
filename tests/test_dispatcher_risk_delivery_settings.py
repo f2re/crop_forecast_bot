@@ -63,7 +63,10 @@ async def test_dispatcher_updates_risk_delivery_mode_and_quiet_hours(tmp_path) -
         assert stored.risk_delivery_mode == "digest"
         assert stored.quiet_hours_start == 22
         assert stored.quiet_hours_end == 7
-        assert any("один дайджест в сутки" in text for text in telegram.texts)
+        assert any(
+            "не более одного сообщения в сутки" in text
+            for text in telegram.texts
+        )
         assert any("22:00–07:00" in text for text in telegram.texts)
     finally:
         await storage.close()

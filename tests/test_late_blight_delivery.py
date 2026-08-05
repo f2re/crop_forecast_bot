@@ -63,7 +63,29 @@ def test_new_period_is_delivered_once_and_natural_day_passage_is_silent() -> Non
     )
 
 
-def test_period_extension_and_shortening_are_material_changes() -> None:
+def test_one_day_boundary_noise_is_silent_and_keeps_notified_baseline() -> None:
+    previous = LateBlightDeliveryState(
+        active_periods=(
+            LateBlightEpisodeState(date(2026, 8, 5), date(2026, 8, 9)),
+        ),
+        withdrawn_periods=(),
+        inoculum_context="unknown",
+    )
+    decision = plan_late_blight_delivery(
+        (_period(date(2026, 8, 5), date(2026, 8, 10)),),
+        previous_state=previous,
+        inoculum_context="unknown",
+        mode="immediate",
+        local_datetime=_local(date(2026, 8, 5)),
+        quiet_hours_start=None,
+        quiet_hours_end=None,
+    )
+
+    assert decision.change is None
+    assert decision.current_state.active_periods == previous.active_periods
+
+
+def test_cumulative_two_day_extension_and_shortening_are_material() -> None:
     previous = LateBlightDeliveryState(
         active_periods=(
             LateBlightEpisodeState(date(2026, 8, 5), date(2026, 8, 9)),
@@ -94,6 +116,28 @@ def test_period_extension_and_shortening_are_material_changes() -> None:
     )
     assert shortened.change is not None
     assert shortened.change.kind == "shortened"
+
+
+def test_one_day_earlier_move_is_material_when_it_enters_immediate_band() -> None:
+    previous = LateBlightDeliveryState(
+        active_periods=(
+            LateBlightEpisodeState(date(2026, 8, 7), date(2026, 8, 9)),
+        ),
+        withdrawn_periods=(),
+        inoculum_context="unknown",
+    )
+    decision = plan_late_blight_delivery(
+        (_period(date(2026, 8, 6), date(2026, 8, 9)),),
+        previous_state=previous,
+        inoculum_context="unknown",
+        mode="immediate",
+        local_datetime=_local(date(2026, 8, 5)),
+        quiet_hours_start=None,
+        quiet_hours_end=None,
+    )
+
+    assert decision.change is not None
+    assert decision.change.kind == "starts_earlier"
 
 
 def test_withdrawn_period_is_remembered_and_restored_once() -> None:
@@ -169,7 +213,7 @@ def test_digest_uses_local_day_quota_and_quiet_hours_defer() -> None:
     assert quiet.dedup_token is None
 
 
-def test_confirmed_context_bypasses_quiet_hours_and_high_only_filter() -> None:
+def test_confirmed_context_bypasses_quiet_only_for_immediate_window() -> None:
     previous = LateBlightDeliveryState(
         active_periods=(
             LateBlightEpisodeState(date(2026, 8, 5), date(2026, 8, 7)),
@@ -190,8 +234,28 @@ def test_confirmed_context_bypasses_quiet_hours_and_high_only_filter() -> None:
     assert confirmed.change.kind == "context_confirmed"
     assert confirmed.priority_bypass is True
     assert confirmed.deferred is False
-    assert confirmed.daily_quota_token is None
 
+    later_previous = LateBlightDeliveryState(
+        active_periods=(
+            LateBlightEpisodeState(date(2026, 8, 8), date(2026, 8, 10)),
+        ),
+        withdrawn_periods=(),
+        inoculum_context="unknown",
+    )
+    later = plan_late_blight_delivery(
+        (_period(date(2026, 8, 8), date(2026, 8, 10)),),
+        previous_state=later_previous,
+        inoculum_context="regional_alert_confirmed",
+        mode="immediate",
+        local_datetime=_local(date(2026, 8, 5), 23),
+        quiet_hours_start=22,
+        quiet_hours_end=7,
+    )
+    assert later.deferred is True
+    assert later.priority_bypass is False
+
+
+def test_high_only_silently_tracks_unknown_context() -> None:
     unknown = plan_late_blight_delivery(
         (_period(date(2026, 8, 5), date(2026, 8, 7)),),
         previous_state=empty_late_blight_delivery_state(),

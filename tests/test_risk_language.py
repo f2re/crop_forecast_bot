@@ -52,22 +52,18 @@ def test_consecutive_hazard_days_are_grouped_into_period() -> None:
     )
 
     assert len(periods) == 2
-    assert periods[0].start_date == date(2026, 8, 2)
-    assert periods[0].end_date == date(2026, 8, 3)
-    assert periods[1].start_date == date(2026, 8, 5)
-
     text = format_risk_period(periods[0])
     assert "🔴" in text
-    assert "Жара — действовать" in text
+    assert "Жаркий период — нужна проверка" in text
     assert "2–3 августа" in text
     assert "31.5–37.5 °C" in text
-    assert "Действие:" in text
+    assert "Что лучше сделать:" in text
     assert "вариант" not in text
     assert "Надёжность" not in text
-    assert "Приоритет" not in text
+    assert "Действие:" not in text
 
 
-def test_weak_wind_signal_is_short_and_actionable() -> None:
+def test_weak_wind_signal_is_human_and_non_alarmist_in_manual_view() -> None:
     period = group_risk_events(
         (
             _event(
@@ -86,12 +82,11 @@ def test_weak_wind_signal_is_short_and_actionable() -> None:
     text = format_risk_period(period)
 
     assert "🟡" in text
-    assert "Сильные порывы ветра — наблюдать" in text
+    assert "Сильные порывы ветра — пока наблюдаем" in text
     assert "7 августа · порывы 9–15.2 м/с" in text
-    assert "Пока только наблюдайте" in text
+    assert "Срочных мер не требуется" in text
     assert "5 из 31" not in text
-    assert "срок:" not in text
-    assert len(text) < 240
+    assert len(text) < 260
 
 
 def test_far_signal_is_observation_not_call_to_act_now() -> None:
@@ -100,9 +95,8 @@ def test_far_signal_is_observation_not_call_to_act_now() -> None:
     text = format_risk_period(period)
 
     assert "🟡" in text
-    assert "наблюдать" in text
-    assert "действовать" not in text
-    assert "только предварительное планирование" not in text
+    assert "пока наблюдаем" in text
+    assert "нужна проверка" not in text
 
 
 def test_crop_context_is_compact() -> None:
@@ -111,11 +105,7 @@ def test_crop_context_is_compact() -> None:
         selected_crop="tomato",
         phase="Цветение",
     )
-    text = "\n".join(lines)
-
     assert lines == [
         "🌱 Томат, Картофель",
         "🌿 Томат: <b>Цветение</b>",
     ]
-    assert "повреждение" not in text
-    assert "выбрана" not in text

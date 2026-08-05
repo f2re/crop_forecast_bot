@@ -16,10 +16,12 @@ PestAdvanceChange = Literal[
 ]
 PestAdvanceStateKind = Literal["legacy", "expected", "withdrawn"]
 
+_MATERIAL_DATE_SHIFT_DAYS = 2
+
 
 @dataclass(frozen=True, slots=True)
 class SemanticPestNotification(PestNotification):
-    """Pest reminder carrying a semantic forecast-window transition."""
+    """Pest reminder carrying a qualitative forecast-window transition."""
 
     state_key: str
     change: PestAdvanceChange | None = None
@@ -89,6 +91,20 @@ def _transition_key(
     return f"{prefix}:transition:{digest}"
 
 
+def _date_change_is_material(
+    previous: date,
+    current: date,
+    *,
+    today: date,
+    material_shift_days: int,
+) -> bool:
+    shift_days = (current - previous).days
+    if abs(shift_days) >= material_shift_days:
+        return True
+    # A one-day acceleration matters only when the field check moves to today.
+    return current <= today < previous
+
+
 def pest_notification_state_key(notification: PestNotification) -> str:
     if isinstance(notification, SemanticPestNotification):
         return notification.state_key
@@ -102,13 +118,14 @@ def choose_semantic_pest_notification(
     last_notified_advance: str | None,
     today: date,
     advance_days: int = 3,
+    material_shift_days: int = _MATERIAL_DATE_SHIFT_DAYS,
 ) -> PestNotification | None:
-    """Choose one stage or forecast-window transition without daily repetition.
+    """Choose one meaningful scouting-window transition without daily noise.
 
-    The first approach reminder is emitted only inside ``advance_days``. Once an
-    approach was announced, a material calendar-date change is reported even if
-    the new date moves outside that initial window. A disappeared crossing is
-    explicitly withdrawn once and can later be restored.
+    A first reminder is sent only close to the expected window. After that,
+    disappearance/restoration is always reported, while ordinary one-day
+    forecast movement is ignored. The last notified date remains the baseline,
+    so cumulative movement of two or more days creates one useful update.
     """
 
     if not outlook.available or outlook.current_stage is None:
@@ -117,6 +134,8 @@ def choose_semantic_pest_notification(
         raise ValueError(
             "Срок предварительного напоминания не может быть отрицательным."
         )
+    if material_shift_days < 1:
+        raise ValueError("Существенный сдвиг должен быть не меньше одного дня.")
 
     root = _root(outlook)
     current_key = f"{root}:current:{outlook.current_stage.key}"
@@ -184,6 +203,14 @@ def choose_semantic_pest_notification(
         )
 
     assert previous.expected_date is not None
+    if not _date_change_is_material(
+        previous.expected_date,
+        projected,
+        today=today,
+        material_shift_days=material_shift_days,
+    ):
+        return None
+
     change: PestAdvanceChange = (
         "earlier" if projected < previous.expected_date else "later"
     )

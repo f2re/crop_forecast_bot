@@ -79,11 +79,12 @@ def test_digest_explains_heat_extension_concisely() -> None:
     assert "Что изменилось" in text
     assert "продлится дольше" in text
     assert "до 10 августа вместо 8 августа" in text
+    assert "Что лучше сделать:" in text
     assert "не создают повторное сообщение" not in text
     assert "Надёжность" not in text
 
 
-def test_digest_explains_cleared_future_heat_once() -> None:
+def test_digest_reports_cancelled_heat_as_improvement() -> None:
     change = RiskStateChange(
         risk_type="heat",
         previous=(
@@ -108,7 +109,8 @@ def test_digest_explains_cleared_future_heat_once() -> None:
         changes=(change,),
     )
 
-    assert "ранее ожидавшийся период" in text
-    assert "больше не подтверждается" in text
-    assert "выше порога больше не подтверждаются" in text
-    assert "модель не указана" not in text
+    assert text.startswith("✅")
+    assert "Прогноз улучшился" in text
+    assert "жара" in text
+    assert "больше не ожидаются" in text
+    assert "обычному контролю" in text
