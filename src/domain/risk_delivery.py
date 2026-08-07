@@ -11,9 +11,9 @@ RiskDeliveryMode = Literal["immediate", "digest", "high_only"]
 
 _DELIVERY_MODES = frozenset({"immediate", "digest", "high_only"})
 _MODE_LABELS: dict[RiskDeliveryMode, str] = {
-    "immediate": "только при новом, отменённом или заметно изменившемся опасном периоде",
-    "digest": "не более одного сообщения в сутки о существенных изменениях",
-    "high_only": "только ближайший высокий риск и его отмена",
+    "immediate": "только при подтверждённом существенном изменении ближайших суток",
+    "digest": "не более одного сообщения в сутки о подтверждённых изменениях",
+    "high_only": "только подтверждённый высокий риск ближайших суток и его отмена",
 }
 _LEVEL_ORDER: dict[RiskLevel, int] = {"watch": 0, "elevated": 1, "high": 2}
 _RISK_ORDER: dict[RiskType, int] = {
@@ -24,13 +24,14 @@ _RISK_ORDER: dict[RiskType, int] = {
     "convection": 4,
 }
 
-# Automatic alerts are deliberately stricter than the manual overview.
-# A weak/watch signal remains visible in history and /risks but never interrupts
-# the user. Elevated signals must be close; high signals may be announced earlier.
-_ELEVATED_LEAD_DAYS = 3
-_HIGH_LEAD_DAYS = 7
+# A background Telegram message is an interruption, not a full forecast.
+# The full ensemble horizon remains available in history and /risks, while push
+# delivery only acts on the next 72 hours. This prevents a volatile day-10/16
+# boundary from looking like an operational promise to the farmer.
+_AUTOMATIC_LEAD_DAYS = 3
 _URGENT_HIGH_LEAD_DAYS = 1
 _MATERIAL_DATE_SHIFT_DAYS = 2
+_BOUNDARY_DECISION_HORIZON_DAYS = 3
 
 
 class RiskSignalLike(Protocol):
@@ -136,12 +137,10 @@ def _episode_is_actionable(
     *,
     as_of_date: date,
 ) -> bool:
-    lead_days = max(0, (episode.start_date - as_of_date).days)
     if episode.highest_level == "watch":
         return False
-    if episode.highest_level == "elevated":
-        return lead_days <= _ELEVATED_LEAD_DAYS
-    return lead_days <= _HIGH_LEAD_DAYS
+    lead_days = max(0, (episode.start_date - as_of_date).days)
+    return lead_days <= _AUTOMATIC_LEAD_DAYS
 
 
 def _episode_states(
@@ -256,8 +255,6 @@ def _accepted_changed_state(
     current: tuple[RiskEpisodeState, ...],
     changes: tuple[RiskStateChange, ...],
 ) -> tuple[RiskEpisodeState, ...]:
-    """Advance only hazard types actually included in the Telegram message."""
-
     accepted_types = {change.risk_type for change in changes}
     retained = [
         episode for episode in previous if episode.risk_type not in accepted_types
@@ -279,21 +276,26 @@ def _state_signature(episodes: tuple[RiskEpisodeState, ...]) -> str:
 def _transition_token(
     previous: tuple[RiskEpisodeState, ...],
     current: tuple[RiskEpisodeState, ...],
+    *,
+    urgent: bool,
 ) -> str:
     signature = f"{_state_signature(previous)}->{_state_signature(current)}"
     digest = sha256(signature.encode("utf-8")).hexdigest()[:20]
-    return f"transition:{digest}"
+    prefix = "urgent-transition" if urgent else "confirmable-transition"
+    return f"{prefix}:{digest}"
 
 
 def _urgency_band(value: date, *, as_of_date: date) -> int:
     lead_days = max(0, (value - as_of_date).days)
     if lead_days <= 1:
         return 0
-    if lead_days <= 3:
+    if lead_days <= _AUTOMATIC_LEAD_DAYS:
         return 1
-    if lead_days <= 7:
-        return 2
-    return 3
+    return 2
+
+
+def _within_boundary_horizon(value: date, *, as_of_date: date) -> bool:
+    return (value - as_of_date).days <= _BOUNDARY_DECISION_HORIZON_DAYS
 
 
 def _pair_is_material(
@@ -304,16 +306,30 @@ def _pair_is_material(
 ) -> bool:
     if previous.highest_level != current.highest_level:
         return True
+
     start_shift = abs((current.start_date - previous.start_date).days)
-    end_shift = abs((current.end_date - previous.end_date).days)
     if start_shift >= _MATERIAL_DATE_SHIFT_DAYS:
         return True
-    if end_shift >= _MATERIAL_DATE_SHIFT_DAYS:
-        return True
-    return _urgency_band(
+    if _urgency_band(
         previous.start_date,
         as_of_date=as_of_date,
-    ) != _urgency_band(current.start_date, as_of_date=as_of_date)
+    ) != _urgency_band(current.start_date, as_of_date=as_of_date):
+        return True
+
+    # The end of a long period is not an operationally stable quantity. For
+    # example, 7–22 -> 7–13 August on 7 August must not interrupt the user: both
+    # possible endings are outside the decision window. It becomes relevant only
+    # when at least one ending is within the next 72 hours.
+    end_shift = abs((current.end_date - previous.end_date).days)
+    if end_shift < _MATERIAL_DATE_SHIFT_DAYS:
+        return False
+    return _within_boundary_horizon(
+        previous.end_date,
+        as_of_date=as_of_date,
+    ) or _within_boundary_horizon(
+        current.end_date,
+        as_of_date=as_of_date,
+    )
 
 
 def _episode_distance(
@@ -393,15 +409,20 @@ def _material_change_plan(
         material = bool(removed or added)
         if not material:
             material = any(
-                _pair_is_material(previous_episode, current_episode, as_of_date=as_of_date)
+                _pair_is_material(
+                    previous_episode,
+                    current_episode,
+                    as_of_date=as_of_date,
+                )
                 for previous_episode, current_episode in pairs
             )
         if material:
             changes.append(RiskStateChange(risk_type, old, new))
             candidate_state.extend(new)
         else:
-            # Preserve the last-notified baseline. Repeated one-day drift will
-            # eventually become a two-day change and create one useful update.
+            # Keep the last-notified baseline. Far-horizon boundary noise never
+            # becomes a stream of messages; the boundary is reconsidered only
+            # after it enters the 72-hour decision window.
             candidate_state.extend(old)
 
     return tuple(changes), _canonical(candidate_state)
@@ -468,17 +489,12 @@ def plan_risk_delivery(
     quiet_hours_end: int | None = None,
     max_events: int = 5,
 ) -> RiskDeliveryDecision:
-    """Deliver only qualitative, actionable risk transitions.
+    """Deliver only close, qualitative and actionable risk transitions.
 
-    Automatic messages are stricter than the manual forecast:
-    * watch signals are never pushed;
-    * elevated periods are introduced only within three days;
-    * high periods are introduced only within seven days;
-    * raw values, ensemble fractions and one-day boundary noise do not repeat;
-    * disappearance, level change or a two-day date change is material.
-
-    ``max_events`` limits changed hazard types in one Telegram message. Changes
-    not selected remain based on the previous delivered state and are not lost.
+    The full ensemble horizon is still calculated and persisted, but background
+    Telegram delivery uses a conservative 72-hour decision window. Raw values,
+    ensemble fractions, weak signals and distant period endings do not create
+    repeated notifications.
     """
 
     if max_events <= 0:
@@ -507,7 +523,7 @@ def plan_risk_delivery(
             changes=(),
             current_state=candidate_state,
             deferred=False,
-            reason="существенных изменений опасного периода нет",
+            reason="существенных подтверждаемых изменений ближайших суток нет",
             dedup_token=None,
         )
 
@@ -548,9 +564,14 @@ def plan_risk_delivery(
         selected_changes,
     )
     selected_events = _events_for_episodes(events, selected_state)
+    urgent_types = {change.risk_type for change in urgent_changes}
+    urgent_selected = any(
+        change.risk_type in urgent_types for change in selected_changes
+    )
     dedup_token = _transition_token(
         selected_previous_state,
         selected_state,
+        urgent=urgent_selected,
     )
     daily_quota_token = (
         f"daily:{as_of_date.isoformat()}"
@@ -565,8 +586,8 @@ def plan_risk_delivery(
         deferred=False,
         reason=(
             "ближайший высокий риск требует сообщения без ожидания"
-            if priority_bypass
-            else "существенное изменение опасного периода готово к доставке"
+            if urgent_selected
+            else "существенное изменение ближайших суток ожидает подтверждения"
         ),
         dedup_token=dedup_token,
         daily_quota_token=daily_quota_token,
