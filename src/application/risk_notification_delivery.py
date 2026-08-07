@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 RiskSendOutcome = Literal["sent", "already_delivered", "deferred_daily"]
 
+# Routine transitions must remain stable across scheduler cycles. The candidate
+# survives long enough for several GFS cycles, while the minimum-age key prevents
+# an immediate retry of the same forecast run from masquerading as confirmation.
+_CONFIRMATION_TTL_SECONDS = 18 * 60 * 60
+_CONFIRMATION_MIN_AGE_SECONDS = 4 * 60 * 60
+_CONFIRMABLE_MARKER = "confirmable-transition:"
+
 
 def _aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
@@ -39,13 +46,7 @@ def accepted_notification_time(
     *,
     now: datetime,
 ) -> datetime | None:
-    """Return a durable notification timestamp for accepted transitions.
-
-    ``already_delivered`` is important after a crash between the Telegram side
-    effect and PostgreSQL baseline update. The Redis transition key proves that
-    the message was accepted earlier, so recovery records a durable timestamp
-    and prevents another ordinary digest on the same local day.
-    """
+    """Return a durable notification timestamp for accepted transitions."""
 
     if outcome == "deferred_daily":
         return None
@@ -82,6 +83,51 @@ async def _commit_safely(
         )
 
 
+async def _routine_transition_is_confirmed(
+    coordination: CoordinationBackend,
+    transition_key: str,
+) -> bool:
+    """Require a routine semantic transition to survive for several hours.
+
+    The first observation creates a long-lived candidate and a short minimum-age
+    key. A retry while the short key still exists remains silent. Once the
+    minimum-age key expires, the same semantic transition is considered stable.
+
+    Urgent transitions are encoded with a different token prefix and therefore
+    never enter this gate.
+    """
+
+    if _CONFIRMABLE_MARKER not in transition_key:
+        return True
+
+    candidate_key = f"{transition_key}:candidate"
+    minimum_age_key = f"{transition_key}:minimum-age"
+    candidate_lease = await coordination.acquire(
+        candidate_key,
+        _CONFIRMATION_TTL_SECONDS,
+    )
+    minimum_age_lease = await coordination.acquire(
+        minimum_age_key,
+        _CONFIRMATION_MIN_AGE_SECONDS,
+    )
+
+    if candidate_lease is not None:
+        # First observation. Both leases intentionally remain committed by their
+        # acquisition TTLs; no Telegram side effect and no baseline advance.
+        return False
+
+    if minimum_age_lease is None:
+        # Same semantic transition was seen again too soon. This includes an
+        # accidental/manual rerun of the same model cycle.
+        return False
+
+    # Candidate existed and the minimum age elapsed. The newly acquired short
+    # lease is no longer needed; releasing it keeps Telegram-send retries safe if
+    # the downstream call fails.
+    await _release_safely(coordination, minimum_age_lease)
+    return True
+
+
 async def send_risk_transition_once(
     coordination: CoordinationBackend,
     *,
@@ -92,18 +138,17 @@ async def send_risk_transition_once(
     daily_quota_key: str | None = None,
     daily_quota_ttl_seconds: int | None = None,
 ) -> RiskSendOutcome:
-    """Send one semantic transition under an optional local-day quota.
+    """Send one stable semantic transition under an optional local-day quota.
 
-    The transition key answers: "was this exact forecast change delivered?".
-    The daily key answers: "was an ordinary digest already delivered today?".
-    They must remain separate:
+    Normal weather transitions marked ``confirmable-transition`` are first held
+    as candidates. The same transition must still be present after the minimum
+    confirmation interval before Telegram is called. Urgent high-risk tokens skip
+    this gate.
 
-    * an existing transition key means the Telegram side effect was already
-      accepted, so PostgreSQL may advance to the new semantic baseline;
-    * an occupied daily key means this different change must remain pending for
-      the next local day;
-    * if the daily quota is unavailable, the short transition reservation is
-      released so the same change can be retried later.
+    ``deferred_daily`` is retained as the existing compatibility outcome for any
+    transition that must remain pending without advancing the PostgreSQL
+    last-notified baseline. It therefore covers both daily quota deferral and the
+    confirmation hold.
     """
 
     if reservation_ttl_seconds <= 0:
@@ -121,6 +166,9 @@ async def send_risk_transition_once(
             raise ValueError(
                 "daily_quota_ttl_seconds must exceed reservation_ttl_seconds"
             )
+
+    if not await _routine_transition_is_confirmed(coordination, transition_key):
+        return "deferred_daily"
 
     transition_lease = await coordination.acquire(
         transition_key,

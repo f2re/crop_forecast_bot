@@ -213,7 +213,7 @@ def _patch_common(
 
 
 @pytest.mark.asyncio
-async def test_scheduler_sends_near_serious_period_once(
+async def test_scheduler_sends_near_serious_period_after_confirmation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     event_date = date(2026, 7, 19)
@@ -224,8 +224,12 @@ async def test_scheduler_sends_near_serious_period_once(
         signal_ids={("heavy_rain", event_date): 99},
     )
 
+    clock = [0.0]
     bot = RecordingBot()
-    coordination = MemoryCoordination(namespace="test-ensemble-scheduler")
+    coordination = MemoryCoordination(
+        namespace="test-ensemble-scheduler",
+        clock=lambda: clock[0],
+    )
     try:
         await check_weather_risk_alerts(
             bot,
@@ -233,6 +237,9 @@ async def test_scheduler_sends_near_serious_period_once(
             coordination,
             provider=FakeProvider(_ensemble(retrieved_hour=0)),
         )
+        assert bot.messages == []
+
+        clock[0] += 5 * 60 * 60
         await check_weather_risk_alerts(
             bot,
             object(),
@@ -244,15 +251,15 @@ async def test_scheduler_sends_near_serious_period_once(
 
     assert len(bot.messages) == 1
     text = bot.messages[0][1]
-    assert "Погода требует внимания: Северное" in text
+    assert "Погода: Северное" in text
     assert "Сильный дождь" in text
     assert "Что лучше сделать:" in text
     assert "Пшеница, Картофель" in text
     assert "22 из 31" not in text
     assert "Надёжность" not in text
-    assert delivery_states == ["sending", "sent"]
-    assert len(semantic_states) == 2
-    assert semantic_states[0] == semantic_states[1]
+    assert delivery_states == ["sending", "deferred", "sending", "sent"]
+    assert len(semantic_states) == 1
+    assert semantic_states[0][0].risk_type == "heavy_rain"
 
 
 @pytest.mark.asyncio
@@ -316,7 +323,7 @@ async def test_scheduler_defers_non_urgent_change_in_quiet_hours(
 
 
 @pytest.mark.asyncio
-async def test_scheduler_sends_one_digest_for_multiple_serious_events(
+async def test_scheduler_sends_one_digest_for_stable_serious_events(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     event_date = date(2026, 7, 19)
@@ -330,14 +337,29 @@ async def test_scheduler_sends_one_digest_for_multiple_serious_events(
         },
     )
 
+    clock = [0.0]
     bot = RecordingBot()
-    coordination = MemoryCoordination(namespace="test-ensemble-digest")
+    coordination = MemoryCoordination(
+        namespace="test-ensemble-digest",
+        clock=lambda: clock[0],
+    )
     try:
+        first = _ensemble(rain_members=10, wind_members=10, retrieved_hour=0)
         await check_weather_risk_alerts(
             bot,
             object(),
             coordination,
-            provider=FakeProvider(_ensemble(rain_members=10, wind_members=10)),
+            provider=FakeProvider(first),
+        )
+        assert bot.messages == []
+
+        clock[0] += 5 * 60 * 60
+        second = _ensemble(rain_members=10, wind_members=10, retrieved_hour=6)
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(second),
         )
     finally:
         await coordination.close()
@@ -348,12 +370,21 @@ async def test_scheduler_sends_one_digest_for_multiple_serious_events(
     assert "Сильные порывы ветра" in text
     assert "Что лучше сделать:" in text
     assert "Режим уведомлений" not in text
-    assert delivery_states == ["sending", "sending", "sent", "sent"]
+    assert delivery_states == [
+        "sending",
+        "sending",
+        "deferred",
+        "deferred",
+        "sending",
+        "sending",
+        "sent",
+        "sent",
+    ]
     assert len(semantic_states) == 1
 
 
 @pytest.mark.asyncio
-async def test_scheduler_reports_cancelled_risk_once(
+async def test_scheduler_reports_confirmed_cancelled_risk_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     event_date = date(2026, 7, 19)
@@ -364,26 +395,52 @@ async def test_scheduler_reports_cancelled_risk_once(
         signal_ids={("heavy_rain", event_date): 99},
     )
 
+    clock = [0.0]
     bot = RecordingBot()
-    coordination = MemoryCoordination(namespace="test-ensemble-clear")
+    coordination = MemoryCoordination(
+        namespace="test-ensemble-clear",
+        clock=lambda: clock[0],
+    )
     try:
+        # First stable pair establishes the risk that the user actually saw.
         await check_weather_risk_alerts(
             bot,
             object(),
             coordination,
             provider=FakeProvider(_ensemble(rain_members=22, retrieved_hour=0)),
         )
+        clock[0] += 5 * 60 * 60
         await check_weather_risk_alerts(
             bot,
             object(),
             coordination,
-            provider=FakeProvider(_ensemble(rain_members=0, retrieved_hour=6)),
+            provider=FakeProvider(_ensemble(rain_members=22, retrieved_hour=6)),
         )
+        assert len(bot.messages) == 1
+
+        # One clear run is not enough to reassure the farmer.
         await check_weather_risk_alerts(
             bot,
             object(),
             coordination,
             provider=FakeProvider(_ensemble(rain_members=0, retrieved_hour=12)),
+        )
+        assert len(bot.messages) == 1
+
+        clock[0] += 5 * 60 * 60
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=0, retrieved_hour=18)),
+        )
+        # Repeating the same clear state stays silent after delivery.
+        clock[0] += 5 * 60 * 60
+        await check_weather_risk_alerts(
+            bot,
+            object(),
+            coordination,
+            provider=FakeProvider(_ensemble(rain_members=0, retrieved_hour=18)),
         )
     finally:
         await coordination.close()
@@ -392,5 +449,10 @@ async def test_scheduler_reports_cancelled_risk_once(
     assert bot.messages[1][1].startswith("✅")
     assert "Прогноз улучшился" in bot.messages[1][1]
     assert "больше не ожидаются" in bot.messages[1][1]
-    assert delivery_states == ["sending", "sent"]
+    assert delivery_states == [
+        "sending",
+        "deferred",
+        "sending",
+        "sent",
+    ]
     assert semantic_states[-1] == ()

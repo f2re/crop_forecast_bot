@@ -14,7 +14,9 @@ from src.domain.risk import EnsembleForecastData, EnsembleForecastMeta
 from src.domain.risk_delivery import RiskEpisodeState
 from src.infrastructure.coordination import MemoryCoordination
 
-_EVENT_DATE = date(2026, 7, 19)
+# This test covers per-field routing, not the routine confirmation gate. Use an
+# urgent high event for tomorrow so immediate delivery is the intended policy.
+_EVENT_DATE = date(2026, 7, 18)
 
 
 def _target(

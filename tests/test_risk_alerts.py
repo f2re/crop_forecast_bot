@@ -11,8 +11,8 @@ from src.domain.risk_delivery import RiskEpisodeState, RiskStateChange
 def _event() -> RiskEvent:
     return RiskEvent(
         risk_type="convection",
-        event_date=date(2026, 7, 29),
-        lead_days=12,
+        event_date=date(2026, 7, 19),
+        lead_days=2,
         level="elevated",
         members_exceeding=22,
         valid_members=31,
@@ -26,7 +26,7 @@ def _event() -> RiskEvent:
         median=1400.0,
         p90=2600.0,
         model="gfs_seamless",
-        reliability_note="дальний срок",
+        reliability_note="ближайшие дни",
         action="Следите за предупреждениями.",
         caveat="Это не прогноз града.",
     )
@@ -57,11 +57,12 @@ def test_alert_is_compact_calm_and_hides_model_internals() -> None:
         phase="Цветение",
     )
 
-    assert "Погода требует внимания: Поле 1" in text
-    assert "🟡" in text
-    assert "Возможны грозовые условия — пока наблюдаем" in text
+    assert "Погода: Поле 1" in text
+    assert "Погода требует внимания" not in text
+    assert "🟠" in text
+    assert "Возможны грозовые условия — лучше подготовиться" in text
     assert "не самостоятельный прогноз грозы" in text
-    assert "Ближе к сроку проверьте официальные предупреждения" in text
+    assert "Стоит закрепить оборудование" in text
     assert "Томат, Картофель" in text
     assert "22 из 31" not in text
     assert "Надёжность" not in text

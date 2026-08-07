@@ -11,6 +11,7 @@ from src.bot.risk_language import (
 from src.domain.risk import RiskEvent, RiskOutlook, RiskType
 from src.domain.risk_delivery import RiskEpisodeState, RiskStateChange
 
+_NOTIFICATION_DISPLAY_LEAD_DAYS = 3
 _RISK_NAMES: dict[RiskType, tuple[str, str]] = {
     "frost": ("🌡", "опасное похолодание"),
     "heat": ("🔥", "жара"),
@@ -60,20 +61,32 @@ def _all_withdrawn(changes: tuple[RiskStateChange, ...]) -> bool:
     )
 
 
+def _visible_events(events: tuple[RiskEvent, ...]) -> tuple[RiskEvent, ...]:
+    return tuple(
+        event
+        for event in events
+        if 0 <= event.lead_days <= _NOTIFICATION_DISPLAY_LEAD_DAYS
+    )
+
+
+def _is_urgent(events: tuple[RiskEvent, ...]) -> bool:
+    return any(
+        event.level == "high" and 0 <= event.lead_days <= 1
+        for event in events
+    )
+
+
 def _format_change(change: RiskStateChange) -> str:
     emoji, name = _RISK_NAMES[change.risk_type]
     previous = change.previous
     current = change.current
 
     if not previous:
-        return (
-            f"• {emoji} Появился новый период: "
-            f"<b>{html.escape(_episodes_label(current))}</b>."
-        )
+        return f"• {emoji} Появился новый значимый период."
     if not current:
         return (
             f"• {emoji} Ранее ожидавшиеся условия «{html.escape(name)}» "
-            f"на {html.escape(_episodes_label(previous))} больше не ожидаются."
+            "больше не ожидаются."
         )
 
     if len(previous) == 1 and len(current) == 1:
@@ -114,17 +127,43 @@ def _format_change(change: RiskStateChange) -> str:
                 + "."
             )
 
-    return (
-        f"• {emoji} Период «{html.escape(name)}» заметно изменился: "
-        f"было {html.escape(_episodes_label(previous))}, "
-        f"теперь <b>{html.escape(_episodes_label(current))}</b>."
+    return f"• {emoji} Условия «{html.escape(name)}» заметно изменились."
+
+
+def _header(
+    field_name: str,
+    *,
+    improved: bool = False,
+    urgent: bool = False,
+) -> list[str]:
+    if improved:
+        return [f"✅ <b>Прогноз улучшился: {html.escape(field_name)}</b>"]
+    if urgent:
+        return [f"⚠️ <b>Важно на ближайшие сутки: {html.escape(field_name)}</b>"]
+    return [f"🌤 <b>Погода: {html.escape(field_name)}</b>"]
+
+
+def _append_periods(
+    lines: list[str],
+    events: tuple[RiskEvent, ...],
+) -> None:
+    visible = _visible_events(events)
+    periods = group_risk_events(visible)
+    if not periods:
+        return
+
+    hidden_future = any(
+        event.lead_days > _NOTIFICATION_DISPLAY_LEAD_DAYS for event in events
     )
+    if hidden_future:
+        lines.extend(["", "<b>Ближайшие 3 суток</b>"])
+    else:
+        lines.append("")
 
-
-def _header(field_name: str, *, improved: bool = False) -> list[str]:
-    icon = "✅" if improved else "⚠️"
-    title = "Прогноз улучшился" if improved else "Погода требует внимания"
-    return [f"{icon} <b>{title}: {html.escape(field_name)}</b>"]
+    for index, period in enumerate(periods[:5]):
+        if index:
+            lines.append("")
+        lines.append(format_risk_period(period))
 
 
 def format_ensemble_risk_alert(
@@ -137,8 +176,8 @@ def format_ensemble_risk_alert(
     phase: str | None = None,
 ) -> str:
     del outlook
-    period = group_risk_events((event,))[0]
-    lines = _header(field_name)
+    events = (event,)
+    lines = _header(field_name, urgent=_is_urgent(events))
     lines.extend(
         crop_context_lines(
             crops=crops,
@@ -146,7 +185,7 @@ def format_ensemble_risk_alert(
             phase=phase,
         )
     )
-    lines.extend(["", format_risk_period(period)])
+    _append_periods(lines, events)
 
     text = "\n".join(lines)
     if len(text) > 4096:
@@ -170,9 +209,14 @@ def format_ensemble_risk_digest(
     if not events and not changes:
         raise ValueError("Risk digest requires events or a semantic change")
 
-    periods = group_risk_events(events)
-    improved = not periods and _all_withdrawn(changes)
-    lines = _header(field_name, improved=improved)
+    visible_events = _visible_events(events)
+    visible_periods = group_risk_events(visible_events)
+    improved = not visible_periods and _all_withdrawn(changes)
+    lines = _header(
+        field_name,
+        improved=improved,
+        urgent=_is_urgent(visible_events),
+    )
     lines.extend(
         crop_context_lines(
             crops=crops,
@@ -181,19 +225,15 @@ def format_ensemble_risk_digest(
         )
     )
 
-    if changes:
+    # A first confirmed warning already explains itself in the risk card. A
+    # separate "what changed" block only adds stress and duplicates dates.
+    update_changes = tuple(change for change in changes if change.previous)
+    if update_changes:
         lines.extend(["", "<b>Что изменилось</b>"])
-        lines.extend(_format_change(change) for change in changes)
+        lines.extend(_format_change(change) for change in update_changes)
 
-    if periods:
-        lines.append("")
-        for index, period in enumerate(periods[:5]):
-            if index:
-                lines.append("")
-            lines.append(format_risk_period(period))
-        hidden = max(0, len(periods) - 5)
-        if hidden:
-            lines.append(f"\nЕщё периодов: {hidden}.")
+    if visible_periods:
+        _append_periods(lines, events)
     elif improved:
         lines.extend(
             [
