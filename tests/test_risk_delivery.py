@@ -305,7 +305,7 @@ def test_one_day_period_noise_is_silent_and_keeps_notified_baseline() -> None:
     assert decision.current_state == previous
 
 
-def test_cumulative_two_day_extension_creates_one_update() -> None:
+def test_far_two_day_extension_is_silent_until_end_enters_decision_horizon() -> None:
     local_now = datetime(2026, 7, 19, 10, tzinfo=ZoneInfo("Europe/Moscow"))
     previous = (
         RiskEpisodeState(
@@ -330,9 +330,10 @@ def test_cumulative_two_day_extension_creates_one_update() -> None:
         previous_state=previous,
     )
 
-    assert len(decision.changes) == 1
-    assert decision.changes[0].current[0].end_date == date(2026, 7, 26)
-    assert decision.dedup_token is not None
+    assert decision.changes == ()
+    assert decision.events == ()
+    assert decision.dedup_token is None
+    assert decision.current_state == previous
 
 
 def test_one_day_earlier_move_is_material_when_it_enters_near_term_band() -> None:
