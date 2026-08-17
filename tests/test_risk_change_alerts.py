@@ -79,7 +79,7 @@ def test_digest_explains_heat_extension_concisely() -> None:
     assert "Что изменилось" in text
     assert "продлится дольше" in text
     assert "до 10 августа вместо 8 августа" in text
-    assert "Что сделать:" in text
+    assert "Что лучше сделать:" in text
     assert "не создают повторное сообщение" not in text
     assert "Надёжность" not in text
 

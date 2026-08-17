@@ -86,7 +86,7 @@ async def test_generate_and_format_manual_risk_overview_for_farmer() -> None:
     assert "🔴" in text
     assert "Сильный дождь — подготовьтесь сегодня" in text
     assert "осадки 2–40 мм" in text
-    assert "Что сделать:" in text
+    assert "Что лучше сделать:" in text
     assert "Томат, Картофель" in text
     assert "Данные: ансамбль GFS" in text
     assert "вариант" not in text

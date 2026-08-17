@@ -57,7 +57,7 @@ def test_consecutive_hazard_days_are_grouped_into_period() -> None:
     assert "Сильная жара — подготовьтесь сегодня" in text
     assert "2–3 августа" in text
     assert "31.5–37.5 °C" in text
-    assert "Что сделать:" in text
+    assert "Что лучше сделать:" in text
     assert "вариант" not in text
     assert "Надёжность" not in text
     assert "Действие:" not in text

@@ -54,7 +54,7 @@ _ACTIONS: dict[RiskType, dict[RiskLevel, str]] = {
             "Утром проверьте влажность почвы на глубине корней и состояние растений."
         ),
         "elevated": (
-            "Если почва на глубине корней сухая, полейте рано утром прпмо в "
+            "Если почва на глубине корней сухая, полейте рано утром прямо в "
             "корневую зону; перенесите обработки с полудня."
         ),
         "high": (
@@ -284,7 +284,7 @@ def format_risk_period(period: RiskPeriod) -> str:
     return (
         f"{emoji} <b>{name} — {status}</b>\n"
         f"{details}\n"
-        f"Что сделать: {html.escape(period_action(period))}"
+        f"Что лучше сделать: {html.escape(period_action(period))}"
     )
 
 
