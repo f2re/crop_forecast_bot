@@ -84,7 +84,7 @@ async def test_generate_and_format_manual_risk_overview_for_farmer() -> None:
     assert provider.calls == [(55.75, 37.62)]
     assert "Погодные риски: Северное" in text
     assert "🔴" in text
-    assert "Сильный дождь — нужна проверка" in text
+    assert "Сильный дождь — подготовьтесь сегодня" in text
     assert "осадки 2–40 мм" in text
     assert "Что лучше сделать:" in text
     assert "Томат, Картофель" in text
@@ -110,9 +110,10 @@ async def test_manual_overview_explains_convection_without_hail_claim() -> None:
         crop="sunflower",
     )
 
-    assert "Возможны грозовые условия" in text
-    assert "CAPE" in text
-    assert "не самостоятельный прогноз грозы" in text
+    assert "Условия для развития грозовых облаков" in text
+    assert "Гроза и град этим расчётом не подтверждены" in text
+    assert "официальное предупреждение и радар" in text
+    assert "CAPE" not in text
     assert "вероятность града" not in text
 
 
@@ -134,7 +135,7 @@ async def test_manual_overview_distinguishes_valid_no_signal() -> None:
     assert overview.outlook.events == ()
     assert "🟢" in text
     assert "Существенных погодных рисков не выявлено" in text
-    assert "обычный контроль поля" in text
+    assert "обычный осмотр поля" in text
 
 
 @pytest.mark.asyncio

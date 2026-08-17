@@ -60,9 +60,10 @@ def test_alert_is_compact_calm_and_hides_model_internals() -> None:
     assert "Погода: Поле 1" in text
     assert "Погода требует внимания" not in text
     assert "🟠" in text
-    assert "Возможны грозовые условия — лучше подготовиться" in text
-    assert "не самостоятельный прогноз грозы" in text
-    assert "Стоит закрепить оборудование" in text
+    assert "Условия для развития грозовых облаков — подготовьтесь заранее" in text
+    assert "Гроза и град этим расчётом не подтверждены" in text
+    assert "противоградовая сетка" in text
+    assert "CAPE" not in text
     assert "Томат, Картофель" in text
     assert "22 из 31" not in text
     assert "Надёжность" not in text

@@ -102,7 +102,8 @@ async def _show_settings(
         f"⚠️ Погодные риски: {'включены' if context.frost_alerts else 'выключены'}\n"
         f"📬 Режим: {risk_delivery_mode_label(preferences.mode)}\n"
         f"🌙 Тихие часы: {quiet_hours_label(preferences.quiet_hours_start, preferences.quiet_hours_end)}\n\n"
-        "Высокий риск доставляется без ожидания тихих часов или суточного дайджеста.",
+        "Серьёзный риск на сегодня или завтра приходит сразу. "
+        "Остальные сообщения учитывают выбранный режим и тихие часы.",
         reply_markup=get_settings_keyboard(
             field_id=context.field_id,
             daily_digest_enabled=context.daily_digest,
@@ -219,10 +220,10 @@ async def risk_mode_menu(callback: CallbackQuery, session: AsyncSession) -> None
     preferences = await _preferences(session, callback, field_id)
     await callback.answer()
     await callback.message.edit_text(
-        "📬 <b>Режим доставки погодных рисков</b>\n\n"
-        "«Сразу» сообщает новое сочетание риска, даты и уровня. "
-        "«Дайджест» отправляет одну сводку в локальные сутки. "
-        "«Только высокий» скрывает уровни наблюдения и повышенный.",
+        "📬 <b>Как присылать погодные предупреждения</b>\n\n"
+        "«Сразу» — только при существенном изменении в ближайшие трое суток. "
+        "«Дайджест» — не более одной обычной сводки в сутки. "
+        "«Только высокий» — только самый серьёзный риск и его отмена.",
         reply_markup=get_risk_delivery_mode_keyboard(field_id, preferences.mode),
     )
 
@@ -261,8 +262,8 @@ async def quiet_hours_menu(callback: CallbackQuery, session: AsyncSession) -> No
     await callback.answer()
     await callback.message.edit_text(
         "🌙 <b>Тихие часы поля</b>\n\n"
-        "Время локальное для поля. Уровни «наблюдение» и «повышенный» "
-        "откладываются; высокий риск доставляется сразу.",
+        "Время местное для поля. Обычные сообщения ждут окончания этого периода. "
+        "Только новый серьёзный риск на сегодня или завтра приходит сразу.",
         reply_markup=get_quiet_hours_keyboard(
             field_id,
             preferences.quiet_hours_start,
