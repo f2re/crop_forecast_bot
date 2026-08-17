@@ -56,7 +56,7 @@ def format_semantic_pest_notification(
             f"Окно «{stage}» теперь ожидается около <b>{current}</b>, "
             f"раньше было {previous}."
         )
-        action_text = f"Что лучше сделать: {action}"
+        action_text = f"Что сделать: {action}"
     elif notification.change == "later":
         heading = (
             f"🐛 <b>Срок осмотра поля сдвинулся: "
@@ -78,7 +78,7 @@ def format_semantic_pest_notification(
             f"Ранее ожидавшееся окно «{stage}» около <b>{previous}</b> "
             "больше не подтверждается температурным прогнозом."
         )
-        action_text = "Вернитесь к обычному наблюдению за полем."
+        action_text = "Вернитесь к обычному графику осмотров поля."
     else:
         heading = (
             f"🐛 <b>Окно осмотра снова ожидается: "
@@ -87,7 +87,7 @@ def format_semantic_pest_notification(
         change_text = (
             f"Окно «{stage}» снова ожидается около <b>{current}</b>."
         )
-        action_text = f"Что лучше сделать: {action}"
+        action_text = f"Что сделать: {action}"
 
     return "\n".join(
         [

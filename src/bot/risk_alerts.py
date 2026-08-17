@@ -13,11 +13,11 @@ from src.domain.risk_delivery import RiskEpisodeState, RiskStateChange
 
 _NOTIFICATION_DISPLAY_LEAD_DAYS = 3
 _RISK_NAMES: dict[RiskType, tuple[str, str]] = {
-    "frost": ("🌡", "опасное похолодание"),
+    "frost": ("🌡", "похолодание к нулю"),
     "heat": ("🔥", "жара"),
     "heavy_rain": ("🌧", "сильный дождь"),
     "strong_wind": ("💨", "сильный ветер"),
-    "convection": ("⛈", "грозовые условия"),
+    "convection": ("⛈", "условия для грозовых облаков"),
 }
 _MONTHS = (
     "",
@@ -82,7 +82,7 @@ def _format_change(change: RiskStateChange) -> str:
     current = change.current
 
     if not previous:
-        return f"• {emoji} Появился новый значимый период."
+        return f"• {emoji} Появился новый период, к которому нужно подготовиться."
     if not current:
         return (
             f"• {emoji} Ранее ожидавшиеся условия «{html.escape(name)}» "
@@ -95,11 +95,11 @@ def _format_change(change: RiskStateChange) -> str:
         details: list[str] = []
         if new.highest_level != old.highest_level:
             if new.highest_level == "high":
-                details.append("сигнал усилился")
+                details.append("условия стали выраженнее")
             elif old.highest_level == "high":
-                details.append("сигнал ослаб")
+                details.append("условия стали слабее")
             else:
-                details.append("уровень изменился")
+                details.append("оценка изменилась")
         if new.start_date < old.start_date:
             details.append(
                 f"начало раньше: {_date_label(new.start_date)} "
@@ -127,7 +127,7 @@ def _format_change(change: RiskStateChange) -> str:
                 + "."
             )
 
-    return f"• {emoji} Условия «{html.escape(name)}» заметно изменились."
+    return f"• {emoji} Прогноз для условий «{html.escape(name)}» заметно изменился."
 
 
 def _header(

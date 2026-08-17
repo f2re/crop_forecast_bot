@@ -54,10 +54,10 @@ def test_consecutive_hazard_days_are_grouped_into_period() -> None:
     assert len(periods) == 2
     text = format_risk_period(periods[0])
     assert "🔴" in text
-    assert "Жаркий период — нужна проверка" in text
+    assert "Сильная жара — подготовьтесь сегодня" in text
     assert "2–3 августа" in text
     assert "31.5–37.5 °C" in text
-    assert "Что лучше сделать:" in text
+    assert "Что сделать:" in text
     assert "вариант" not in text
     assert "Надёжность" not in text
     assert "Действие:" not in text
@@ -82,9 +82,9 @@ def test_weak_wind_signal_is_human_and_non_alarmist_in_manual_view() -> None:
     text = format_risk_period(period)
 
     assert "🟡" in text
-    assert "Сильные порывы ветра — пока наблюдаем" in text
+    assert "Сильные порывы ветра — срочных действий нет" in text
     assert "7 августа · порывы 9–15.2 м/с" in text
-    assert "Срочных мер не требуется" in text
+    assert "Проверьте прогноз перед опрыскиванием" in text
     assert "5 из 31" not in text
     assert len(text) < 260
 
@@ -93,10 +93,33 @@ def test_far_signal_is_observation_not_call_to_act_now() -> None:
     period = group_risk_events((_event(day=14, lead_days=12),))[0]
 
     text = format_risk_period(period)
-
     assert "🟡" in text
-    assert "пока наблюдаем" in text
-    assert "нужна проверка" not in text
+    assert "срочных действий нет" in text
+    assert "подготовьтесь сегодня" not in text
+
+
+def test_convection_card_hides_cape_and_does_not_claim_thunderstorm_or_hail() -> None:
+    period = group_risk_events(
+        (
+            _event(
+                risk_type="convection",
+                day=8,
+                lead_days=1,
+                level="elevated",
+                members=22,
+                p10=100.0,
+                median=1400.0,
+                p90=2600.0,
+            ),
+        )
+    )[0]
+
+    text = format_risk_period(period)
+    assert "Условия для развития грозовых облаков — подготовьтесь заранее" in text
+    assert "Гроза и град этим расчётом не подтверждены" in text
+    assert "официальное предупреждение и радар" in text
+    assert "CAPE" not in text
+    assert "Дж/кг" not in text
 
 
 def test_crop_context_is_compact() -> None:
